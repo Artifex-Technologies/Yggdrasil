@@ -11,7 +11,7 @@ use crate::switcher;
 use crate::tiling::{self, Profile};
 use crate::toplevels::Toplevels;
 use smithay::backend::input::{
-    AbsolutePositionEvent, Axis, AxisSource, ButtonState, Device, Event, InputBackend, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
+    AbsolutePositionEvent, Axis, ButtonState, Device, Event, InputBackend, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
     PointerButtonEvent, PointerMotionEvent,
 };
 use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
@@ -24,7 +24,7 @@ use smithay::delegate_xdg_decoration;
 use smithay::desktop::{layer_map_for_output, LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType};
 use smithay::input::keyboard::{keysyms, FilterResult, KeyboardHandle};
 use smithay::input::pointer::Focus;
-use smithay::input::pointer::{AxisFrame, ButtonEvent, CursorImageStatus, MotionEvent, PointerHandle};
+use smithay::input::pointer::{ButtonEvent, CursorImageStatus, MotionEvent, PointerHandle};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::Output;
 use smithay::reexports::calloop::{LoopHandle, LoopSignal};
@@ -52,6 +52,9 @@ use smithay::wayland::shell::xdg::decoration::{XdgDecorationHandler, XdgDecorati
 use smithay::wayland::shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState};
 use smithay::xwayland::X11Surface;
 use std::collections::HashMap;
+
+mod stacking;
+use stacking::Under;
 
 smithay::render_elements! {
     /// What is drawn each frame: the programs' own pictures and the title bars the compositor adds.
@@ -281,6 +284,8 @@ pub struct App {
     pub cursor_theme: Option<(String, u32)>,
     /// Settings > Peripherals' mouse and keyboard settings (input.rs) and when their file was changed as last seen.
     pub input: yggdrasil_wm::input::InputConf,
+    /// the hardware backend's input devices (udev.rs), for `devices` and `input`; empty on the other backends
+    pub input_devices: Vec<crate::input::DeviceInfo>,
     input_time: Option<std::time::SystemTime>,
     /// The pointer the compositor draws (pointer.rs): what programs asked it to look like, when it last moved, the theme's pictures.
     pub cursor: crate::pointer::Pointer,
@@ -590,6 +595,7 @@ impl App {
             cursor: Default::default(),
             input_time: std::fs::metadata(yggdrasil_wm::input::InputConf::path()).and_then(|m| m.modified()).ok(),
             input: input_conf,
+            input_devices: vec![],
             toplevel_list: smithay::wayland::foreign_toplevel_list::ForeignToplevelListState::new::<Self>(dh),
             capture: Default::default(),
             kb_layout,
@@ -687,7 +693,8 @@ impl App {
             }
             let _ = x.configure(area);
         }
-        self.space.map_element(window.clone(), area.loc, true);
+        // in place in the stack: a window made full screen or maximized from behind (a game asking again, a tool) stays behind
+        self.relocate(window, area.loc);
     }
 
     pub fn restore_window(&mut self, window: &Window) {
@@ -725,7 +732,7 @@ impl App {
             }
         }
         if let Some(r) = back {
-            self.space.map_element(window.clone(), r.loc, false);
+            self.relocate(window, r.loc);
         }
         self.retile();
     }
@@ -775,7 +782,7 @@ impl App {
             self.x11_snapped.retain(|s| s != &surface);
             let _ = x.configure(rect);
         }
-        self.space.map_element(window.clone(), rect.loc, false);
+        self.relocate(window, rect.loc);
         self.retile();
         true
     }
@@ -842,7 +849,7 @@ impl App {
         } else if let Some(x) = w.x11_surface() {
             let _ = x.configure(r);
         }
-        self.space.map_element(w.clone(), r.loc, false);
+        self.relocate(w, r.loc);
     }
 
     /// A new window's first picture (now its size is known): centred in the free room of the output it opens on, shortened to
@@ -862,8 +869,8 @@ impl App {
         let start = crate::placement::centred((size.w, size.h), zone);
         let opened = crate::placement::open(start, screen, zone, self.look.gaps_out).unwrap_or(start);
         let r = self.remembered_place(w).unwrap_or(opened);
+        // where it is in the stack: it was put in front when it opened, and a window clicked since then stays in front of it
         self.place_at(w, r);
-        self.space.raise_element(w, true);
     }
 
     /// Another window of the same program is open: one of the same class or of the same process (VS Code's dialogs are "code",
@@ -927,7 +934,7 @@ impl App {
             return;
         }
         self.clear_zones = zones;
-        // every floating window is mapped again in order, so the stacking stays as it was
+        // each moved in place in the stack (place_at), so a window behind a full screen one stays behind it
         for w in self.floating_shown() {
             let Some(loc) = self.space.element_location(&w) else { continue };
             // the size asked for when the program has not drawn it yet (a screen just changed under it: windows_follow_outputs)
@@ -952,6 +959,43 @@ impl App {
         self.give_keyboard(next, SERIAL_COUNTER.next_serial());
     }
 
+    /// The window used last on the workspace now showing (the one shown as active; a panel may have the keyboard meanwhile).
+    /// Only read here: which window is active is decided elsewhere.
+    fn active_window(&self) -> Option<WlSurface> {
+        self.focus_order.iter().find(|s| s.alive() && self.space.elements().any(|w| is_window_of(w, s))).cloned()
+    }
+
+    /// The keyboard stays with a panel (a layer surface) only while it is there: alive, on the layer map of a screen that is on,
+    /// mapped (it has a picture) and asking for the keyboard. A panel that went (destroyed, its surface destroyed, unmapped, its
+    /// screen gone, or no longer asking) gives it back through `focus_back` (the active window, or nobody): it must never hold
+    /// the keyboard with nothing left to show for it (on the laptop a pop-up that went kept it and no window got a key). Called
+    /// when a panel changes or goes, a surface is destroyed, and before every key. A window's keyboard and the lock's are left
+    /// to their own rules: nothing here raises, reorders or activates a window.
+    pub fn keyboard_check(&mut self) {
+        if self.locked {
+            return;
+        }
+        let Some(KbFocus::Wl(f)) = self.keyboard.current_focus() else { return };
+        if self.window_for(&f).is_some() || (f.alive() && self.layer_holds(&f)) {
+            return;
+        }
+        if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+            eprintln!("keyboard: {} went, the keyboard goes back", self.describe_focus(Some(&f)));
+        }
+        self.focus_back();
+    }
+
+    /// Whether `f` is a panel that may hold the keyboard (see `keyboard_check`).
+    fn layer_holds(&self, f: &WlSurface) -> bool {
+        use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, LayerSurfaceCachedState};
+        let mapped = self.space.outputs().any(|o| layer_map_for_output(o).layer_for_surface(f, WindowSurfaceType::TOPLEVEL).is_some());
+        mapped
+            && smithay::backend::renderer::utils::with_renderer_surface_state(f, |s| s.buffer().is_some()).unwrap_or(false)
+            && with_states(f, |st| {
+                st.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity != KeyboardInteractivity::None
+            })
+    }
+
     /// A panel's surface was committed: one that asks for the keyboard exclusively (the start menu) gets it as soon as it shows,
     /// and gives it back to the window when it hides or stops asking (Hyprland does the first; the session's config the second).
     fn layer_keyboard(&mut self, surface: &WlSurface) {
@@ -970,8 +1014,9 @@ impl App {
                 let kb = self.keyboard.clone();
                 kb.set_focus(self, Some(KbFocus::Wl(surface.clone())), SERIAL_COUNTER.next_serial());
             }
-        } else if has && (!shown || wants == KeyboardInteractivity::None) {
-            self.focus_back();
+        } else if has {
+            // hidden, or no longer asking
+            self.keyboard_check();
         }
     }
 
@@ -994,6 +1039,8 @@ impl App {
         self.opened_at.push(surface.clone());
         self.foreign_added(window);
         self.retile();
+        // the others are told they are no longer active (a full screen game under it would think it still has the keyboard)
+        self.mark_active(window);
         self.give_keyboard(Some(surface.clone()), SERIAL_COUNTER.next_serial());
         self.touch_focus(surface);
     }
@@ -1037,8 +1084,12 @@ impl App {
             }
             self.space.unmap_elem(&w);
         }
-        let next = self.space.elements().rev().find_map(surface_of);
-        self.give_keyboard(next, SERIAL_COUNTER.next_serial());
+        // the keyboard, and the active look, go to the window now in front
+        let next = self.space.elements().rev().find(|w| surface_of(w).is_some()).cloned();
+        if let Some(w) = &next {
+            self.mark_active(w);
+        }
+        self.give_keyboard(next.as_ref().and_then(surface_of), SERIAL_COUNTER.next_serial());
         self.retile();
     }
 
@@ -1068,6 +1119,11 @@ impl App {
 
     /// Give the keyboard to a surface (None: to nobody). The surface of an X11 window gets it as that X11 window (see KbFocus).
     pub fn give_keyboard(&mut self, surface: Option<WlSurface>, serial: Serial) {
+        // while locked the keyboard is the lock's (a window opening or closing behind it must not take what is typed into the
+        // lock); focus_back gives it to the window used last on unlocking
+        if self.locked {
+            return;
+        }
         let focus = surface.map(|s| {
             let x11 = self.window_for(&s).and_then(|w| w.x11_surface().cloned());
             match x11 {
@@ -1374,9 +1430,18 @@ impl App {
         }
     }
 
+    /// The window the window shortcuts (close, maximize, snap ...) act on: the one with the keyboard, or, while a panel has it
+    /// (the start menu, a pop-up), the window that was active under it: the compositor's shortcuts come before a panel's
+    /// keyboard, as on Hyprland. Nothing while locked.
     fn focused(&self) -> Option<WlSurface> {
-        let f = self.focused_surface()?;
-        self.space.elements().any(|w| is_window_of(w, &f)).then_some(f)
+        if self.locked {
+            return None;
+        }
+        match self.focused_surface() {
+            Some(f) if self.space.elements().any(|w| is_window_of(w, &f)) => Some(f),
+            Some(f) if self.lock_surfaces.iter().any(|(_, l)| l.wl_surface() == &f) => None,
+            _ => self.active_window(),
+        }
     }
 
     pub fn run_action(&mut self, action: Action) {
@@ -1515,7 +1580,7 @@ impl App {
             } else {
                 continue;
             }
-            self.space.map_element(w.clone(), r.loc, false);
+            self.relocate(w, r.loc);
         }
     }
 
@@ -1871,64 +1936,15 @@ impl App {
         ))
     }
 
-    /// The window controls under the point (looking from the top window down; a window in front hides the controls of one behind it).
-    fn bar_at(&self, pos: Point<f64, Logical>) -> Option<(Window, Hit)> {
-        for w in self.space.elements().rev() {
-            if let Some(r) = self.bar_rect(w) {
-                if r.to_f64().contains(pos) {
-                    return Some((w.clone(), deco::hit(pos.x - r.loc.x as f64)));
-                }
-            }
-            if let Some(loc) = self.space.element_location(w) {
-                if Rectangle::new(loc, w.geometry().size).to_f64().contains(pos) {
-                    return None;
-                }
-            }
-        }
-        None
-    }
-
-    /// The resize grips just outside a decorated window (all four sides).
-    fn edge_at(&self, pos: Point<f64, Logical>) -> Option<(Window, ResizeEdge)> {
-        for w in self.space.elements().rev() {
-            if !self.bar_visible(w) {
-                continue;
-            }
-            let loc = self.space.element_location(w)?;
-            let size = w.geometry().size;
-            let inner = Rectangle::new(loc, size).to_f64();
-            let g = deco::GRIP as f64;
-            let outer = Rectangle::new((inner.loc.x - g, inner.loc.y - g).into(), (inner.size.w + 2.0 * g, inner.size.h + 2.0 * g).into());
-            if inner.contains(pos) {
-                return None;
-            }
-            if outer.contains(pos) {
-                let (left, right) = (pos.x < inner.loc.x, pos.x >= inner.loc.x + inner.size.w);
-                let (top, bottom) = (pos.y < inner.loc.y, pos.y >= inner.loc.y + inner.size.h);
-                let edge = match (left, right, top, bottom) {
-                    (true, _, true, _) => ResizeEdge::TopLeft,
-                    (_, true, true, _) => ResizeEdge::TopRight,
-                    (true, _, _, true) => ResizeEdge::BottomLeft,
-                    (_, true, _, true) => ResizeEdge::BottomRight,
-                    (true, ..) => ResizeEdge::Left,
-                    (_, true, ..) => ResizeEdge::Right,
-                    (_, _, true, _) => ResizeEdge::Top,
-                    (_, _, _, true) => ResizeEdge::Bottom,
-                    _ => return None,
-                };
-                return Some((w.clone(), edge));
-            }
-        }
-        None
-    }
-
     /// Super and the left button move the window under the pointer, Super and the right button resize it (from the nearest corner).
     fn super_drag(&mut self, serial: Serial, button: u32) -> bool {
         if !self.keyboard.modifier_state().logo || !(button == 0x110 || button == 0x111) {
             return false;
         }
         let pos = self.pointer_location;
-        let Some((window, loc)) = self.space.element_under(pos).map(|(w, l)| (w.clone(), l)) else { return false };
+        // the window in front at the pointer (not one behind a panel or another window: stacking.rs)
+        let Some(window) = self.under(pos).and_then(|u| u.window().cloned()) else { return false };
+        let Some(loc) = self.space.element_location(&window) else { return false };
         let Some(surface) = surface_of(&window) else { return false };
         let pointer = self.pointer.clone();
         let start = smithay::input::pointer::GrabStartData { focus: None, button, location: pos };
@@ -2058,7 +2074,8 @@ impl App {
         }
         // A full screen window in front (a game, a video) covers the top bar and the dock: the Top layer then goes behind the
         // windows. The Overlay layer (the lock's own picture, alerts that must be seen) stays in front.
-        let full_front = self.space.elements().last().is_some_and(|w| win_has(w, xdg_toplevel::State::Fullscreen));
+        // (on this screen alone, and the same rule the pointer follows: stacking.rs)
+        let full_front = self.fullscreen_in_front(output);
         layer_els(renderer, if full_front { &[Layer::Overlay][..] } else { &[Layer::Overlay, Layer::Top][..] }, &mut out);
         let now = self.clock.now();
         let s = output.current_scale().fractional_scale();
@@ -2305,7 +2322,7 @@ impl App {
             let Some(loc) = self.space.element_location(&w) else { continue };
             let r = Rectangle::new(loc, size_to_be(&w));
             let Some((n, o)) = follow(r) else { continue };
-            self.space.map_element(w.clone(), n.loc, false);
+            self.relocate(&w, n.loc);
             x11_place(&w, n.loc, n.size);
             let Some(s) = surface_of(&w) else { continue };
             if win_has(&w, S::Fullscreen) {
@@ -2406,70 +2423,45 @@ impl App {
         self.space.outputs().find(|o| output_rect(o).to_f64().contains(pos)).cloned().unwrap_or_else(|| self.output.clone())
     }
 
-    /// The surface under a point, and where that surface's origin is on screen. Panels on the top layers first, then windows, then
-    /// the layers behind them; while the session is locked, only the lock surface.
+    /// The surface under a point, and where that surface's origin is on screen: the frontmost one, in the order things are drawn
+    /// (stacking.rs); none over the compositor's own window controls and grips.
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-        let output = self.output_at(pos);
-        let origin = output.current_location();
-        if self.locked {
-            return self.lock_surfaces.iter().find(|(o, _)| o == &output).map(|(_, l)| (l.wl_surface().clone(), origin.to_f64()));
-        }
-        // X11 menus and tooltips are in front of everything
-        if let Some(x) = self.overlay_under(pos) {
-            return Some(x);
-        }
-        let map = layer_map_for_output(&output);
-        let local = pos - origin.to_f64();
-        let on_layer = |layer: Layer| {
-            let l = map.layer_under(layer, local)?;
-            let geo = map.layer_geometry(l)?;
-            let (s, p) = l.surface_under(local - geo.loc.to_f64(), WindowSurfaceType::ALL)?;
-            Some((s, (p + geo.loc + origin).to_f64()))
-        };
-        // behind a full screen window the top bar and dock are hidden, so they get no pointer either (see scene())
-        let full_front = self.space.elements().last().is_some_and(|w| win_has(w, xdg_toplevel::State::Fullscreen));
-        if let Some(x) = on_layer(Layer::Overlay).or_else(|| if full_front { None } else { on_layer(Layer::Top) }) {
-            return Some(x);
-        }
-        if self.bar_at(pos).is_some() || self.edge_at(pos).is_some() {
-            return None;
-        }
-        if let Some((window, loc)) = self.space.element_under(pos) {
-            if let Some((s, p)) = window.surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL) {
-                return Some((s, (p + loc).to_f64()));
-            }
-        }
-        on_layer(Layer::Bottom).or_else(|| on_layer(Layer::Background))
+        self.under(pos).and_then(Under::surface)
     }
 
     /// A click gives the keyboard to what is under the pointer (a window, raised, or a panel that asks for the keyboard).
     pub fn focus_under_pointer(&mut self, serial: Serial) {
+        self.focus_at(self.pointer_location, serial);
+    }
+
+    /// A click or a touch at `pos` gives the keyboard to what is there (as `focus_under_pointer`).
+    pub fn focus_at(&mut self, pos: Point<f64, Logical>, serial: Serial) {
         if self.locked {
             return;
         }
-        let pos = self.pointer_location;
         // a click in an X11 menu leaves the keyboard where it is (the menu's own window keeps it)
         if self.over_overlay(pos) {
             return;
         }
-        let layer_hit = {
-            let output = self.output_at(pos);
-            let map = layer_map_for_output(&output);
-            let local = pos - output.current_location().to_f64();
-            [Layer::Overlay, Layer::Top].into_iter().find_map(|layer| map.layer_under(layer, local).cloned())
-        };
-        if let Some(l) = layer_hit {
-            use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, LayerSurfaceCachedState};
-            let wants = with_states(l.wl_surface(), |st| {
-                st.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity != KeyboardInteractivity::None
-            });
-            if wants {
-                let kb = self.keyboard.clone();
-                kb.set_focus(self, Some(KbFocus::Wl(l.wl_surface().clone())), serial);
+        // what is in front there, as it is drawn (stacking.rs): a panel hidden behind a full screen window takes nothing
+        let window = match self.under(pos) {
+            Some(Under::Layer(l, layer, ..)) => {
+                use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, LayerSurfaceCachedState};
+                let wants = with_states(l.wl_surface(), |st| {
+                    st.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity != KeyboardInteractivity::None
+                });
+                if wants && matches!(layer, Layer::Overlay | Layer::Top) {
+                    let kb = self.keyboard.clone();
+                    kb.set_focus(self, Some(KbFocus::Wl(l.wl_surface().clone())), serial);
+                }
+                return;
             }
-            return;
-        }
-        let Some((window, _)) = self.space.element_under(pos).map(|(w, l)| (w.clone(), l)) else { return };
+            Some(u) => match u.window() {
+                Some(w) => w.clone(),
+                None => return,
+            },
+            None => return,
+        };
         self.space.raise_element(&window, true);
         let surface = surface_of(&window);
         self.mark_active(&window);
@@ -2484,6 +2476,10 @@ impl App {
     /// from a real device. `own_settings`: the devices are this compositor's (hardware), so input.conf's scroll factor is applied
     /// here (libinput itself is told the speed, profile, natural scrolling and left-handed buttons); nested, the host applied them.
     pub fn on_input<B: InputBackend>(&mut self, event: InputEvent<B>, own_settings: bool) {
+        // the touchscreen and the pen (touch.rs)
+        if self.on_touch(&event) {
+            return;
+        }
         match event {
             InputEvent::Keyboard { event } => self.key(event.key_code(), event.state(), event.time_msec()),
             InputEvent::PointerMotionAbsolute { event } => {
@@ -2502,27 +2498,23 @@ impl App {
             InputEvent::PointerAxis { event } => {
                 self.input_seen();
                 let pointer = self.pointer.clone();
-                let factor =
-                    if own_settings { crate::input::mouse(&self.input, &event.device().name()).scroll.abs().max(0.01) } else { 1.0 };
-                let amount = |a: Axis| factor * event.amount(a).unwrap_or_else(|| event.amount_v120(a).unwrap_or(0.0) * 15.0 / 120.0);
-                let mut frame = AxisFrame::new(event.time_msec()).source(event.source());
-                for a in [Axis::Horizontal, Axis::Vertical] {
-                    let v = amount(a);
-                    if v != 0.0 {
-                        frame = frame.value(a, v);
-                        if let Some(d) = event.amount_v120(a) {
-                            frame = frame.v120(a, d as i32);
-                        }
-                    }
-                    if event.source() == AxisSource::Finger && v == 0.0 {
-                        frame = frame.stop(a);
-                    }
-                }
+                let factor = if own_settings { self.scroll_factor_of(&event.device().name()) } else { 1.0 };
+                let of = |a: Axis| (event.amount(a), event.amount_v120(a));
+                let frame = crate::input::axis_frame(event.time_msec(), event.source(), factor, of(Axis::Horizontal), of(Axis::Vertical));
                 pointer.axis(self, frame);
                 pointer.frame(self);
             }
             _ => {}
         }
+    }
+
+    /// input.conf's scroll factor for a device, by libinput's name for it (a touchpad's own, input.rs).
+    fn scroll_factor_of(&self, raw: &str) -> f64 {
+        let s = match self.input_devices.iter().find(|d| d.raw == raw) {
+            Some(d) => crate::input::mouse_of(&crate::input::settings(&self.input, &d.name, d.kind)).scroll,
+            None => crate::input::mouse(&self.input, raw).scroll,
+        };
+        s.abs().max(0.01)
     }
 
     /// Any input: draw again soon, and the user is not idle.
@@ -2534,6 +2526,8 @@ impl App {
     /// A key went down or up (an xkb key code: the kernel's code + 8). Shortcuts are taken here; the rest goes to the focus.
     pub fn key(&mut self, code: smithay::input::keyboard::Keycode, state: KeyState, time: u32) {
         self.input_seen();
+        // a panel that went does not take this key (keyboard_check)
+        self.keyboard_check();
         let keyboard = self.keyboard.clone();
         let serial = SERIAL_COUNTER.next_serial();
         let repeating_before = self.repeating;
@@ -2717,17 +2711,26 @@ impl App {
 
     /// What has the keyboard: "window APP TITLE", "layer NAMESPACE OUTPUT", "lock OUTPUT", "surface" or "none" (tab separated).
     pub fn focus_info(&self) -> String {
-        let Some(f) = self.focused_surface() else { return "none".into() };
-        if let Some((o, _)) = self.lock_surfaces.iter().find(|(_, l)| l.wl_surface() == &f) {
+        self.describe_focus(self.focused_surface().as_ref())
+    }
+
+    /// What a surface with the keyboard is, as `focus` tells it (also in the debug log; reads no keyboard state, so it may be
+    /// called while the keyboard changes its focus).
+    fn describe_focus(&self, f: Option<&WlSurface>) -> String {
+        let Some(f) = f else { return "none".into() };
+        if !f.alive() {
+            return "gone".into();
+        }
+        if let Some((o, _)) = self.lock_surfaces.iter().find(|(_, l)| l.wl_surface() == f) {
             return format!("lock\t{}", o.name());
         }
-        if let Some(w) = self.window_for(&f) {
+        if let Some(w) = self.window_for(f) {
             let (title, app_id) = title_app(&w);
             return format!("window\t{app_id}\t{title}");
         }
         for o in self.space.outputs() {
             let map = layer_map_for_output(o);
-            if let Some(l) = map.layer_for_surface(&f, WindowSurfaceType::TOPLEVEL) {
+            if let Some(l) = map.layer_for_surface(f, WindowSurfaceType::TOPLEVEL) {
                 return format!("layer\t{}\t{}", l.namespace(), o.name());
             }
         }
@@ -2751,10 +2754,23 @@ impl CompositorHandler for App {
         }
         &client.get_data::<ClientState>().unwrap().compositor_state
     }
+    /// A surface was destroyed: when it had the keyboard (a panel that ended its surface before its layer), the keyboard goes
+    /// back (keyboard_check).
+    fn destroyed(&mut self, surface: &WlSurface) {
+        if self.keyboard.current_focus() == Some(KbFocus::Wl(surface.clone())) {
+            self.keyboard_check();
+        }
+    }
     fn commit(&mut self, surface: &WlSurface) {
         self.wake();
         on_commit_buffer_handler::<Self>(surface);
         self.popups.commit(surface);
+        // a menu's (xdg_popup's) first commit is answered with its first configure: without it the program never shows the menu
+        if let Some(PopupKind::Xdg(p)) = self.popups.find_popup(surface) {
+            if !p.is_initial_configure_sent() {
+                let _ = p.send_configure();
+            }
+        }
         if !is_sync_subsurface(surface) {
             let mut root = surface.clone();
             while let Some(p) = get_parent(&root) {
@@ -2913,6 +2929,9 @@ impl SeatHandler for App {
     /// The program with the keyboard is the one offered the clipboard and the middle-click selection (Smithay offers them only
     /// to the focused program; without this, what one program copied reached no other, X11 or Wayland).
     fn focus_changed(&mut self, seat: &Seat<Self>, focus: Option<&KbFocus>) {
+        if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+            eprintln!("keyboard: to {}", self.describe_focus(focus.and_then(|f| f.surface()).as_ref()).replace('\t', " "));
+        }
         let client = focus.and_then(|f| f.surface()).and_then(|s| self.display_handle.get_client(s.id()).ok());
         smithay::wayland::selection::data_device::set_data_device_focus(&self.display_handle, seat, client.clone());
         smithay::wayland::selection::primary_selection::set_primary_focus(&self.display_handle, seat, client);
@@ -3082,17 +3101,15 @@ impl WlrLayerShellHandler for App {
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
         self.wake();
-        let had_keyboard = self.focused_surface().as_ref() == Some(surface.wl_surface());
-        for o in self.space.outputs() {
-            let mut map = layer_map_for_output(o);
+        for o in self.heads.list.iter().map(|h| h.output.clone()).chain(self.space.outputs().cloned()).collect::<Vec<_>>() {
+            let mut map = layer_map_for_output(&o);
             let found = map.layers().find(|l| l.layer_surface() == &surface).cloned();
             if let Some(l) = found {
                 map.unmap_layer(&l);
             }
         }
-        if had_keyboard && !self.locked {
-            self.focus_back();
-        }
+        // the keyboard goes back to the window when it was this panel's
+        self.keyboard_check();
         self.keep_clear();
     }
 }

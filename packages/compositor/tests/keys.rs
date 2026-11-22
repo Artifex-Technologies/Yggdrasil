@@ -256,6 +256,47 @@ fn the_window_keys_close_minimize_and_show_the_minimized_windows() {
 }
 
 #[test]
+fn the_shortcuts_come_before_a_panel_that_has_the_keyboard() {
+    let _l = limit(60, "shortcuts over a panel");
+    let (comp, log) = with_stand_ins(&["--size", "1280x720"]);
+    let mut c = comp.connect();
+    let _input = c.input();
+    let a = c.window("test.a", "A");
+    c.draw(&a, (300, 200), BLUE);
+    let b = c.window("test.b", "B");
+    c.draw(&b, (300, 200), YELLOW);
+    comp.wait(10, "B has the keyboard", |c| c.focus() == "window\ttest.b\tB");
+
+    // a panel that takes the keyboard exclusively (the start menu): the keys that are no shortcut go to it...
+    let menu = c.layer_with(0, Layer::Overlay, "test-menu", Anchor::Top | Anchor::Left, (300, 400), 0, KeyboardInteractivity::Exclusive);
+    c.draw_layer(&menu, YELLOW);
+    comp.wait(10, "the menu has the keyboard", |c| c.focus() == "layer\ttest-menu\tHEADLESS-1");
+    // ...but the compositor's own shortcuts work, on the window that was active under it
+    assert_eq!(runs(&comp, &log, "super+Return"), "ghostty");
+    comp.must("key super+q");
+    c.until("Super+Q closes B under the menu", |s| s.wins[b.index].close_asked);
+    assert!(!c.state.wins[a.index].close_asked);
+    comp.must("key super+Up");
+    // (xdg_toplevel's maximized state is 1)
+    c.until("Super+Up maximizes B", |s| s.wins[b.index].states.contains(&1));
+    // Alt+Tab switches, and the window it picks gets the keyboard
+    comp.must("key alt+Tab");
+    comp.wait(10, "A picked", |c| c.focus() == "window\ttest.a\tA");
+
+    // an on-demand panel that was clicked (a pop-up): the same
+    menu.layer.destroy();
+    menu.surface.destroy();
+    let pop = c.layer_with(0, Layer::Overlay, "test-pop", Anchor::Top | Anchor::Right, (300, 200), 0, KeyboardInteractivity::OnDemand);
+    c.draw_layer(&pop, YELLOW);
+    comp.must("pointer 1200 20");
+    comp.must("click");
+    comp.wait(10, "the pop-up has the keyboard", |c| c.focus() == "layer\ttest-pop\tHEADLESS-1");
+    c.state.wins[a.index].close_asked = false;
+    comp.must("key super+q");
+    c.until("Super+Q closes A under the pop-up", |s| s.wins[a.index].close_asked);
+}
+
+#[test]
 fn the_bindings_are_listed_with_the_sessions_words() {
     let _l = limit(30, "the bindings' list");
     let comp = Compositor::start(&["--size", "800x600"]);

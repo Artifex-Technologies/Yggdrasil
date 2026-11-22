@@ -9,10 +9,26 @@
 //!   another terminal shows; coming back takes them again and draws every screen whole.
 //! - **GPUs and screens**: udev lists the GPUs (the boot one first) and tells when one comes or goes, or when a screen is plugged
 //!   in or out (a "change" of the GPU: its connectors are looked at again). Every connected connector (not a VR headset's,
-//!   "non-desktop") gets a CRTC and becomes an `Output` named as the kernel names it (DP-1, HDMI-A-1, eDP-1, Virtual-1) with
-//!   all its modes, its size in millimetres and the make and model from its EDID; Settings > Displays' monitors.lua then sets
-//!   its mode, scale and place (outputs.rs, the same code as headless), and a mode changed later (wlr-output-management) is
-//!   set on the CRTC at the next frame.
+//!   "non-desktop") gets a CRTC, the laptop's own (eDP, LVDS, DSI) first, and becomes an `Output` named as the kernel names it
+//!   (DP-1, HDMI-A-1, eDP-1, Virtual-1) with all its modes, its size in millimetres and the make and model from its EDID;
+//!   Settings > Displays' monitors.lua then sets its mode, scale and place (outputs.rs, the same code as headless; a screen it
+//!   gives no scale gets one from its size, laptop.rs), and a mode changed later (wlr-output-management) is set on the CRTC at
+//!   the next frame (a mode within half a hertz of the one asked: 60 for a panel's 60.003 Hz). A screen unplugged gives its CRTC
+//!   back (its DrmCompositor goes, which switches the CRTC off) but stays a screen for 2 s (outputs.rs, UNPLUG_GRACE): a monitor
+//!   whose link bounces comes back with its windows and panels, only its CRTC set up again; one plugged in is set up once its
+//!   link has stayed for 0.7 s (SETTLE). A connector
+//!   that appears later (a DisplayPort hub or dock, MST, makes new connectors) has the device reset first: Smithay learns a
+//!   connector's properties only then (every screen is drawn whole again).
+//! - **The lid** (laptop.rs): closed while another screen is on, the laptop's screen leaves its CRTC as if unplugged; opened, it
+//!   comes back as monitors.lua says. Closed with no other screen: it stays, dark and switched off, for logind to suspend.
+//!   The tablet-mode switch is recorded (`switches`); both are known from the start (open and off until libinput says otherwise).
+//! - **Screens off**: one switched off by wlr-output-power (yggdrasil-idle) or in Settings has its CRTC switched off (the
+//!   DrmCompositor's `clear`: no picture, the panel's backlight off); on again, the mode is set again with a whole frame.
+//! - **Suspend and resume** (laptop.rs' SleepWatch: the kernel's word that the system woke): every DrmCompositor's state is read
+//!   again, every screen drawn whole, the input devices set up again and the connectors looked at again (a screen unplugged
+//!   while it slept). A switch to another terminal and back is the seat's pause and activate, as before.
+//! - **Screen copies** (readback.rs): wlr-screencopy and ext-image-copy-capture, drawn again on the GPU into shared memory or
+//!   the program's GPU buffer: grim, yggdrasil-shot and the panel's previews.
 //! - **Drawing**: on a GPU with hardware EGL, GBM buffers drawn with OpenGL ES (GlesRenderer); otherwise (no 3D: a plain
 //!   virtual GPU, a simple framebuffer, YGGDRASIL_COMPOSITOR_RENDERER=pixman) dumb buffers drawn in software (pixman), so a
 //!   machine with no working GPU driver still gets a picture. Each screen has its own Smithay `DrmCompositor`, which puts the
@@ -20,18 +36,19 @@
 //! - **Frames**: drawn only when something changed (`App::wake`), then not again before that frame was shown (the page flip's
 //!   vblank event); a frame with no change is not even sent, and a run of frames with no change waits a refresh between them.
 //!   Nothing is drawn and no timer runs while nothing changes.
-//! - **Input**: libinput (keyboards, mice, touchpads, a virtual machine's tablet); Settings > Peripherals' input.conf sets
-//!   libinput's speed, profile, natural scrolling and left-handed buttons per device, and its scroll factor is applied here.
+//! - **Input**: libinput (keyboards, mice, touchpads, TrackPoints, the touchscreen and pen, a virtual machine's tablet), named
+//!   as Hyprland names them; Settings > Peripherals' input.conf sets libinput's speed, profile, natural scrolling, left-handed
+//!   buttons and a touchpad's taps, click method, scrolling and the rest per device and per kind (input.rs), and its scroll
+//!   factor is applied here. The touchscreen and the pen are the laptop screen's (touch.rs).
 //! - **The control socket** (control.rs) is there too, for Yggdrasil's own tools (yggdrasil-wm); it makes no input.
 //! - **Ending**: `ctl quit`, SIGTERM, SIGINT or SIGHUP end it cleanly: the session is closed and the console comes back.
 //!
 //! Not yet (later milestones, docs/COMPOSITOR.md): several GPUs drawing for each other (a laptop's NVIDIA GPU behind the Intel
 //! one), explicit sync (linux-drm-syncobj-v1, which NVIDIA needs), direct scanout of full screen games tuned per GPU, VRR, tearing
-//! control, a screen switched off through DPMS (wlr-output-power draws it black for now), screen copies (wlr-screencopy,
-//! ext-image-copy-capture) and the lid switch.
+//! control.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -50,7 +67,7 @@ use smithay::backend::input::InputEvent;
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
 use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
 use smithay::backend::renderer::element::Kind;
-use smithay::backend::renderer::gles::GlesRenderer;
+use smithay::backend::renderer::gles::{GlesRenderbuffer, GlesRenderer};
 use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::{ImportDma, ImportEgl, ImportMemWl};
 use smithay::backend::session::libseat::LibSeatSession;
@@ -62,6 +79,9 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{EventLoop, Interest, LoopHandle, Mode as LoopMode, PostAction, RegistrationToken};
 use smithay::reexports::drm::control::{connector, crtc, Device as _, ModeTypeFlags};
 use smithay::reexports::input::{AccelProfile, DeviceCapability, Libinput};
+
+use crate::input::{DeviceInfo, Kind as InputKind};
+use crate::laptop::Switches;
 use smithay::reexports::rustix::fs::OFlags;
 use smithay::reexports::wayland_server::Display;
 use smithay::utils::{DeviceFd, Transform};
@@ -133,11 +153,17 @@ enum Out {
 struct Screen {
     output: Output,
     connector: connector::Handle,
+    /// the laptop's own (eDP, LVDS, DSI)
+    internal: bool,
+    /// its CRTC is switched off (the screen is off, switched off in Settings, or dark behind the closed lid)
+    off: bool,
     drm: Out,
     /// the connector's modes (a mode chosen in Settings is looked up here)
     modes: Vec<smithay::reexports::drm::control::Mode>,
     /// the mode the CRTC is set to
     mode: Mode,
+    /// a mode asked for that the screen has not (or that did not set): told once, not tried again until another is asked
+    missed: Option<Mode>,
     /// a frame was queued and its page flip has not happened yet
     queued: bool,
     /// something changed since it was last drawn
@@ -152,7 +178,19 @@ struct Device {
     gpu: Gpu,
     screens: HashMap<crtc::Handle, Screen>,
     token: RegistrationToken,
+    /// the connectors the device had when it was opened or last reset (Smithay knows the properties of these only)
+    known: Vec<connector::Handle>,
+    /// the connectors connected at the last look (a screen kept off by the lid too)
+    was_connected: Vec<connector::Handle>,
+    /// connectors plugged in a moment ago, set up once their link has stayed for SETTLE
+    settling: Vec<(connector::Handle, Instant)>,
+    /// a look at the connectors is due (a timer runs for the settling ones)
+    rescan_pending: bool,
 }
+
+/// How long a screen just plugged in waits before its first modeset: a monitor that is hunting between its inputs (or a cable
+/// pushed in) drops its link again within this, and is then never set up and torn down for nothing.
+const SETTLE: Duration = Duration::from_millis(700);
 
 pub struct Udev {
     session: LibSeatSession,
@@ -160,8 +198,12 @@ pub struct Udev {
     primary: DrmNode,
     devices: HashMap<DrmNode, Device>,
     libinput: Libinput,
-    /// keyboards, mice and touchpads, set up as input.conf says (again when it changes)
-    inputs: Vec<smithay::reexports::input::Device>,
+    /// keyboards, mice, touchpads and the rest, set up as input.conf says (again when it changes or a device comes)
+    inputs: Vec<(smithay::reexports::input::Device, DeviceInfo)>,
+    /// the lid and the tablet-mode switch
+    switches: Switches,
+    /// the screens whose frame had damage since their last copy that waited for one (readback.rs)
+    copy_changed: HashSet<String>,
     input_seen: Option<yggdrasil_wm::input::InputConf>,
     /// a draw is already asked for (the wake-ups of one pass are folded into it), and the timer for screens that wait
     idle_pending: bool,
@@ -171,8 +213,8 @@ pub struct Udev {
     start: Instant,
 }
 
-const BACKGROUND: [f32; 4] = [0.05, 0.05, 0.08, 1.0];
-const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+pub const BACKGROUND: [f32; 4] = [0.05, 0.05, 0.08, 1.0];
+pub const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 
 /// Run the hardware backend until `quit`, a signal, or the loop is stopped.
 pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
@@ -207,6 +249,8 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
         devices: HashMap::new(),
         libinput: libinput.clone(),
         inputs: vec![],
+        switches: Switches::default(),
+        copy_changed: HashSet::new(),
         input_seen: None,
         idle_pending: false,
         timer_pending: false,
@@ -228,11 +272,15 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let first = outputs.first().cloned().ok_or("no screen is connected")?;
 
     crate::toplevels::create_global(&dh);
-    // screens off and on (yggdrasil-idle): drawn black for now (DPMS comes later)
+    // screens off and on (yggdrasil-idle): the CRTC switched off
     crate::outputpower::create_global(&dh);
+    // screenshots and the panel's previews, drawn again on the GPU (readback.rs)
+    crate::screencopy::create_global(&dh);
+    crate::capture::create_globals(&dh);
     let mut app = App::new(&dh, first, handle.clone(), event_loop.get_signal(), ping);
     for o in outputs {
-        app.add_output(o, 1.0);
+        let scale = default_scale_of(&o);
+        app.add_output(o, scale);
     }
     app.reload_monitors();
     crate::outputmgmt::create_global(&dh);
@@ -287,8 +335,10 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     for s in d.screens.values_mut() {
                         // the frame on its way was lost with the switch; the terminal drew over the screen: all of it again
+                        // (and a screen that is off is switched off again: the terminal may have lit it)
                         s.queued = false;
                         s.dirty = true;
+                        s.off = false;
                         match &s.drm {
                             Out::Gles(o) => o.reset_buffers(),
                             Out::Pixman(o) => o.reset_buffers(),
@@ -314,9 +364,11 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
             match device_added(&u, &h, node, &path) {
                 Ok(outputs) => {
                     for o in outputs {
-                        app.add_output(o, 1.0);
+                        let scale = default_scale_of(&o);
+                        app.add_output(o, scale);
                     }
-                    app.wake();
+                    // the lid may want the laptop's screen off now
+                    device_changed(&u, app, node);
                 }
                 Err(e) => eprintln!("yggdrasil-compositor: {}: {e}", path.display()),
             }
@@ -333,17 +385,51 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
         }
     })?;
 
-    // keyboards, mice, touchpads
+    // keyboards, mice, touchpads, the touchscreen and pen, the lid and the tablet-mode switch
     let u = udev.clone();
-    handle.insert_source(LibinputInputBackend::new(libinput), move |mut event, _, app| {
-        if let InputEvent::DeviceAdded { device } = &mut event {
-            set_up_input(device, &app.input);
-            u.borrow_mut().inputs.push(device.clone());
-        } else if let InputEvent::DeviceRemoved { device } = &event {
-            u.borrow_mut().inputs.retain(|d| d != device);
+    handle.insert_source(LibinputInputBackend::new(libinput), move |event, _, app| {
+        match &event {
+            InputEvent::DeviceAdded { device } => input_added(&u, app, device.clone()),
+            InputEvent::DeviceRemoved { device } => {
+                u.borrow_mut().inputs.retain(|(d, _)| d != device);
+                app.input_devices = u.borrow().inputs.iter().map(|(_, i)| i.clone()).collect();
+            }
+            InputEvent::SwitchToggle { event } => {
+                use smithay::backend::input::{Switch, SwitchState, SwitchToggleEvent};
+                // (smithay's view of the event: libinput's own has methods of the same names)
+                let on = SwitchToggleEvent::<LibinputInputBackend>::state(event) == SwitchState::On;
+                match SwitchToggleEvent::<LibinputInputBackend>::switch(event) {
+                    Some(Switch::Lid) => lid(&u, app, on),
+                    Some(Switch::TabletMode) => {
+                        u.borrow_mut().switches.tablet_mode = Some(on);
+                        eprintln!("yggdrasil-compositor: tablet mode {}", if on { "on" } else { "off" });
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            _ => {}
         }
         app.on_input(event, true);
     })?;
+
+    // waking from a suspend (laptop.rs): the kernel says so through a timer it cancels
+    match crate::laptop::SleepWatch::new() {
+        Ok(watch) => {
+            let u = udev.clone();
+            handle.insert_source(Generic::new(watch, Interest::READ, LoopMode::Level), move |_, w, app| {
+                // SAFETY: the watch is not dropped while it is registered here
+                if let Some(slept) = unsafe { w.get_mut() }.woke() {
+                    eprintln!("yggdrasil-compositor: woke after {} s asleep", slept.as_secs());
+                    resumed(&u, app);
+                }
+                Ok(PostAction::Continue)
+            })?;
+        }
+        Err(e) => {
+            eprintln!("yggdrasil-compositor: no watch for waking from a suspend ({e}); after one, `ctl resumed` draws the screens again")
+        }
+    }
 
     // SIGTERM, SIGINT, SIGHUP: end cleanly
     handle.insert_source(Generic::new(signals, Interest::READ, LoopMode::Level), |_, fd, app| {
@@ -361,9 +447,10 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let (listener, ctl) = crate::control::listen(&runtime, &app.socket)?;
     let control = Rc::new(RefCell::new(crate::control::Control::default()));
     let c = control.clone();
+    let u = udev.clone();
     handle.insert_source(Generic::new(listener, Interest::READ, LoopMode::Level), move |_, l, app| {
         while let Ok((stream, _)) = l.accept() {
-            c.borrow_mut().serve(stream, app, &mut |_, _| None, USAGE);
+            c.borrow_mut().serve(stream, app, &mut |words, app| command(&u, words, app), USAGE);
         }
         Ok(PostAction::Continue)
     })?;
@@ -376,8 +463,8 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
         let mut b = u.borrow_mut();
         if b.input_seen.as_ref() != Some(&app.input) {
             b.input_seen = Some(app.input.clone());
-            for d in b.inputs.iter_mut() {
-                set_up_input(d, &app.input);
+            for (d, info) in b.inputs.iter_mut() {
+                set_up_input(d, info, &app.input);
             }
         }
     })?;
@@ -395,7 +482,7 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// The commands, for an unknown one's answer.
-const USAGE: &str = "outputs, scale NAME S, power NAME on|off, pointer-look, windows, focus, free, workspace, lock, watch, quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
+const USAGE: &str = "outputs, scale NAME S, power NAME on|off, switches, lid open|closed, tablet-mode on|off, resumed, input, pointer-look, windows, focus, free, workspace, lock, watch, quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
 
 /// Two nodes of the same GPU (its card and its render node).
 fn same_gpu(a: DrmNode, b: DrmNode) -> bool {
@@ -450,9 +537,20 @@ fn device_added(udev: &Rc<RefCell<Udev>>, handle: &LoopHandle<'static, App>, nod
         Gpu::Pixman { .. } => "software (pixman)",
     };
     eprintln!("yggdrasil-compositor: {} draws with {kind}", path.display());
-    b.devices.insert(node, Device { node, gpu, screens: HashMap::new(), token });
+    let known = gpu_drm(&gpu).resource_handles().map(|r| r.connectors().to_vec()).unwrap_or_default();
+    let device =
+        Device { node, gpu, screens: HashMap::new(), token, known, was_connected: vec![], settling: vec![], rescan_pending: false };
+    b.devices.insert(node, device);
     drop(b);
-    Ok(scan(udev, node).0)
+    Ok(scan(udev, node, &[], &[], false).0)
+}
+
+/// A GPU's DRM device.
+fn gpu_drm(gpu: &Gpu) -> &DrmDevice {
+    match gpu {
+        Gpu::Gles { manager, .. } => manager.device(),
+        Gpu::Pixman { manager, .. } => manager.device(),
+    }
 }
 
 /// How a GPU draws: hardware EGL on its GBM device (GLES), else dumb buffers drawn with pixman.
@@ -521,6 +619,15 @@ fn gpu_buffers(udev: &Rc<RefCell<Udev>>, app: &mut App, dh: &smithay::reexports:
                 }
             }
             let _ = renderer.bind_wl_display(dh);
+            // copies may go straight into programs' GPU buffers (readback.rs): the formats the GPU draws into
+            let render_formats = renderer.egl_context().dmabuf_render_formats().clone();
+            let copy_formats: Vec<(Fourcc, Vec<u64>)> = COLOR_FORMATS
+                .iter()
+                .map(|f| (*f, render_formats.iter().filter(|x| x.code == *f).map(|x| u64::from(x.modifier)).collect::<Vec<u64>>()))
+                .filter(|(_, m)| !m.is_empty())
+                .collect();
+            app.screencopy.dmabuf = copy_formats.iter().map(|(f, _)| *f).collect();
+            app.capture.dmabuf = Some(crate::capture::DmabufOffer { device: render.dev_id(), formats: copy_formats });
             let u = udev.clone();
             app.dmabuf_import = Some(Box::new(move |d| {
                 let mut b = u.borrow_mut();
@@ -535,19 +642,24 @@ fn gpu_buffers(udev: &Rc<RefCell<Udev>>, app: &mut App, dh: &smithay::reexports:
     }
 }
 
-/// The connected connectors of a GPU now, each with the CRTC it can use: (connector, its info).
+/// The connected connectors of a GPU now, the laptop's own first (so it always finds a CRTC).
 fn connected(dev: &Device) -> Vec<connector::Info> {
-    let drm = match &dev.gpu {
-        Gpu::Gles { manager, .. } => manager.device(),
-        Gpu::Pixman { manager, .. } => manager.device(),
-    };
+    let drm = gpu_drm(&dev.gpu);
     let Ok(res) = drm.resource_handles() else { return vec![] };
-    res.connectors()
+    let mut v: Vec<connector::Info> = res
+        .connectors()
         .iter()
         .filter_map(|c| drm.get_connector(*c, true).ok())
         .filter(|c| c.state() == connector::State::Connected && !c.modes().is_empty())
         .filter(|c| !non_desktop(drm, c.handle()))
-        .collect()
+        .collect();
+    v.sort_by_key(|c| !is_internal(c));
+    v
+}
+
+/// A laptop's own panel, by its connector's kind.
+fn is_internal(c: &connector::Info) -> bool {
+    matches!(c.interface(), connector::Interface::EmbeddedDisplayPort | connector::Interface::LVDS | connector::Interface::DSI)
 }
 
 /// A VR headset says it is not a desktop screen (it is leased to the program that drives it; leasing comes later).
@@ -572,11 +684,37 @@ fn connector_name(c: &connector::Info) -> String {
 }
 
 /// Look at a GPU's connectors: new connected ones become screens (their outputs are returned), screens whose connector went
-/// are given up (their names are returned).
-fn scan(udev: &Rc<RefCell<Udev>>, node: DrmNode) -> (Vec<Output>, Vec<String>) {
+/// are given up, and so are the ones named in `off` (the lid's), their CRTC switched off (their names are returned). A screen
+/// in `kept` (its link went a moment ago, outputs.rs' UNPLUG_GRACE) that is connected again gets its CRTC with the same Output.
+/// With `settle`, a connector just plugged in is set up only once its link stayed for SETTLE; the third value is then when to
+/// look again.
+fn scan(
+    udev: &Rc<RefCell<Udev>>,
+    node: DrmNode,
+    off: &[String],
+    kept: &[Output],
+    settle: bool,
+) -> (Vec<Output>, Vec<String>, Option<Duration>) {
     let mut b = udev.borrow_mut();
-    let Some(dev) = b.devices.get_mut(&node) else { return (vec![], vec![]) };
-    let now = connected(dev);
+    let Some(dev) = b.devices.get_mut(&node) else { return (vec![], vec![], None) };
+    // a connector the device did not have (a DisplayPort hub or dock: MST): Smithay maps a connector's properties only when the
+    // device is reset, so it is reset (every screen goes dark for a moment and is drawn whole again)
+    let handles = gpu_drm(&dev.gpu).resource_handles().map(|r| r.connectors().to_vec()).unwrap_or_default();
+    if handles.iter().any(|h| !dev.known.contains(h)) {
+        eprintln!("yggdrasil-compositor: new connectors (a hub or dock): the GPU's screens are set up again");
+        // (not while another terminal shows: again when it comes back)
+        if reset_device(dev) {
+            dev.known = handles;
+        }
+    } else {
+        dev.known = handles;
+    }
+    let all = connected(dev);
+    let handles: Vec<connector::Handle> = all.iter().map(|c| c.handle()).collect();
+    let was = std::mem::replace(&mut dev.was_connected, handles.clone());
+    dev.settling.retain(|(h, _)| handles.contains(h));
+    let mut again: Option<Duration> = None;
+    let now: Vec<connector::Info> = all.into_iter().filter(|c| !off.contains(&connector_name(c))).collect();
     let mut gone = vec![];
     let lost: Vec<crtc::Handle> =
         dev.screens.iter().filter(|(_, s)| !now.iter().any(|c| c.handle() == s.connector)).map(|(c, _)| *c).collect();
@@ -592,33 +730,71 @@ fn scan(udev: &Rc<RefCell<Udev>>, node: DrmNode) -> (Vec<Output>, Vec<String>) {
             continue;
         }
         let name = connector_name(&conn);
+        let back = kept.iter().find(|o| o.name() == name).cloned();
+        if settle && back.is_none() {
+            let since = match dev.settling.iter().find(|(h, _)| *h == conn.handle()) {
+                Some((_, t)) => Some(*t),
+                None if !was.contains(&conn.handle()) => {
+                    eprintln!("yggdrasil-compositor: {name} plugged in: set up once its link has settled");
+                    dev.settling.push((conn.handle(), Instant::now()));
+                    Some(Instant::now())
+                }
+                None => None,
+            };
+            if let Some(t) = since {
+                let left = SETTLE.saturating_sub(t.elapsed());
+                if !left.is_zero() {
+                    again = Some(again.map_or(left, |a| a.min(left)));
+                    continue;
+                }
+                dev.settling.retain(|(h, _)| *h != conn.handle());
+            }
+        }
         let used: Vec<crtc::Handle> = dev.screens.keys().copied().collect();
-        let drm = match &dev.gpu {
-            Gpu::Gles { manager, .. } => manager.device(),
-            Gpu::Pixman { manager, .. } => manager.device(),
-        };
+        let drm = gpu_drm(&dev.gpu);
         let Some(crtc) = free_crtc(drm, &conn, &used) else {
             eprintln!("yggdrasil-compositor: {name}: no free CRTC for it");
             continue;
         };
-        let (make, model) = edid_names(drm, conn.handle());
         let modes = conn.modes().to_vec();
         let preferred = modes.iter().find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED)).copied().unwrap_or(modes[0]);
-        let (w, h) = conn.size().unwrap_or((0, 0));
-        let output =
-            Output::new(name.clone(), PhysicalProperties { size: (w as i32, h as i32).into(), subpixel: Subpixel::Unknown, make, model });
-        for m in &modes {
-            output.add_mode(Mode::from(*m));
+        let output = match back {
+            // back within the grace: the same output (its windows, panels and wl_output), at the mode it had where it still can
+            Some(o) => {
+                for m in &modes {
+                    if !o.modes().contains(&Mode::from(*m)) {
+                        o.add_mode(Mode::from(*m));
+                    }
+                }
+                o
+            }
+            None => {
+                let (make, model) = edid_names(drm, conn.handle());
+                let (w, h) = conn.size().unwrap_or((0, 0));
+                let o = Output::new(
+                    name.clone(),
+                    PhysicalProperties { size: (w as i32, h as i32).into(), subpixel: Subpixel::Unknown, make, model },
+                );
+                for m in &modes {
+                    o.add_mode(Mode::from(*m));
+                }
+                o.set_preferred(Mode::from(preferred));
+                o
+            }
+        };
+        let offered: Vec<Mode> = modes.iter().map(|m| Mode::from(*m)).collect();
+        let had = output.current_mode().and_then(|m| crate::outputs::closest_mode(&offered, m));
+        let start = had.and_then(|m| modes.iter().find(|x| Mode::from(**x) == m).copied()).unwrap_or(preferred);
+        let mode = Mode::from(start);
+        if output.current_mode() != Some(mode) {
+            output.change_current_state(Some(mode), Some(Transform::Normal), None, None);
         }
-        let mode = Mode::from(preferred);
-        output.set_preferred(mode);
-        output.change_current_state(Some(mode), Some(Transform::Normal), None, None);
         let planes = drm.planes(&crtc).ok();
         let made = match &mut dev.gpu {
             Gpu::Gles { renderer, manager } => manager
                 .initialize_output::<_, Elem>(
                     crtc,
-                    preferred,
+                    start,
                     &[conn.handle()],
                     &output,
                     planes,
@@ -630,7 +806,7 @@ fn scan(udev: &Rc<RefCell<Udev>>, node: DrmNode) -> (Vec<Output>, Vec<String>) {
             Gpu::Pixman { renderer, manager } => manager
                 .initialize_output::<_, PixElem>(
                     crtc,
-                    preferred,
+                    start,
                     &[conn.handle()],
                     &output,
                     planes,
@@ -653,9 +829,12 @@ fn scan(udev: &Rc<RefCell<Udev>>, node: DrmNode) -> (Vec<Output>, Vec<String>) {
                     Screen {
                         output: output.clone(),
                         connector: conn.handle(),
+                        internal: is_internal(&conn),
+                        off: false,
                         drm,
                         modes,
                         mode,
+                        missed: None,
                         queued: false,
                         dirty: true,
                         not_before: Instant::now(),
@@ -666,21 +845,232 @@ fn scan(udev: &Rc<RefCell<Udev>>, node: DrmNode) -> (Vec<Output>, Vec<String>) {
             Err(e) => eprintln!("yggdrasil-compositor: {name}: {e}"),
         }
     }
-    (added, gone)
+    (added, gone, again)
 }
 
-/// A GPU's connectors changed (a screen plugged in or out): screens are added and removed to match.
+/// A GPU's connectors changed (a screen plugged in or out, the lid): screens are added and removed to match. The new ones come
+/// first, so the last screen is never gone in between (the lid opened as the monitor is unplugged).
+/// A screen whose connector went is kept for a moment (outputs.rs: `output_unplugged`) and, back within it, keeps its windows and
+/// panels and gets a CRTC again with nothing else rebuilt; one the lid takes off goes at once.
 fn device_changed(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode) {
-    let (added, gone) = scan(udev, node);
+    let off = lid_plan(udev, app);
+    let kept = app.leaving_outputs();
+    let (added, gone, again) = scan(udev, node, &off, &kept, true);
+    for o in added {
+        if app.output_back(&o.name()) {
+            eprintln!("yggdrasil-compositor: {} came back: kept as it was", o.name());
+            continue;
+        }
+        let scale = default_scale_of(&o);
+        app.add_output(o, scale);
+    }
     for name in gone {
-        if let Err(e) = app.remove_output(&name) {
-            eprintln!("yggdrasil-compositor: {name}: {e}");
+        if off.contains(&name) {
+            if let Err(e) = app.remove_output(&name) {
+                eprintln!("yggdrasil-compositor: {name}: {e}");
+            }
+        } else {
+            app.output_unplugged(&name);
         }
     }
-    for o in added {
-        app.add_output(o, 1.0);
+    // a screen settling: looked at again when it has (one timer at a time)
+    let pending = udev.borrow().devices.get(&node).is_none_or(|d| d.rescan_pending);
+    if let (Some(d), false) = (again, pending) {
+        if let Some(dev) = udev.borrow_mut().devices.get_mut(&node) {
+            dev.rescan_pending = true;
+        }
+        let u = udev.clone();
+        let _ = app.loop_handle.insert_source(Timer::from_duration(d), move |_, _, app| {
+            if let Some(dev) = u.borrow_mut().devices.get_mut(&node) {
+                dev.rescan_pending = false;
+            }
+            device_changed(&u, app, node);
+            TimeoutAction::Drop
+        });
     }
     app.wake();
+}
+
+/// The internal screens the lid keeps off their CRTC now (laptop.rs): with the lid closed, while another screen of any GPU is
+/// connected and on (as Settings has it, or would have it when it is not set up yet).
+fn lid_plan(udev: &Rc<RefCell<Udev>>, app: &App) -> Vec<String> {
+    let b = udev.borrow();
+    if !b.switches.lid_closed() {
+        return vec![];
+    }
+    let screens: Vec<(String, bool)> = b
+        .devices
+        .values()
+        .flat_map(connected)
+        .map(|c| {
+            let name = connector_name(&c);
+            let on = match app.head(&name) {
+                Some(h) => h.enabled,
+                None => crate::outputs::want_from_rules(&app.heads.rules, &name, Mode { size: (1, 1).into(), refresh: 0 }, 1.0).enabled,
+            };
+            (name, on)
+        })
+        .collect();
+    crate::laptop::lid_takes_off(true, &screens)
+}
+
+/// The scale a screen gets when Settings' monitors.lua gives it none: from its size and its own mode (laptop.rs).
+fn default_scale_of(o: &Output) -> f64 {
+    let size = o.physical_properties().size;
+    let mode = o.preferred_mode().or_else(|| o.current_mode()).map(|m| (m.size.w, m.size.h)).unwrap_or((0, 0));
+    crate::laptop::default_scale((size.w, size.h), mode)
+}
+
+/// The lid was closed or opened (libinput's lid switch, or `ctl lid`): the laptop's screen leaves or comes back, or (closed
+/// with no other screen) goes dark.
+fn lid(udev: &Rc<RefCell<Udev>>, app: &mut App, closed: bool) {
+    let was = udev.borrow().switches.lid_closed;
+    udev.borrow_mut().switches.lid_closed = Some(closed);
+    if was == Some(closed) {
+        return;
+    }
+    eprintln!("yggdrasil-compositor: the lid is {}", if closed { "closed" } else { "open" });
+    if !closed {
+        // opening it is the person back: the screens come on (yggdrasil-idle) as at the first input
+        app.idle_state.notify_activity(&app.seat);
+    }
+    let nodes: Vec<DrmNode> = udev.borrow().devices.keys().copied().collect();
+    for n in nodes {
+        device_changed(udev, app, n);
+    }
+    mark_all_dirty(udev);
+    app.wake();
+}
+
+/// Every screen is to be drawn again (all of it when `whole`).
+fn mark_all_dirty(udev: &Rc<RefCell<Udev>>) {
+    for d in udev.borrow_mut().devices.values_mut() {
+        for s in d.screens.values_mut() {
+            s.dirty = true;
+        }
+    }
+}
+
+/// Reset a device and each of its screens' state (as after a switch back): its connectors are learnt again, every CRTC is set
+/// as the DrmCompositor wants it at its next frame, which is drawn whole.
+fn reset_device(dev: &mut Device) -> bool {
+    let r = match &mut dev.gpu {
+        Gpu::Gles { manager, .. } => manager.device_mut().reset_state(),
+        Gpu::Pixman { manager, .. } => manager.device_mut().reset_state(),
+    };
+    if let Err(e) = r {
+        eprintln!("yggdrasil-compositor: the GPU could not be reset: {e}");
+        return false;
+    }
+    reset_screens(dev);
+    true
+}
+
+/// Each screen's DrmCompositor reads the CRTC's state again and its next frame is whole (after a resume or a reset).
+fn reset_screens(dev: &mut Device) {
+    for s in dev.screens.values_mut() {
+        let r = match &s.drm {
+            Out::Gles(o) => o.with_compositor(|c| c.reset_state()),
+            Out::Pixman(o) => o.with_compositor(|c| c.reset_state()),
+        };
+        if let Err(e) = r {
+            eprintln!("yggdrasil-compositor: {}: its state was not read again: {e}", s.output.name());
+        }
+        match &s.drm {
+            Out::Gles(o) => o.reset_buffers(),
+            Out::Pixman(o) => o.reset_buffers(),
+        }
+        s.queued = false;
+        s.dirty = true;
+        s.off = false;
+    }
+}
+
+/// The system woke from a suspend (or `ctl resumed`): every screen's state is read again and drawn whole, the input devices are
+/// set up again, and the connectors are looked at again (a screen unplugged while it slept, or plugged in).
+fn resumed(udev: &Rc<RefCell<Udev>>, app: &mut App) {
+    {
+        let mut b = udev.borrow_mut();
+        for d in b.devices.values_mut() {
+            reset_screens(d);
+        }
+        // the input devices are set up again after the loop's pass
+        b.input_seen = None;
+    }
+    let nodes: Vec<DrmNode> = udev.borrow().devices.keys().copied().collect();
+    for n in nodes {
+        device_changed(udev, app, n);
+    }
+    app.wake();
+}
+
+/// An input device appeared: its name (as Hyprland's) and kind, set up as input.conf says. Every pointer is set up again, as a
+/// touchpad that comes after its companion "-mouse" device makes that one a TrackPoint's buttons.
+fn input_added(udev: &Rc<RefCell<Udev>>, app: &mut App, device: smithay::reexports::input::Device) {
+    let mut b = udev.borrow_mut();
+    let taken: Vec<String> = b.inputs.iter().map(|(_, i)| i.name.clone()).collect();
+    let name = crate::input::device_name(device.name(), &taken);
+    b.inputs.push((device.clone(), DeviceInfo { raw: device.name().to_string(), name, kind: InputKind::Other }));
+    let caps = |d: &smithay::reexports::input::Device| crate::input::Caps {
+        pointer: d.has_capability(DeviceCapability::Pointer),
+        keyboard: d.has_capability(DeviceCapability::Keyboard),
+        touch: d.has_capability(DeviceCapability::Touch),
+        tablet_tool: d.has_capability(DeviceCapability::TabletTool),
+        switch: d.has_capability(DeviceCapability::Switch),
+        tap_fingers: d.config_tap_finger_count(),
+    };
+    let touchpads: Vec<String> =
+        b.inputs.iter().filter(|(d, _)| caps(d).pointer && caps(d).tap_fingers > 0).map(|(_, i)| i.name.clone()).collect();
+    for (d, info) in b.inputs.iter_mut() {
+        let kind = crate::input::kind_of(&info.name, caps(d), &touchpads);
+        if kind != info.kind || d == &device {
+            info.kind = kind;
+            set_up_input(d, info, &app.input);
+        }
+    }
+    // the lid and tablet-mode switches are known from the start (open and off until libinput's toggle says otherwise)
+    if device.has_capability(DeviceCapability::Switch) {
+        use smithay::reexports::input::event::switch::Switch;
+        let has = |s| device.switch_has_switch(s) == Ok(true);
+        b.switches.device_added(has(Switch::Lid), has(Switch::TabletMode));
+    }
+    let info = b.inputs.last().map(|(_, i)| i.clone());
+    app.input_devices = b.inputs.iter().map(|(_, i)| i.clone()).collect();
+    if let Some(i) = info {
+        eprintln!("yggdrasil-compositor: input {} ({})", i.name, i.kind.word());
+        // a touchscreen: programs are told the seat has touch from the start
+        if i.kind == InputKind::Touch && app.seat.get_touch().is_none() {
+            app.seat.add_touch();
+        }
+    }
+}
+
+/// The hardware backend's own commands (the rest are control.rs's).
+fn command(udev: &Rc<RefCell<Udev>>, words: &[&str], app: &mut App) -> Option<Result<Vec<String>, String>> {
+    Some(match words {
+        ["switches"] => Ok(udev.borrow().switches.describe()),
+        // what the lid switch would say, for trying it with the lid open (the screen goes or comes as it would)
+        ["lid", "open"] => {
+            lid(udev, app, false);
+            Ok(vec![])
+        }
+        ["lid", "closed"] => {
+            lid(udev, app, true);
+            Ok(vec![])
+        }
+        ["tablet-mode", v @ ("on" | "off")] => {
+            udev.borrow_mut().switches.tablet_mode = Some(*v == "on");
+            Ok(vec![])
+        }
+        // as after waking from a suspend
+        ["resumed"] => {
+            resumed(udev, app);
+            Ok(vec![])
+        }
+        // every input device: its name, kind and the settings in force for it
+        ["input"] => Ok(app.input_devices.iter().map(|d| crate::input::describe_device(d, &app.input)).collect()),
+        _ => return None,
+    })
 }
 
 /// A GPU went: its screens go with it.
@@ -724,22 +1114,59 @@ pub fn parse_edid(e: &[u8]) -> Option<(String, String)> {
     Some((make, model))
 }
 
-/// keyboard, mouse or touchpad: input.conf's speed, profile, natural scrolling and left-handed buttons, as libinput's own settings.
-fn set_up_input(device: &mut smithay::reexports::input::Device, conf: &yggdrasil_wm::input::InputConf) {
-    if !device.has_capability(DeviceCapability::Pointer) {
+/// A mouse, touchpad or TrackPoint: input.conf's settings for it (input.rs) as libinput's own; what is not set goes back to
+/// libinput's default for the device. (A device without a setting refuses it.)
+fn set_up_input(device: &mut smithay::reexports::input::Device, info: &DeviceInfo, conf: &yggdrasil_wm::input::InputConf) {
+    use smithay::reexports::input::{ClickMethod, ScrollMethod};
+    use yggdrasil_wm::input::{ClickMethod as Click, ScrollMethod as Scroll};
+    if !info.kind.points() {
         return;
     }
-    let m = crate::input::mouse(conf, device.name());
+    let p = crate::input::settings(conf, &info.name, info.kind);
+    let m = crate::input::mouse_of(&p);
     let _ = device.config_accel_set_speed(m.speed.clamp(-1.0, 1.0));
-    if let Some(a) = m.accel {
-        let _ = device.config_accel_set_profile(match a {
-            yggdrasil_wm::input::Accel::Flat => AccelProfile::Flat,
-            yggdrasil_wm::input::Accel::Adaptive => AccelProfile::Adaptive,
-        });
+    let profile = match m.accel {
+        Some(yggdrasil_wm::input::Accel::Flat) => Some(AccelProfile::Flat),
+        Some(yggdrasil_wm::input::Accel::Adaptive) => Some(AccelProfile::Adaptive),
+        None => device.config_accel_default_profile(),
+    };
+    if let Some(a) = profile {
+        let _ = device.config_accel_set_profile(a);
     }
-    // (a device without the setting refuses it)
     let _ = device.config_scroll_set_natural_scroll_enabled(m.natural);
     let _ = device.config_left_handed_set(m.left_handed);
+    if device.config_tap_finger_count() > 0 {
+        let _ = device.config_tap_set_enabled(p.tap_to_click.unwrap_or_else(|| device.config_tap_default_enabled()));
+        let _ = device.config_tap_set_drag_enabled(p.tap_and_drag.unwrap_or_else(|| device.config_tap_default_drag_enabled()));
+        let _ = device.config_tap_set_drag_lock_enabled(p.drag_lock.unwrap_or_else(|| device.config_tap_default_drag_lock_enabled()));
+    }
+    if device.config_dwt_is_available() {
+        let _ = device.config_dwt_set_enabled(p.disable_while_typing.unwrap_or_else(|| device.config_dwt_default_enabled()));
+    }
+    let click = match p.click_method {
+        Some(Click::ButtonAreas) => Some(ClickMethod::ButtonAreas),
+        Some(Click::Clickfinger) => Some(ClickMethod::Clickfinger),
+        None => device.config_click_default_method(),
+    };
+    if let Some(c) = click.filter(|c| device.config_click_methods().contains(c)) {
+        let _ = device.config_click_set_method(c);
+    }
+    if device.config_middle_emulation_is_available() {
+        let on = p.middle_button_emulation.unwrap_or_else(|| device.config_middle_emulation_default_enabled());
+        let _ = device.config_middle_emulation_set_enabled(on);
+    }
+    let scroll = match p.scroll_method {
+        Some(Scroll::TwoFinger) => Some(ScrollMethod::TwoFinger),
+        Some(Scroll::Edge) => Some(ScrollMethod::Edge),
+        Some(Scroll::OnButtonDown) => Some(ScrollMethod::OnButtonDown),
+        Some(Scroll::NoScroll) => Some(ScrollMethod::NoScroll),
+        None => device.config_scroll_default_method(),
+    };
+    if let Some(sm) = scroll.filter(|sm| *sm == ScrollMethod::NoScroll || device.config_scroll_methods().contains(sm)) {
+        let _ = device.config_scroll_set_method(sm);
+    }
+    let button = p.scroll_button.unwrap_or_else(|| device.config_scroll_default_button());
+    let _ = device.config_scroll_set_button(button);
 }
 
 /// Draw the screens that changed, once this pass of the loop is done (the wake-ups of one pass are one draw).
@@ -759,6 +1186,8 @@ fn schedule(udev: &Rc<RefCell<Udev>>, handle: &LoopHandle<'static, App>) {
 /// Draw every screen that changed and is not waiting for its page flip (or for its pause after a frame with no change).
 fn draw_all(udev: &Rc<RefCell<Udev>>, app: &mut App) {
     if !udev.borrow().session.is_active() {
+        // another terminal shows: nothing is drawn on the screens, but copies are still made (grim from another session)
+        serve_copies(udev, app);
         return;
     }
     let now = Instant::now();
@@ -782,6 +1211,7 @@ fn draw_all(udev: &Rc<RefCell<Udev>>, app: &mut App) {
     for (n, c) in todo {
         draw(udev, app, n, c);
     }
+    serve_copies(udev, app);
     if drew {
         after_frame(udev, app);
     }
@@ -849,9 +1279,7 @@ macro_rules! frame {
         if let Some(p) = pointer_element!($cache, $app, $renderer, &output) {
             elements.push(p.into());
         }
-        let clear = if !$app.power.is_on(&output) {
-            BLACK
-        } else if $app.locked {
+        let clear = if $app.locked {
             elements.extend($app.lock_elements(&mut **$renderer, &output).into_iter().map(Into::into));
             BLACK
         } else {
@@ -870,30 +1298,101 @@ macro_rules! frame {
 macro_rules! follow_mode {
     ($renderer:expr, $out:expr, $screen:expr, $elem:ty) => {{
         let want = $screen.output.current_mode();
-        if let Some(want) = want.filter(|w| *w != $screen.mode) {
-            match $screen.modes.iter().find(|m| Mode::from(**m) == want) {
+        if let Some(want) = want.filter(|w| *w != $screen.mode && $screen.missed != Some(*w)) {
+            // the screen's own mode within half a hertz of the one asked (outputs.rs; set so already by configure_outputs)
+            let offered: Vec<Mode> = $screen.modes.iter().map(|m| Mode::from(*m)).collect();
+            let found = crate::outputs::closest_mode(&offered, want).and_then(|c| $screen.modes.iter().find(|m| Mode::from(**m) == c));
+            match found {
                 Some(m) => match $out.use_mode::<_, $elem>(*m, &mut **$renderer, &DrmOutputRenderElements::default()) {
                     Ok(()) => $screen.mode = want,
-                    Err(e) => eprintln!("yggdrasil-compositor: {}: mode not set: {e}", $screen.output.name()),
+                    Err(e) => {
+                        // told once: not tried on every frame
+                        eprintln!("yggdrasil-compositor: {}: mode not set: {e}", $screen.output.name());
+                        $screen.missed = Some(want);
+                    }
                 },
-                None => eprintln!("yggdrasil-compositor: {}: the screen has no mode {:?}", $screen.output.name(), want),
+                None => {
+                    eprintln!(
+                        "yggdrasil-compositor: {}: the screen has no mode {}x{} at {} Hz",
+                        $screen.output.name(),
+                        want.size.w,
+                        want.size.h,
+                        want.refresh as f64 / 1000.0
+                    );
+                    $screen.missed = Some(want);
+                }
             }
         }
     }};
 }
 
-/// Draw one screen.
+/// Whether a screen is not lit: switched off (wlr-output-power: yggdrasil-idle), switched off in Settings (out of the space), or
+/// the laptop's own behind the closed lid (`lid_dark`).
+fn dark(app: &App, o: &Output, lid_dark: bool) -> bool {
+    lid_dark || !app.power.is_on(o) || !app.space.outputs().any(|x| x == o)
+}
+
+/// The screen copies asked for (readback.rs), drawn with the boot GPU's renderer.
+fn serve_copies(udev: &Rc<RefCell<Udev>>, app: &mut App) {
+    if app.screencopy.pending.is_empty() && app.capture.pending.is_empty() {
+        return;
+    }
+    let mut guard = udev.borrow_mut();
+    let b = &mut *guard;
+    let lid_closed = b.switches.lid_closed();
+    let primary = b.primary;
+    let Some(key) = b.devices.keys().find(|n| same_gpu(**n, primary)).or_else(|| b.devices.keys().next()).copied() else { return };
+    let Some(dev) = b.devices.get_mut(&key) else { return };
+    let is_dark = move |app: &App, o: &Output| dark(app, o, lid_closed && crate::laptop::is_internal(&o.name()));
+    match &mut dev.gpu {
+        Gpu::Gles { renderer, .. } => {
+            crate::readback::serve::<GlesRenderer, GlesRenderbuffer>(&mut **renderer, Fourcc::Abgr8888, app, &mut b.copy_changed, &is_dark)
+        }
+        Gpu::Pixman { renderer, .. } => crate::readback::serve::<PixmanRenderer, smithay::reexports::pixman::Image<'static, 'static>>(
+            &mut **renderer,
+            Fourcc::Argb8888,
+            app,
+            &mut b.copy_changed,
+            &is_dark,
+        ),
+    }
+}
+
+/// Draw one screen; one that is not lit has its CRTC switched off instead (once), and is lit again with a whole frame.
 fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Handle) {
     let mut guard = udev.borrow_mut();
     let b = &mut *guard;
+    let lid_closed = b.switches.lid_closed();
     let Some(dev) = b.devices.get_mut(&node) else { return };
     let Some(screen) = dev.screens.get_mut(&crtc) else { return };
-    // a screen switched off in Settings is out of the space: nothing is drawn on it
-    if !app.space.outputs().any(|o| *o == screen.output) {
-        screen.dirty = false;
+    screen.dirty = false;
+    if dark(app, &screen.output, lid_closed && screen.internal) {
+        if !screen.off {
+            let r = match &screen.drm {
+                Out::Gles(o) => o.with_compositor(|c| c.clear()),
+                Out::Pixman(o) => o.with_compositor(|c| c.clear()),
+            };
+            match r {
+                Ok(()) => {
+                    screen.off = true;
+                    eprintln!("yggdrasil-compositor: {} switched off", screen.output.name());
+                    b.copy_changed.insert(screen.output.name());
+                }
+                Err(e) if b.session.is_active() => eprintln!("yggdrasil-compositor: {}: not switched off: {e}", screen.output.name()),
+                Err(_) => screen.dirty = true,
+            }
+        }
         return;
     }
-    screen.dirty = false;
+    if screen.off {
+        // lit again: the next frame sets the mode again and is drawn whole
+        screen.off = false;
+        match &screen.drm {
+            Out::Gles(o) => o.reset_buffers(),
+            Out::Pixman(o) => o.reset_buffers(),
+        }
+        eprintln!("yggdrasil-compositor: {} switched on", screen.output.name());
+    }
     let result = match (&mut dev.gpu, &mut screen.drm) {
         (Gpu::Gles { renderer, .. }, Out::Gles(out)) => {
             follow_mode!(renderer, out, screen, Elem);
@@ -911,7 +1410,14 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
         eprintln!("frame {} at {:?}: {result:?}", screen.output.name(), b.start.elapsed());
     }
     match result {
-        Ok(true) => screen.queued = true,
+        Ok(true) => {
+            screen.queued = true;
+            let o = screen.output.clone();
+            b.copy_changed.insert(o.name());
+            if !app.capture.sessions.is_empty() {
+                app.capture_output_changed(&o, false);
+            }
+        }
         Ok(false) => {
             // nothing changed on it: no frame is sent, and the next waits a refresh
             screen.not_before = Instant::now() + refresh_of(&screen.mode);

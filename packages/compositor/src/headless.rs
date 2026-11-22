@@ -17,9 +17,12 @@
 //!                                off (wlr-output-power) and " disabled" for one switched off (Settings, wlr-output-management)
 //!   resize NAME WxH              the output becomes a screen of that size: its own (preferred) mode, which it is set to
 //!   scale NAME S                 change an output's scale
-//!   add-output WxH[@S]           a screen is plugged in (named HEADLESS-N, the next number), placed as Settings' file says or
-//!                                to the right of the others
+//!   add-output WxH[@S] [NAME]    a screen is plugged in (named HEADLESS-N, the next number, or NAME: eDP-1 is taken for a
+//!                                laptop's own screen, as on the hardware), placed as Settings' file says or to the right of
+//!                                the others (a laptop's own screen first)
 //!   remove-output NAME           a screen is unplugged: its panels are closed, its windows move to the first screen
+//!   unplug NAME, replug NAME     a screen's link goes and comes back, as the hardware backend sees a connector: the screen is
+//!                                kept for 2 s (outputs.rs, UNPLUG_GRACE) and removed then unless replugged meanwhile
 //!   screenshot NAME FILE.png [pointer]
 //!                                draw what is pending and write the output's picture as a PNG; with "pointer", the pointer
 //!                                painted over it, as the screen shows it (pointer.rs: drawn as a cursor plane, not in the picture)
@@ -27,9 +30,11 @@
 //!                                its hotspot) or hidden (resting: the pointer timeout; program: the program hid it)
 //!   windows                      one line per window: app id, title, place, size, workspace, states (tab separated; the
 //!                                states are active, floating or tiled, maximized, fullscreen, left, right, minimized)
-//!   layers                       one line per panel or background: output, namespace, layer, place and size (tab separated)
+//!   layers                       one line per panel or background: output, namespace, layer, place, size and what it asks of
+//!                                the keyboard: none, exclusive or on-demand (tab separated)
 //!   free                         one line per output: the room the panels leave free for windows (output, place, size)
-//!   focus                        what has the keyboard: window APP TITLE, layer NAMESPACE OUTPUT, lock OUTPUT, or none
+//!   focus                        what has the keyboard: window APP TITLE, layer NAMESPACE OUTPUT, lock OUTPUT, or none (also
+//!                                on the hardware backend; YGGDRASIL_COMPOSITOR_DEBUG logs each change as "keyboard: to ...")
 //!   workspace                    the workspace showing (1 to 4)
 //!   lock                         "locked" or "unlocked", then one line per lock surface: output and size
 //!   switcher                     the window switcher's cards while it is open (control.rs)
@@ -46,6 +51,8 @@
 //!   pointer-move DX DY           move the virtual mouse: the pointer goes as far as its speed in input.conf says
 //!   scroll DY [DX]               turn its wheel (input.conf's scroll factor and natural scrolling applied)
 //!   input                        the mouse and keyboard settings in force (input.rs: Settings > Peripherals' input.conf)
+//!   touch-down ID X Y, touch-move ID X Y, touch-up ID
+//!                                a finger (ID 0 to 15) on a touchscreen, at X,Y of the touchscreen's screen (touch.rs)
 //!   power NAME on|off            switch an output on or off (as wlr-output-power does)
 //!   clock [stop|run|+MS]         the clock the animations run on: stop it, move a stopped one on, let it run again; without
 //!                                a word: "running" or "stopped" and its time (ms). For tests: a frame in an animation
@@ -201,15 +208,21 @@ fn runtime_ok(dir: &Path, uid: u32, allow_shared: bool) -> Result<(), String> {
 }
 
 /// A virtual screen HEADLESS-n of this size and scale (its wl_output global and its place come with `App::add_output`).
-pub fn make_output(n: usize, s: &OutputSpec) -> Output {
+/// A virtual screen named `name` (HEADLESS-N, or as the kernel names a real one: eDP-1, HDMI-A-1).
+pub fn make_output(name: String, s: &OutputSpec) -> Output {
     let o = Output::new(
-        format!("HEADLESS-{n}"),
+        name,
         PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "headless".into() },
     );
     let mode = Mode { size: (s.w, s.h).into(), refresh: 60_000 };
     o.change_current_state(Some(mode), Some(Transform::Normal), Some(Scale::Fractional(s.scale)), None);
     o.set_preferred(mode);
     o
+}
+
+/// A name `add-output` may give a screen: letters, digits and dashes, as connectors are named (at most 32).
+fn output_name_ok(n: &str) -> bool {
+    !n.is_empty() && n.len() <= 32 && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 /// One output's picture in memory and what is known to be on it.
@@ -241,7 +254,7 @@ pub struct Headless {
 }
 
 /// The commands, for an unknown one's answer.
-const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, switcher, frames, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
+const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, switcher, frames, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, touch-down ID X Y, touch-move ID X Y, touch-up ID, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
 
 /// About 60 frames a second at most, however often programs commit.
 const FRAME: Duration = Duration::from_millis(16);
@@ -624,10 +637,15 @@ pub fn run(
 
 /// The headless backend's own commands (the rest are control.rs's): None for a command that is not one of them.
 fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec<String>, String>> {
-    const OWN: [&str; 15] = [
+    if let Some(r) = touch_command(words, app, h) {
+        return Some(r);
+    }
+    const OWN: [&str; 17] = [
         "resize",
         "add-output",
         "remove-output",
+        "unplug",
+        "replug",
         "screenshot",
         "key",
         "key-down",
@@ -645,6 +663,43 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec
         return None;
     }
     Some(own_command(words, app, h))
+}
+
+/// A finger on a touchscreen, made here (touch.rs): `touch-down ID X Y`, `touch-move ID X Y` (X, Y in the touchscreen's own
+/// logical size, as libinput gives a touch: the laptop's screen, else the main one) and `touch-up ID`, each a frame of its own.
+fn touch_command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec<String>, String>> {
+    let slot = |id: &str| id.parse::<u32>().ok().filter(|n| *n < 16).map(|n| smithay::backend::input::TouchSlot::from(Some(n)));
+    let at = |app: &App, x: &str, y: &str| -> Option<smithay::utils::Point<f64, smithay::utils::Logical>> {
+        let (x, y) = (x.parse::<f64>().ok().filter(|v| v.is_finite())?, y.parse::<f64>().ok().filter(|v| v.is_finite())?);
+        let r = state::output_rect(&app.touch_output());
+        Some((r.loc.x as f64 + x.clamp(0.0, r.size.w as f64), r.loc.y as f64 + y.clamp(0.0, r.size.h as f64)).into())
+    };
+    let usage = || Err("touch-down ID X Y, touch-move ID X Y, touch-up ID (ID 0 to 15)".to_string());
+    let r = match words {
+        [w @ ("touch-down" | "touch-move"), id, x, y] => match (slot(id), at(app, x, y)) {
+            (Some(s), Some(p)) => {
+                if *w == "touch-down" {
+                    app.touch_down(s, p, h.ms());
+                } else {
+                    app.touch_motion(s, p, h.ms());
+                }
+                app.touch_frame();
+                Ok(vec![])
+            }
+            _ => usage(),
+        },
+        ["touch-up", id] => match slot(id) {
+            Some(s) => {
+                app.touch_up(s, h.ms());
+                app.touch_frame();
+                Ok(vec![])
+            }
+            None => usage(),
+        },
+        [w, ..] if w.starts_with("touch-") => usage(),
+        _ => return None,
+    };
+    Some(r)
 }
 
 fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String>, String> {
@@ -666,13 +721,21 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             }
             Ok(vec![])
         }
-        ["add-output", spec] => {
+        ["add-output", spec, named @ ..] if named.len() <= 1 => {
             let spec = parse_output(spec).ok_or_else(|| format!("{spec}: give WIDTHxHEIGHT or WIDTHxHEIGHT@SCALE"))?;
             if app.heads.list.len() >= 16 {
                 return Err("16 outputs at most".into());
             }
-            let o = make_output(h.next, &spec);
-            h.next += 1;
+            let name = match named.first() {
+                Some(n) if !output_name_ok(n) => return Err(format!("{n}: a connector's name, like eDP-1 or HDMI-A-1")),
+                Some(n) if app.head(n).is_some() => return Err(format!("{n} is already there")),
+                Some(n) => n.to_string(),
+                None => {
+                    h.next += 1;
+                    format!("HEADLESS-{}", h.next - 1)
+                }
+            };
+            let o = make_output(name, &spec);
             let name = o.name();
             app.add_output(o, spec.scale);
             Ok(vec![name])
@@ -681,6 +744,15 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             app.remove_output(name)?;
             Ok(vec![])
         }
+        ["unplug", name] => {
+            output(name, app)?;
+            app.output_unplugged(name);
+            Ok(vec![])
+        }
+        ["replug", name] => match app.output_back(name) {
+            true => Ok(vec![]),
+            false => Err(format!("{name} is not leaving (add-output plugs in a new screen)")),
+        },
         ["screenshot", name, path, rest @ ..] if rest.is_empty() || rest == ["pointer"] => {
             if app.head(name).is_none_or(|hd| !hd.enabled) {
                 return Err(format!("no output {name} that is on"));

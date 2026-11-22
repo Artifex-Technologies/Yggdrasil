@@ -15,7 +15,20 @@
 //! repeat_delay = 600         milliseconds before a held key repeats, 100 to 2000
 //! [example-gaming-mouse]    one mouse, by the compositor's name for it (without the -1, -2 ... of its other parts)
 //! sensitivity = -0.5         what that mouse does differently (the pointer keys above)
+//! [touchpad]                 every touchpad (and [trackpoint]: every TrackPoint); a device's own section comes first
+//! tap_to_click = 1           a tap is a click (two fingers: the right button, three: the middle one)
+//! tap_and_drag = 1           a tap and then a touch held drags
+//! drag_lock = 0              a drag goes on for a moment after the finger is lifted
+//! disable_while_typing = 1   the touchpad does nothing while keys are typed
+//! click_method = button_areas   button_areas (the pad's bottom corners are its buttons) or clickfinger (two fingers: right)
+//! middle_button_emulation = 0   the left and right buttons pressed together are the middle one
+//! scroll_method = two_finger    two_finger, edge, on_button_down (moving while a button is held, a TrackPoint's) or none
+//! scroll_button = 274        the button for on_button_down (274: the middle one)
 //! ```
+//!
+//! The touchpad keys go in any section; a touchpad does not take the natural scrolling and scroll factor of every mouse (the
+//! top), only its own and [touchpad]'s, as on Hyprland (`input:touchpad`). Only Yggdrasil's own compositor reads the touchpad
+//! keys; the Hyprland session keeps Hyprland's touchpad defaults, which are the compositor's defaults too (input.rs there).
 //!
 //! Yggdrasil's own compositor (packages/compositor) reads the same file with `parse` here, at start and on `reload` (which
 //! `apply_input` asks it for), and lists its devices on its control socket's `devices`.
@@ -33,6 +46,11 @@ pub const SPEED: std::ops::RangeInclusive<f64> = -1.0..=1.0;
 pub const SCROLL: std::ops::RangeInclusive<f64> = 0.1..=5.0;
 pub const REPEAT_RATE: std::ops::RangeInclusive<u32> = 1..=100;
 pub const REPEAT_DELAY: std::ops::RangeInclusive<u32> = 100..=2000;
+/// Button codes (BTN_LEFT is 0x110 = 272, BTN_TASK 0x117 = 279; a mouse's extra buttons go a little further).
+pub const SCROLL_BUTTON: std::ops::RangeInclusive<u32> = 0x110..=0x15f;
+/// The sections for every device of a kind (not one device's name): every touchpad, every TrackPoint.
+pub const TOUCHPADS: &str = "touchpad";
+pub const TRACKPOINTS: &str = "trackpoint";
 /// A mouse's other parts the compositor lists as NAME-1, NAME-2 ...: a mouse's settings are given to these as well.
 pub const PARTS: u32 = 9;
 
@@ -54,7 +72,47 @@ impl Accel {
     }
 }
 
-/// The pointer settings; None leaves it to the default (for a single mouse: to the settings for every mouse).
+/// How a touchpad clicks: libinput's two click methods.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClickMethod {
+    /// the pad's bottom corners are its buttons (a press in the right one is a right click)
+    ButtonAreas,
+    /// the number of fingers decides: one the left button, two the right, three the middle
+    Clickfinger,
+}
+
+impl ClickMethod {
+    pub fn word(self) -> &'static str {
+        match self {
+            ClickMethod::ButtonAreas => "button_areas",
+            ClickMethod::Clickfinger => "clickfinger",
+        }
+    }
+}
+
+/// How a device scrolls: libinput's scroll methods.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollMethod {
+    TwoFinger,
+    Edge,
+    /// moving while a button is held (a TrackPoint's middle button)
+    OnButtonDown,
+    NoScroll,
+}
+
+impl ScrollMethod {
+    pub fn word(self) -> &'static str {
+        match self {
+            ScrollMethod::TwoFinger => "two_finger",
+            ScrollMethod::Edge => "edge",
+            ScrollMethod::OnButtonDown => "on_button_down",
+            ScrollMethod::NoScroll => "none",
+        }
+    }
+}
+
+/// The pointer settings; None leaves it to the default (for a single mouse: to the settings for every mouse). The touchpad
+/// settings (tap_to_click and those after it) are for touchpads and TrackPoints, read by Yggdrasil's own compositor.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Pointer {
     pub sensitivity: Option<f64>,
@@ -62,6 +120,15 @@ pub struct Pointer {
     pub scroll_factor: Option<f64>,
     pub natural_scroll: Option<bool>,
     pub left_handed: Option<bool>,
+    pub tap_to_click: Option<bool>,
+    pub tap_and_drag: Option<bool>,
+    pub drag_lock: Option<bool>,
+    pub disable_while_typing: Option<bool>,
+    pub click_method: Option<ClickMethod>,
+    pub middle_button_emulation: Option<bool>,
+    pub scroll_method: Option<ScrollMethod>,
+    /// a button code (274: the middle button), for `ScrollMethod::OnButtonDown`
+    pub scroll_button: Option<u32>,
 }
 
 impl Pointer {
@@ -77,7 +144,20 @@ impl Pointer {
             scroll_factor: self.scroll_factor.or(all.scroll_factor),
             natural_scroll: self.natural_scroll.or(all.natural_scroll),
             left_handed: self.left_handed.or(all.left_handed),
+            tap_to_click: self.tap_to_click.or(all.tap_to_click),
+            tap_and_drag: self.tap_and_drag.or(all.tap_and_drag),
+            drag_lock: self.drag_lock.or(all.drag_lock),
+            disable_while_typing: self.disable_while_typing.or(all.disable_while_typing),
+            click_method: self.click_method.or(all.click_method),
+            middle_button_emulation: self.middle_button_emulation.or(all.middle_button_emulation),
+            scroll_method: self.scroll_method.or(all.scroll_method),
+            scroll_button: self.scroll_button.or(all.scroll_button),
         }
+    }
+
+    /// Only the touchpad settings (a touchpad takes these of every mouse's, not its natural scrolling and scroll factor).
+    pub fn touchpad_part(&self) -> Pointer {
+        Pointer { natural_scroll: None, scroll_factor: None, ..self.clone() }
     }
 
     /// Takes one `key = value` line of the file (a key that is not a pointer setting is skipped; a value not understood unsets it).
@@ -94,6 +174,28 @@ impl Pointer {
             }
             "natural_scroll" => self.natural_scroll = yes_no(value),
             "left_handed" => self.left_handed = yes_no(value),
+            "tap_to_click" => self.tap_to_click = yes_no(value),
+            "tap_and_drag" => self.tap_and_drag = yes_no(value),
+            "drag_lock" => self.drag_lock = yes_no(value),
+            "disable_while_typing" => self.disable_while_typing = yes_no(value),
+            "middle_button_emulation" => self.middle_button_emulation = yes_no(value),
+            "click_method" => {
+                self.click_method = match value {
+                    "button_areas" => Some(ClickMethod::ButtonAreas),
+                    "clickfinger" => Some(ClickMethod::Clickfinger),
+                    _ => None,
+                }
+            }
+            "scroll_method" => {
+                self.scroll_method = match value {
+                    "two_finger" => Some(ScrollMethod::TwoFinger),
+                    "edge" => Some(ScrollMethod::Edge),
+                    "on_button_down" => Some(ScrollMethod::OnButtonDown),
+                    "none" => Some(ScrollMethod::NoScroll),
+                    _ => None,
+                }
+            }
+            "scroll_button" => self.scroll_button = value.parse::<u32>().ok().filter(|b| SCROLL_BUTTON.contains(b)),
             _ => {}
         }
     }
@@ -113,6 +215,28 @@ impl Pointer {
         }
         if let Some(b) = self.left_handed {
             out.push_str(&format!("left_handed = {}\n", b as u8));
+        }
+        for (key, v) in [
+            ("tap_to_click", self.tap_to_click),
+            ("tap_and_drag", self.tap_and_drag),
+            ("drag_lock", self.drag_lock),
+            ("disable_while_typing", self.disable_while_typing),
+        ] {
+            if let Some(b) = v {
+                out.push_str(&format!("{key} = {}\n", b as u8));
+            }
+        }
+        if let Some(m) = self.click_method {
+            out.push_str(&format!("click_method = {}\n", m.word()));
+        }
+        if let Some(b) = self.middle_button_emulation {
+            out.push_str(&format!("middle_button_emulation = {}\n", b as u8));
+        }
+        if let Some(m) = self.scroll_method {
+            out.push_str(&format!("scroll_method = {}\n", m.word()));
+        }
+        if let Some(b) = self.scroll_button {
+            out.push_str(&format!("scroll_button = {b}\n"));
         }
     }
 
@@ -303,6 +427,10 @@ impl InputConf {
         }
         let mut f = vec![];
         p.lua_fields(false, &mut f);
+        // only touchpad keys (which Hyprland is not given): nothing to say
+        if f.is_empty() {
+            return vec![];
+        }
         std::iter::once(name.to_string())
             .chain((1..=PARTS).map(|n| format!("{name}-{n}")))
             .map(|n| format!("hl.device({{ name = \"{n}\", {} }})", f.join(", ")))
@@ -355,6 +483,38 @@ mod tests {
         assert_eq!(m.over(&c.all).scroll_factor, Some(1.5), "what a mouse does not set comes from every mouse's");
         assert_eq!(InputConf::parse(&c.text()), c);
         assert!(c.text().contains("\n[example-gaming-mouse]\nsensitivity = -0.5\naccel_profile = adaptive\n"));
+    }
+
+    #[test]
+    fn the_touchpad_keys_are_read_and_written_back() {
+        let text = "natural_scroll = 0\n[touchpad]\ntap_to_click = 0\ntap_and_drag = yes\ndrag_lock = 1\ndisable_while_typing = off\n\
+                    click_method = clickfinger\nmiddle_button_emulation = 1\nscroll_method = edge\nnatural_scroll = 1\n\
+                    [trackpoint]\nsensitivity = 0.4\nscroll_method = on_button_down\nscroll_button = 274\n\
+                    [odd-pad]\nclick_method = corners\nscroll_method = sideways\nscroll_button = 3\n";
+        let c = InputConf::parse(text);
+        let t = &c.devices[TOUCHPADS];
+        assert_eq!(
+            (t.tap_to_click, t.tap_and_drag, t.drag_lock, t.disable_while_typing),
+            (Some(false), Some(true), Some(true), Some(false))
+        );
+        assert_eq!(
+            (t.click_method, t.middle_button_emulation, t.scroll_method),
+            (Some(ClickMethod::Clickfinger), Some(true), Some(ScrollMethod::Edge))
+        );
+        let p = &c.devices[TRACKPOINTS];
+        assert_eq!((p.sensitivity, p.scroll_method, p.scroll_button), (Some(0.4), Some(ScrollMethod::OnButtonDown), Some(274)));
+        assert!(!c.devices.contains_key("odd-pad"), "words not understood (and a button code out of range) are left out");
+        assert_eq!(InputConf::parse(&c.text()), c, "Settings writing the file back keeps them");
+        let top = Pointer { natural_scroll: Some(true), scroll_factor: Some(2.0), sensitivity: Some(0.5), ..Default::default() };
+        assert_eq!(
+            top.touchpad_part(),
+            Pointer { sensitivity: Some(0.5), ..Default::default() },
+            "a mouse's scrolling is not a touchpad's"
+        );
+        assert!(
+            InputConf::hyprland_device_lua("my-pad", &c.devices[TOUCHPADS].touchpad_part()).is_empty(),
+            "Hyprland is given none of them"
+        );
     }
 
     #[test]

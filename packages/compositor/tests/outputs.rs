@@ -343,3 +343,79 @@ fn screens_plugged_in_and_out_and_the_windows_move_off() {
     l.roundtrip();
     assert_eq!(comp.must("lock"), ["unlocked"]);
 }
+
+#[test]
+fn a_laptops_own_screen_is_first_and_main_and_gets_main_back_after_the_lid() {
+    let _l = limit(60, "the laptop's screen is main");
+    let comp = Compositor::start(&["--size", "1280x720"]);
+    assert_eq!(comp.must("main"), ["HEADLESS-1"]);
+    // a monitor, then the laptop's own panel, named as the kernel names them
+    assert_eq!(comp.must("add-output 2560x1440 HDMI-A-1"), ["HDMI-A-1"]);
+    assert_eq!(comp.must("main"), ["HEADLESS-1"], "a monitor plugged in to the right does not take main");
+    assert_eq!(comp.must("add-output 1920x1200@1.25 eDP-1"), ["eDP-1"]);
+    assert_eq!(comp.must("main"), ["eDP-1"], "the laptop's own screen is main");
+    comp.must("remove-output HEADLESS-1");
+    let both = ["eDP-1 1920x1200 scale=1.25 at=0,0 logical=1536x960", "HDMI-A-1 2560x1440 scale=1 at=1536,0 logical=2560x1440"];
+    assert_eq!(comp.must("outputs"), both, "listed first, at the left");
+    assert!(comp.ctl("add-output 800x600 eDP-1").is_err(), "a name in use");
+
+    // a window on the monitor
+    comp.must("pointer 2500 300");
+    let mut c = comp.connect();
+    let w = c.window("test.w", "W");
+    c.draw(&w, (400, 300), BLUE);
+    let on_hdmi = comp.window("test.w").unwrap().rect();
+    assert!(on_hdmi.0 >= 1536, "{on_hdmi:?}");
+
+    // the lid closed with the monitor in: the panel leaves, the monitor is main
+    comp.must("remove-output eDP-1");
+    assert_eq!(comp.must("main"), ["HDMI-A-1"]);
+    // opened: the panel comes back first and at the left, and is main again; the window stays on the monitor
+    comp.must("add-output 1920x1200@1.25 eDP-1");
+    assert_eq!(comp.must("main"), ["eDP-1"], "main back on the laptop's screen");
+    assert_eq!(comp.must("outputs"), both);
+    assert_eq!(comp.window("test.w").unwrap().rect(), on_hdmi, "the window kept its place on the monitor");
+
+    // Settings > Displays' choice comes first (display.conf, matched by its connector when it has no maker and model)
+    std::fs::write(comp.dir.join("home/.config/yggdrasil/display.conf"), "main_connector = HDMI-A-1\n").unwrap();
+    comp.must("reload");
+    assert_eq!(comp.must("main"), ["HDMI-A-1"], "the monitor chosen in Settings");
+}
+
+#[test]
+fn a_screen_whose_link_bounces_keeps_its_windows_and_panels() {
+    let _l = limit(60, "a link that bounces");
+    let comp = Compositor::start(&["--outputs", "2", "--size", "1280x720"]);
+    let mut c = comp.connect();
+    let bar =
+        c.layer_with(1, Layer::Top, "test-bar-2", Anchor::Top | Anchor::Left | Anchor::Right, (0, 32), 32, KeyboardInteractivity::None);
+    c.draw_layer(&bar, RED);
+    comp.must("pointer 1900 300");
+    let w = c.window("test.on2", "On 2");
+    c.draw(&w, (400, 300), BLUE);
+    let on2 = comp.window("test.on2").unwrap().rect();
+    assert!(on2.0 >= 1280, "{on2:?}");
+    let both = comp.must("outputs");
+    assert!(comp.ctl("replug HEADLESS-2").is_err(), "a screen that did not go cannot come back");
+
+    // the monitor drops its link and brings it back within a second, three times: nothing changes for programs
+    for _ in 0..3 {
+        comp.must("unplug HEADLESS-2");
+        assert_eq!(comp.must("outputs"), both, "kept while it may come back");
+        std::thread::sleep(Duration::from_millis(400));
+        comp.must("replug HEADLESS-2");
+    }
+    std::thread::sleep(Duration::from_millis(2500));
+    c.roundtrip();
+    assert_eq!(comp.must("outputs"), both, "still there after the grace");
+    assert_eq!(comp.window("test.on2").unwrap().rect(), on2, "the window stayed");
+    assert!(!c.state.layer_closed, "its panel was never closed");
+
+    // gone for good: after the grace it is removed, its panel closed and its window moved to the first screen
+    let t = Instant::now();
+    comp.must("unplug HEADLESS-2");
+    comp.wait(10, "the screen removed", |c| c.must("outputs").len() == 1);
+    assert!(t.elapsed() >= Duration::from_millis(1800), "not before the grace: {:?}", t.elapsed());
+    c.until("the bar closed", |s| s.layer_closed);
+    assert!(comp.window("test.on2").unwrap().rect().0 < 1280);
+}

@@ -23,7 +23,7 @@ use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContent
 use wayland_client::protocol::{
     wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_keyboard, wl_keyboard::WlKeyboard, wl_output, wl_output::WlOutput, wl_pointer,
     wl_pointer::WlPointer, wl_registry::WlRegistry, wl_seat, wl_seat::WlSeat, wl_shm, wl_shm::WlShm, wl_shm_pool::WlShmPool,
-    wl_surface::WlSurface,
+    wl_surface::WlSurface, wl_touch, wl_touch::WlTouch,
 };
 use wayland_client::{delegate_noop, event_created_child, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols::ext::foreign_toplevel_list::v1::client::{
@@ -342,13 +342,22 @@ pub struct LayerInfo {
     pub layer: String,
     pub at: (i32, i32),
     pub size: (i32, i32),
+    /// none, exclusive or on-demand
+    pub keyboard: String,
 }
 
 impl LayerInfo {
     fn parse(l: &str) -> LayerInfo {
         let p: Vec<&str> = l.split('\t').collect();
-        assert_eq!(p.len(), 5, "a layers line: {l:?}");
-        LayerInfo { output: p[0].into(), namespace: p[1].into(), layer: p[2].into(), at: pair(p[3], ','), size: pair(p[4], 'x') }
+        assert_eq!(p.len(), 6, "a layers line: {l:?}");
+        LayerInfo {
+            output: p[0].into(),
+            namespace: p[1].into(),
+            layer: p[2].into(),
+            at: pair(p[3], ','),
+            size: pair(p[4], 'x'),
+            keyboard: p[5].into(),
+        }
     }
 }
 
@@ -394,6 +403,10 @@ pub struct CopyState {
 #[derive(Default)]
 pub struct State {
     pub outputs: Vec<Out>,
+    /// the seat's capabilities (wl_seat's bits: 1 pointer, 2 keyboard, 4 touch)
+    pub seat_caps: u32,
+    /// wl_touch's events: ("down", id, x, y) on the surface, ("motion", ...), ("up", id, 0, 0), ("frame", ...)
+    pub touches: Vec<(&'static str, i32, f64, f64)>,
     /// every layer surface's configures (width, height), each acked, in the order the surfaces were made
     pub layer_sizes: Vec<(u32, u32)>,
     pub layer_configures: HashMap<usize, Vec<(u32, u32)>>,
@@ -600,6 +613,13 @@ impl Client {
             self.roundtrip();
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    /// Take the touch (once the seat has one; the events land in `state.touches`).
+    pub fn touch(&mut self) -> WlTouch {
+        let t = self.seat.get_touch(&self.qh, ());
+        self.roundtrip();
+        t
     }
 
     /// Take the keyboard and the pointer (the events land in `state`).
@@ -887,7 +907,27 @@ impl Dispatch<WpFractionalScaleV1, ()> for State {
 }
 
 impl Dispatch<WlSeat, ()> for State {
-    fn event(_: &mut Self, _: &WlSeat, _: wl_seat::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(st: &mut Self, _: &WlSeat, event: wl_seat::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let wl_seat::Event::Capabilities { capabilities } = event {
+            st.seat_caps = match capabilities {
+                WEnum::Value(c) => c.bits(),
+                WEnum::Unknown(u) => u,
+            };
+        }
+    }
+}
+
+impl Dispatch<WlTouch, ()> for State {
+    fn event(st: &mut Self, _: &WlTouch, event: wl_touch::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        match event {
+            wl_touch::Event::Down { id, x, y, .. } => st.touches.push(("down", id, x, y)),
+            wl_touch::Event::Motion { id, x, y, .. } => st.touches.push(("motion", id, x, y)),
+            wl_touch::Event::Up { id, .. } => st.touches.push(("up", id, 0.0, 0.0)),
+            wl_touch::Event::Frame => st.touches.push(("frame", 0, 0.0, 0.0)),
+            wl_touch::Event::Cancel => st.touches.push(("cancel", 0, 0.0, 0.0)),
+            _ => {}
+        }
+    }
 }
 
 impl Dispatch<WlKeyboard, ()> for State {

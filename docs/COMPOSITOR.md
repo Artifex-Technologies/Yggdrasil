@@ -44,6 +44,18 @@ screen switched to a smaller mode left Settings partly off it (floating windows 
 their screen when its mode or scale changes or it goes, on the headless and hardware backends alike: `placement::inside`,
 `tests/behaviour.rs`).
 
+## The hardware backend: the laptop (built 2026-11-19, not yet tried on the laptop)
+
+What a laptop needs, for my ThinkPad X1 Yoga (Intel Iris Xe): the internal screen known by its connector (eDP, LVDS, DSI) and
+given a CRTC first; the lid (closed with a monitor on: the panel leaves its CRTC as if unplugged; alone: dark, for logind to
+suspend); the tablet-mode switch recorded; hotplug with CRTCs given back and docks' new MST connectors; a default scale from the
+screen's size (1.25 for the laptop's 14-inch 1920x1200 panel, as I set it on Hyprland); waking from a suspend told by the kernel
+(a timer cancelled on resume: no D-Bus) and every screen set up again; screens off as a CRTC switched off; the touchpad's and
+TrackPoint's settings from input.conf; the touchscreen as wl_touch and the pen as a pointer; and screen copies drawn again on the
+GPU (grim, the panel's previews). The rules have unit tests and the touchscreen a headless test; the rest is tried by hand on
+the laptop's text console with `packages/compositor/tests/laptop-tty.sh`. What each part does and whether it has been checked:
+[packages/compositor/README.md](../packages/compositor/README.md#the-laptop-milestone-2-built-2026-11-19).
+
 ## Headless: the hidden test mode (built 2026-11-10)
 
     yggdrasil-compositor --headless [--outputs N] [--size WxH] [--scale S] [--output WxH[@S]]... [--run COMMAND ...]
@@ -202,6 +214,56 @@ so the snapshot is the same on every machine; the titles are drawn when a font i
 Known limitations: there is no blur or dimming behind the panel (too dear for the software renderer); minimized windows and
 windows on other desktops show the last picture they drew (they are not asked for new ones); hovering a card does not choose
 it; it has not yet been tried by hand nested or in the test machine (the host keeps Alt + Tab nested).
+
+## Full screen and the windows over it: one stacking order (2026-11-19)
+
+On Hyprland I know this bug: a game full screen, a smaller window opened over it, and then switching back is refused, or the small
+window stays drawn while clicks pass through it into the game. It comes from the drawing order and the input order (what the
+pointer hits, which window has the keyboard) coming from different places. Before I move the laptop to this compositor it has to
+be proven not to do that.
+
+**How it works.** Smithay's `Space` holds the windows back to front, and it is the only order there is
+(`packages/compositor/src/state/stacking.rs`):
+- **Drawing** (`scene`) walks it from the front: X11 menus, the Overlay layer, the Top layer (the bar and the dock), each window
+  (its controls, its picture and its menus, its border), then the Bottom and Background layers.
+- **The pointer and touch** (`under`, behind `surface_under`) walk the same list in the same order, so what a click or a
+  finger lands on is what is drawn there; the window controls and the resize grips are found in the same walk (a grip of a window
+  behind another takes nothing).
+- **A click or a tap** gives the keyboard to what `under` found: a window is raised, told it is active and given the keyboard
+  in one step; a panel only when it is in front there and asks for the keyboard.
+- **Raising** happens only together with the keyboard: a click, Alt + Tab, the dock, `activate`, a new window opening, a
+  minimized one restored. Everything that only moves or resizes a window (maximize, full screen and back, snapping, tiling,
+  keeping windows clear of the bar and dock, screens changing size) keeps its place in the stack (`relocate`).
+- **Full screen** covers the whole screen. While the window in front on a screen is full screen, that screen's bar and dock go
+  behind the windows, for the eye and for the pointer alike; another screen keeps its bar. A window opened over a full screen
+  one is in front of it with the keyboard (and the bar shows again over the game while it is); a click on the game outside it
+  brings the game forward and hides the bar again. A full screen window asking for full screen again, or leaving it, from
+  behind stays behind.
+- **The keyboard** goes, when the window with it closes or is minimized, to the window then in front, which is told it is
+  active. While the screen is locked no window takes the keyboard from the lock.
+
+Before (found by these tests and fixed 2026-11-19): maximize, full screen, restore, snapping, tiling, keep-clear and a screen
+changing size raised windows without the keyboard (a window behind a full screen game came out in front of it when the dock
+changed, or the game came out in front of the window with the keyboard when the screen changed size, when it asked for full
+screen again or left it); a full screen window on one screen decided the bar of every screen (a bar on the other screen was
+drawn but took no click); a click on the bar's place over a full screen game could give a panel the keyboard; a hidden window's
+resize grip took clicks meant for the full screen window in front; the window under a new one was never told it was no longer
+active, nor told it was again when the new one closed; a window closing behind the lock took the keyboard from it; a menu
+(xdg_popup) never got its first configure and so never showed. Opening, clicking, Alt + Tab and `activate` were already right.
+
+**Proof**: `packages/compositor/tests/fullscreen.rs` (9 tests, CI's `rust` job). Each check looks at four things at once: the
+pixel at a probe point of the screen, the surface a click there reaches, the surface a key reaches, and which window the
+programs were told is active. Covered: a window opened over a full screen one; switching back and forth by Alt + Tab, by
+clicking and by the control socket's `activate`; minimize and restore; closing the window with the keyboard; leaving full
+screen and asking for it again, in front and behind; a menu that reaches past its window over the game, and a dialog with its
+parent; two screens; the dock growing; the screen getting smaller; a decorated window's hidden grips; the lock while windows
+open and close behind it; a finger tapping the small window, the game outside it, where it was and where the hidden bar is.
+
+Known limitations: a menu has no grab (a click outside it does not close it, and it does not take the keyboard); there is no
+"always on top" or layer of its own for dialogs (a dialog is a window like any other, in front because it opened last); the
+window a workspace shows with the keyboard is the one used last there, which is also the one in front unless a tool raised
+another without it. Not tried headless: real games through Proton and XWayland (X11's own stacking is kept with
+`raise_window` when a window is raised, and a full screen X11 window is drawn opaque).
 
 ## Status (2026-10-18): first version, runs nested in a window only
 

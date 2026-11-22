@@ -11,12 +11,18 @@
 //!
 //! A screen that goes (removed or switched off) takes its panels with it (they are told `closed`) and its lock surface; the windows
 //! on it move to the first screen, keeping their place on it as far as it fits, and windows on a screen that moves go with it.
-//! At least one screen always stays on.
+//! At least one screen always stays on. A screen whose link goes (unplugged, or a monitor hunting between its inputs, which
+//! drops and brings back its link within a second) is kept for `UNPLUG_GRACE` with its windows and panels, and goes only when
+//! it has not come back by then (`output_unplugged`, `output_back`).
+//!
+//! A mode asked for (monitors.lua, wlr-output-management) is matched to the screen's own modes within half a hertz
+//! (`closest_mode`): Settings and Hyprland write 60 for a panel's 60.003 Hz.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use smithay::output::{Mode, Output, Scale};
+use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::wayland_server::backend::GlobalId;
 use smithay::utils::{Logical, Point, Rectangle};
 
@@ -63,6 +69,22 @@ pub struct Heads {
     rules_time: Option<Option<std::time::SystemTime>>,
     /// wlr-output-management's managers (outputmgmt.rs)
     pub mgmt: crate::outputmgmt::Mgmt,
+    /// screens whose link went a moment ago, kept until UNPLUG_GRACE has passed: name, and the timer that then removes it
+    pub leaving: Vec<(String, RegistrationToken)>,
+}
+
+/// How long a screen whose link went may stay away and come back as if it had never gone (its windows, panels and wl_output
+/// kept): an HDMI monitor hunting between its inputs bounced three times in 26 s on the laptop (2026-11-19).
+pub const UNPLUG_GRACE: Duration = Duration::from_secs(2);
+
+/// The mode of `modes` that is `want`: the same size and the closest refresh within half a hertz (monitors.lua's 60 for a
+/// panel's 60.003 Hz, as Hyprland matches it). None when the screen has no such mode.
+pub fn closest_mode(modes: &[Mode], want: Mode) -> Option<Mode> {
+    modes
+        .iter()
+        .filter(|m| m.size == want.size && (m.refresh - want.refresh).abs() <= 500)
+        .min_by_key(|m| (m.refresh - want.refresh).abs())
+        .copied()
 }
 
 pub fn monitors_path() -> PathBuf {
@@ -206,18 +228,22 @@ fn check(w: &Want) -> Result<(), String> {
 
 impl App {
     /// A screen appears (at start, or plugged in): its wl_output, and the mode, scale and place Settings' file gives it.
+    /// A laptop's own screen is listed before the others (Settings > Displays numbers it 1) and, unless placed elsewhere, laid
+    /// out first, at the left: also when it comes back after the lid.
     pub fn add_output(&mut self, output: Output, default_scale: f64) {
         let name = output.name();
-        self.heads.list.push(Head { output, enabled: false, global: None, default_scale, fixed_at: None });
-        let want = {
-            let h = self.heads.list.last().expect("just added");
-            want_from_rules(&self.heads.rules, &name, h.preferred(), default_scale)
+        let at = match crate::laptop::is_internal(&name) {
+            true => self.heads.list.iter().position(|h| !crate::laptop::is_internal(&h.output.name())).unwrap_or(self.heads.list.len()),
+            false => self.heads.list.len(),
         };
+        self.heads.list.insert(at, Head { output, enabled: false, global: None, default_scale, fixed_at: None });
+        let preferred = self.heads.list[at].preferred();
+        let want = want_from_rules(&self.heads.rules, &name, preferred, default_scale);
         // the rules may not switch the only screen off
         let want = if self.heads.list.iter().any(|h| h.enabled) { want } else { Want { enabled: true, ..want } };
         if let Err(e) = self.configure_outputs(vec![(name.clone(), want.clone())], false) {
             eprintln!("yggdrasil-compositor: {name}: {e}; it keeps its own mode and scale");
-            let plain = Want { enabled: true, mode: self.heads.list.last().expect("just added").preferred(), scale: 1.0, at: None };
+            let plain = Want { enabled: true, mode: preferred, scale: 1.0, at: None };
             let _ = self.configure_outputs(vec![(name, plain)], false);
         }
     }
@@ -225,6 +251,7 @@ impl App {
     /// A screen goes (unplugged): as switched off, then forgotten. The last one stays.
     pub fn remove_output(&mut self, name: &str) -> Result<(), String> {
         let i = self.heads.list.iter().position(|h| h.output.name() == name).ok_or_else(|| format!("no output {name}"))?;
+        self.output_back(name);
         let mut off = self.heads.list[i].now();
         off.enabled = false;
         self.configure_outputs(vec![(name.to_string(), off)], false)?;
@@ -233,11 +260,54 @@ impl App {
         Ok(())
     }
 
+    /// A screen's link went (its connector disconnected): it stays, with its windows and panels, for UNPLUG_GRACE, and is
+    /// removed then unless it came back (`output_back`). Nothing changes for programs meanwhile.
+    pub fn output_unplugged(&mut self, name: &str) {
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+        if self.head(name).is_none() || self.heads.leaving.iter().any(|(n, _)| n == name) {
+            return;
+        }
+        let n = name.to_string();
+        let timer = self.loop_handle.insert_source(Timer::from_duration(UNPLUG_GRACE), move |_, _, app| {
+            app.heads.leaving.retain(|(x, _)| *x != n);
+            eprintln!("yggdrasil-compositor: {n} did not come back: removed");
+            if let Err(e) = app.remove_output(&n) {
+                eprintln!("yggdrasil-compositor: {n}: {e}");
+            }
+            TimeoutAction::Drop
+        });
+        match timer {
+            Ok(t) => self.heads.leaving.push((name.to_string(), t)),
+            Err(_) => {
+                let _ = self.remove_output(name);
+            }
+        }
+    }
+
+    /// A screen whose link went is back within UNPLUG_GRACE: it is kept as it was (true). False when it was not leaving.
+    pub fn output_back(&mut self, name: &str) -> bool {
+        let Some(i) = self.heads.leaving.iter().position(|(n, _)| n == name) else { return false };
+        let (_, t) = self.heads.leaving.remove(i);
+        self.loop_handle.remove(t);
+        self.wake();
+        true
+    }
+
+    /// The screens whose link went and that are still kept (the hardware backend gives one back its CRTC when it returns).
+    pub fn leaving_outputs(&self) -> Vec<Output> {
+        self.heads.leaving.iter().filter_map(|(n, _)| self.head(n)).map(|h| h.output.clone()).collect()
+    }
+
     /// Set screens to what `changes` says (the others stay as they are). With `test_only` nothing changes: only whether it could.
+    /// A mode is matched to the screen's own within half a hertz (`closest_mode`).
     pub fn configure_outputs(&mut self, changes: Vec<(String, Want)>, test_only: bool) -> Result<(), String> {
-        for (name, w) in &changes {
-            if !self.heads.list.iter().any(|h| h.output.name() == *name) {
+        let mut changes = changes;
+        for (name, w) in &mut changes {
+            let Some(h) = self.heads.list.iter().find(|h| h.output.name() == *name) else {
                 return Err(format!("no output {name}"));
+            };
+            if let Some(m) = closest_mode(&h.output.modes(), w.mode) {
+                w.mode = m;
             }
             check(w).map_err(|e| format!("{name}: {e}"))?;
         }
@@ -314,9 +384,9 @@ impl App {
         self.choose_main();
     }
 
-    /// The main screen (windows maximize and the switcher shows there; X11 programs are told it is the primary one): the monitor
-    /// chosen in Settings > Displays when it is on (yggdrasil_conf::display), else the one that was main while it stays on, else
-    /// the first screen that is on.
+    /// The main screen (windows maximize and the switcher shows there; X11 programs are told it is the primary one), as the
+    /// panel's dock and Settings have it (yggdrasil_conf::display::pick): the monitor chosen in Settings > Displays when it is
+    /// on, else a laptop's own screen (so it is main again when the lid opens), else the one at the top left.
     pub fn choose_main(&mut self) {
         let on: Vec<Output> = self.heads.list.iter().filter(|h| h.enabled).map(|h| h.output.clone()).collect();
         let props: Vec<(String, smithay::output::PhysicalProperties, Point<i32, Logical>)> =
@@ -325,8 +395,7 @@ impl App {
             .iter()
             .map(|(name, p, at)| yggdrasil_conf::display::Seen { connector: name, make: &p.make, model: &p.model, x: at.x, y: at.y })
             .collect();
-        let chosen = self.main_choice.as_ref().and_then(|c| yggdrasil_conf::display::chosen(c, &seen)).map(|i| on[i].clone());
-        let main = chosen.or_else(|| on.iter().find(|o| **o == self.output).cloned()).or_else(|| on.first().cloned());
+        let main = yggdrasil_conf::display::pick(self.main_choice.as_ref(), &seen).map(|i| on[i].clone());
         let Some(main) = main.filter(|m| *m != self.output) else { return };
         self.output = main;
         if let Some(wm) = self.xwm.as_mut() {
@@ -410,6 +479,19 @@ mod tests {
         assert_eq!((r[0].output.as_str(), r[0].mode, r[0].at, r[0].scale), ("", None, None, Some(1.0)));
         assert_eq!(r[1].mode, Some(mode(800, 600, 60_000)));
         assert!(parse_rules("print('hl.monitor(')").is_empty());
+    }
+
+    #[test]
+    fn a_mode_asked_for_is_matched_within_half_a_hertz() {
+        // the laptop's panel offers 60.003 Hz; Settings (as Hyprland lists it) writes 60
+        let modes = [mode(1920, 1200, 60_003), mode(1920, 1200, 48_002), mode(1280, 800, 59_910), mode(1280, 800, 60_000)];
+        let want = parse_mode("1920x1200@60").unwrap();
+        assert_eq!(closest_mode(&modes, want), Some(mode(1920, 1200, 60_003)));
+        assert_eq!(closest_mode(&modes, parse_mode("1920x1200@60.00").unwrap()), Some(mode(1920, 1200, 60_003)));
+        assert_eq!(closest_mode(&modes, mode(1280, 800, 59_950)), Some(mode(1280, 800, 59_910)), "the closer of two");
+        assert_eq!(closest_mode(&modes, mode(1280, 800, 60_000)), Some(mode(1280, 800, 60_000)), "an exact one first");
+        assert_eq!(closest_mode(&modes, mode(1920, 1200, 59_400)), None, "more than half a hertz off");
+        assert_eq!(closest_mode(&modes, mode(1920, 1080, 60_000)), None, "another size");
     }
 
     #[test]

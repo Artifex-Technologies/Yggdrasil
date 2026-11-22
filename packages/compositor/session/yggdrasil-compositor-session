@@ -1,0 +1,40 @@
+#!/bin/sh
+# Yggdrasil's session on its own compositor, started by the login screen (yggdrasil-compositor.desktop in
+# /usr/share/wayland-sessions). It is the Hyprland session's start without Hyprland: the compositor drives the screens itself
+# (--drm, through logind), then the same autostart as yggdrasil.lua's: the environment handed to systemd and D-Bus, and
+# yggdrasil-session.target, which starts the autostart folder (the panel, the idle watch and lock, the password box, the
+# battery and tablet watches). When the compositor ends, the session's units are stopped.
+#
+# A way back: when the compositor ends badly within its first seconds (it could not take the screens, it crashed at start),
+# this starts the Hyprland session instead (/usr/bin/yggdrasil-session), so a broken build never leaves the login screen in
+# a loop. Its log: the user journal, `journalctl --user -t yggdrasil-compositor-session -t yggdrasil-compositor`.
+set -u
+COMPOSITOR=${YGGDRASIL_COMPOSITOR:-yggdrasil-compositor}
+FALLBACK=/usr/bin/yggdrasil-session
+TAG=yggdrasil-compositor-session
+
+export XDG_CURRENT_DESKTOP=Yggdrasil XDG_SESSION_DESKTOP=yggdrasil XDG_SESSION_TYPE=wayland
+export QT_QPA_PLATFORM='wayland;xcb' GDK_BACKEND='wayland,x11' MOZ_ENABLE_WAYLAND=1 ELECTRON_OZONE_PLATFORM_HINT=auto
+
+say() { echo "$*" | systemd-cat -t "$TAG"; }
+
+# the autostart, once the compositor's sockets exist (it runs this as its first program, with WAYLAND_DISPLAY and DISPLAY set)
+AUTOSTART="systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT; dbus-update-activation-environment --systemd --all; systemctl --user start yggdrasil-session.target; echo autostart started for \$XDG_CURRENT_DESKTOP on \$WAYLAND_DISPLAY"
+
+say "starting $COMPOSITOR --drm"
+start=$(date +%s)
+# systemd-cat runs the compositor with its output in the journal and returns its exit status
+systemd-cat -t yggdrasil-compositor "$COMPOSITOR" --drm --run sh -c "($AUTOSTART) 2>&1 | systemd-cat -t $TAG"
+status=$?
+ran=$(( $(date +%s) - start ))
+say "the compositor ended after ${ran} s (status $status)"
+
+# the session's programs end with it (as yggdrasil-session does for Hyprland)
+systemctl --user stop yggdrasil-session.target graphical-session.target 2>/dev/null
+systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY 2>/dev/null
+
+if [ "$ran" -lt 15 ] && [ -x "$FALLBACK" ]; then
+  say "it ended within ${ran} s: starting the Hyprland session instead"
+  exec "$FALLBACK"
+fi
+exit 0

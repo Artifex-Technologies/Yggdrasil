@@ -436,6 +436,67 @@ fn the_keyboard_follows_clicks_new_windows_and_an_exclusive_panel() {
     assert_eq!(c.state.kb_focus, Some(b.surface.id()));
 }
 
+/// A pop-up panel that asks for the keyboard on demand (the panel's `yggdrasil-popup`), on output `output`, clicked so it has
+/// the keyboard.
+fn clicked_popup(comp: &Compositor, c: &mut Client, output: usize, name: &str) -> LayerSurf {
+    let p = c.layer_with(output, Layer::Overlay, name, Anchor::Top | Anchor::Left, (300, 200), 0, KeyboardInteractivity::OnDemand);
+    c.draw_layer(&p, GREEN);
+    let (x, y) = if output == 0 { (20, 20) } else { (1300, 20) };
+    comp.must(&format!("pointer {x} {y}"));
+    comp.must("click");
+    c.roundtrip();
+    let out = if output == 0 { "HEADLESS-1" } else { "HEADLESS-2" };
+    assert_eq!(comp.focus(), format!("layer\t{name}\t{out}"), "a click on an on-demand panel gives it the keyboard");
+    assert_eq!(c.state.kb_focus, Some(p.surface.id()));
+    p
+}
+
+#[test]
+fn the_keyboard_leaves_a_panel_that_goes_however_it_goes() {
+    let _l = limit(60, "keyboard back from a panel");
+    let comp = Compositor::start(&["--output", "1280x720", "--output", "1280x720"]);
+    let mut c = comp.connect();
+    let (_k, _p) = c.input();
+    let a = c.window("test.a", "A");
+    c.draw(&a, (400, 300), BLUE);
+    c.roundtrip();
+    let a_has_it = |comp: &Compositor, c: &mut Client, how: &str| {
+        c.roundtrip();
+        assert_eq!(comp.focus(), "window\ttest.a\tA", "{how}: the keyboard is the window's again");
+        c.state.keys.clear();
+        comp.must("type s");
+        c.roundtrip();
+        assert_eq!(typed(&c.state.keys), [(a.surface.id(), KEY_S)], "{how}: keys reach the window");
+    };
+    let p = clicked_popup(&comp, &mut c, 0, "test-popup");
+    // unmapped (a null buffer)
+    p.surface.attach(None, 0, 0);
+    p.surface.commit();
+    a_has_it(&comp, &mut c, "unmapped");
+
+    // destroyed as a program should (the role first)
+    let p = clicked_popup(&comp, &mut c, 0, "test-popup-2");
+    p.layer.destroy();
+    p.surface.destroy();
+    a_has_it(&comp, &mut c, "destroyed");
+
+    // its surface destroyed while the layer object lives on (a program ending its surfaces in the wrong order): the keyboard
+    // must not stay with a surface that is no more
+    let p = clicked_popup(&comp, &mut c, 0, "test-popup-3");
+    p.surface.destroy();
+    a_has_it(&comp, &mut c, "its surface destroyed");
+
+    // its screen unplugged
+    let _p = clicked_popup(&comp, &mut c, 1, "test-popup-4");
+    comp.must("remove-output HEADLESS-2");
+    a_has_it(&comp, &mut c, "its screen went");
+
+    // `layers` tells what each panel asks of the keyboard, `focus` who has it
+    let _p = clicked_popup(&comp, &mut c, 0, "test-popup-5");
+    let line = comp.must("layers").into_iter().find(|l| l.contains("test-popup-5")).unwrap();
+    assert_eq!(line, "HEADLESS-1\ttest-popup-5\tOverlay\t0,0\t300x200\ton-demand");
+}
+
 #[test]
 fn the_lock_covers_every_output_and_takes_all_input_until_unlocked() {
     let _l = limit(60, "session lock");

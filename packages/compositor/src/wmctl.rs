@@ -26,7 +26,8 @@
 //!                               and "on" or "off", then the monitor's maker and model (Settings > Displays' main display)
 //!   pointer-timeout [SECONDS]   how long the pointer may rest before it is hidden (0: never); with a number, set it
 //!   modifiers                   the modifier keys held now: super, ctrl, alt, shift (one line, space separated)
-//!   layers                      one line per panel or background: output, namespace, layer, place and size (tab separated)
+//!   layers                      one line per panel or background: output, namespace, layer, place, size and what it asks of
+//!                               the keyboard: none, exclusive or on-demand (tab separated)
 //!   binds                       one line per shortcut: modifier mask (Shift 1, Ctrl 4, Alt 8, Super 64), key, what it does,
 //!                               its kind (release, repeat, locked, comma separated; - for none); the mouse's two last
 //!   reload                      read the config files again when they changed: workspaces.conf, shortcuts.conf, opaque.conf,
@@ -153,9 +154,15 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
             for o in app.space.outputs() {
                 let map = smithay::desktop::layer_map_for_output(o);
                 for l in map.layers() {
+                    use smithay::wayland::shell::wlr_layer::KeyboardInteractivity as K;
                     let geo = map.layer_geometry(l).unwrap_or_default();
+                    let keyboard = match l.cached_state().keyboard_interactivity {
+                        K::None => "none",
+                        K::Exclusive => "exclusive",
+                        K::OnDemand => "on-demand",
+                    };
                     lines.push(format!(
-                        "{}\t{}\t{:?}\t{},{}\t{}x{}",
+                        "{}\t{}\t{:?}\t{},{}\t{}x{}\t{keyboard}",
                         field(&o.name()),
                         field(l.namespace()),
                         l.layer(),
@@ -202,6 +209,12 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
             }
             Ok(vec![])
         }
+        // the hardware backend's devices (touchpads and TrackPoints are pointers, as Hyprland lists them), else the headless ones
+        ["devices"] if !app.input_devices.is_empty() => Ok(app
+            .input_devices
+            .iter()
+            .map(|d| format!("{}\t{}", d.name, if d.kind.points() { "pointer" } else { d.kind.word() }))
+            .collect()),
         ["devices"] => {
             Ok(vec![format!("{}\tpointer", crate::input::HEADLESS_MOUSE), format!("{}\tkeyboard", crate::input::HEADLESS_KEYBOARD)])
         }
