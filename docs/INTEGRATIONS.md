@@ -82,6 +82,7 @@ held_release = /usr/bin/heimdalld immunity release   # optional: its own quarant
 held_confirm = /usr/bin/heimdalld immunity confirm   # with held_release: "It's malware" for a held file (pkexec + ID)
 devices_scan = /usr/bin/systemctl start heimdall-lan-scan.service   # optional: Wi-Fi & Network > Devices (the list is GET /v1/lan/devices on the api); this looks again now
 devices_kind = /usr/bin/heimdalld lan kind   # optional, with devices_scan: run with pkexec + MAC KIND (or "guess"): what the owner says a device is
+devices_look = /usr/bin/heimdalld lan look   # optional, with devices_scan: run as the user (no password) + --wait SECONDS UUID: one listen-only look at a network the monitor keeps no list for; prints JSON
 wifi_check = /usr/bin/heimdalld wifi-health --json   # optional: Wi-Fi & Network > Wi-Fi checks; Settings adds --speed for the download test; prints the report as JSON
 switch.a_auto_quarantine = Move certain malware to quarantine automatically | ... | /usr/local/bin/labyrinth-security-setting auto-quarantine
 ```
@@ -102,7 +103,12 @@ With `devices_scan`, Settings > Wi-Fi & Network gets **Devices** (under This Net
 other; `owner_kind`, when present: what the owner said it is, shown over `kind`; `status`: scanned, not_trusted, router_changed,
 offline). With `devices_kind`, a device's page offers "This device is" (tv, phone, computer, console, speaker, printer, smart,
 router, other, or back to the guess); Settings runs `pkexec` with the command, the hardware address and the word, then reads
-the list again. With `wifi_check`, it gets **Wi-Fi checks** (there too): the command prints
+the list again. With `devices_look`, a connected network the list does not cover (any network but home) gets Devices too: when
+its page opens, Settings runs the command as the user with `--wait 8` and the connection's UUID, once, and shows what it heard
+(`{"status": "looked" | "offline", "name", "mdns": "listened" | "not_member" | "busy", "listened", "devices": [{"mac", "ip",
+"name", "vendor", "model", "kind", "services", "private_mac"}]}`; `mac` is empty for a device heard but never talked with).
+The command must only listen and must write nothing; Settings keeps the answer only while the page is open, and **Listen
+again** runs it once more. With `wifi_check`, it gets **Wi-Fi checks** (there too): the command prints
 `{"connected", "summary", "verdict": "good" | "warn" | "bad", "link": {"ssid", "band", "channel", "width", "signal_dbm",
 "rx_mbps", "tx_mbps"}, "findings": [{"check", "status": "good" | "info" | "warn" | "bad", "title", "detail"}]}`. A monitor's
 new-device alert (`detector_id` "lan-watch", `event_kind` "new_lan_device") opens Devices when clicked.

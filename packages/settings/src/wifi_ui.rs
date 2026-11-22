@@ -570,8 +570,12 @@ impl App {
         ui.add_space(8.0);
         // This Network: who else is on it, and why it is slow (only on the connection that has the router)
         if live.is_some() {
-            if let Some((_, l)) = n.lan.as_ref().filter(|(u, _)| u == uuid) {
-                let sub = crate::lan_summary(l, now);
+            // a network that is not home is looked at when its page opens, and only then (HEI-74)
+            if live.is_some_and(|l| !l.router.is_empty()) {
+                self.lan_look_start(ctx, n, uuid, false);
+            }
+            if let Some(l) = self.lan_shown(n, uuid) {
+                let sub = crate::lan_summary(&l, now);
                 let mut go = false;
                 let mut check = false;
                 ui::group(ui, pal, Some("This Network"), |ui| {

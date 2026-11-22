@@ -54,8 +54,12 @@ impl App {
                 }
                 if self.lan_open {
                     l.push("Devices".into());
-                    if let Some(mac) = &self.lan_dev {
-                        let d = net.and_then(|n| n.lan.as_ref()).and_then(|(_, l)| l.devices.iter().find(|d| &d.mac == mac));
+                    if let Some(key) = &self.lan_dev {
+                        let list = net.and_then(|n| {
+                            let uuid = self.net_open.clone().or_else(|| n.lan.as_ref().map(|(u, _)| u.clone()))?;
+                            self.lan_shown(n, &uuid)
+                        });
+                        let d = list.as_ref().and_then(|l| l.devices.iter().find(|d| &crate::devices::key(d) == key));
                         l.push(d.map(|d| crate::devices::shown_name(d, &self.lan_names)).unwrap_or_else(|| "Device".into()));
                     }
                 } else if self.wifi_check_open {

@@ -310,6 +310,8 @@ enum Msg {
     Spell(Result<String, String>),
     /// Wi-Fi & Network > Wi-Fi checks finished (the security monitor's report), or why not.
     WifiHealth(Result<wifihealth::Report, String>),
+    /// A look at a network that is not home finished (the connection, what it heard or why not; devices.rs).
+    LanLook(String, Result<devices::List, String>),
     /// A saved Wi-Fi network's Heimdall level and discoverable switch were read (after a change: why it did not take).
     WifiTrust(wifitrust::Trust, Option<String>),
     /// A saved wired network's Heimdall state was read (after a change: why it did not take).
@@ -417,6 +419,9 @@ struct App {
     lan_dev: Option<String>,
     lan_names: std::collections::BTreeMap<String, String>,
     lan_rename: Option<String>,
+    /// A network's page: the look at it while the page is open (HEI-74): the connection, and what it heard (None: still
+    /// listening). It goes when the page does; nothing of it is kept.
+    lan_look: Option<(String, Option<Result<devices::List, String>>)>,
     /// Wi-Fi & Network > Wi-Fi checks: the page is open, a check is running, the last result.
     wifi_check_open: bool,
     /// Wi-Fi & Network > Several connections at once, while it is open (multilink_ui.rs)
@@ -619,6 +624,7 @@ impl App {
             lan_dev: None,
             lan_names: devices::read_names(),
             lan_rename: None,
+            lan_look: None,
             wifi_check_open: start_sub() == "checks",
             multilink: None,
             wifi_check_running: false,
@@ -989,6 +995,15 @@ impl App {
                     self.wifi_check = Some(r);
                     continue;
                 }
+                Msg::LanLook(uuid, r) => {
+                    // only for the page still open, and only the look it is waiting for
+                    if let Some((u, slot)) = self.lan_look.as_mut() {
+                        if *u == uuid && slot.is_none() {
+                            *slot = Some(r);
+                        }
+                    }
+                    continue;
+                }
                 Msg::Spell(r) => {
                     self.spell.busy = None;
                     self.spell.note = match r {
@@ -1118,6 +1133,10 @@ impl eframe::App for App {
         }
         if !(self.page == Page::Security && self.sec_sub == SecSub::Limbo) {
             self.limbo_panel = None;
+        }
+        // a look belongs to its network's page: it goes when the page does
+        if self.lan_look.as_ref().is_some_and(|(u, _)| self.page != Page::Network || self.net_open.as_deref() != Some(u.as_str())) {
+            self.lan_look = None;
         }
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         let typing = ctx.memory(|m| m.focused().is_some());
@@ -1833,29 +1852,86 @@ impl App {
         });
     }
 
-    /// Wi-Fi & Network > Devices: every device the security monitor found on this network, router and this computer first.
+    /// The device list a network's page shows for connection `uuid`: the kept list on a home network, else the look at it
+    /// (still listening, what it heard, or why it could not), else what the monitor said about the network.
+    pub(crate) fn lan_shown(&self, n: &sys::Network, uuid: &str) -> Option<devices::List> {
+        let kept = n.lan.as_ref().filter(|(u, _)| u == uuid).map(|(_, l)| l.clone());
+        if kept.as_ref().is_some_and(|l| l.status == "scanned") {
+            return kept;
+        }
+        match &self.lan_look {
+            Some((u, r)) if u == uuid => Some(match r {
+                None => devices::List { status: "looking".into(), monitor: devices::monitor_name(), ..Default::default() },
+                Some(Ok(l)) => l.clone(),
+                Some(Err(e)) => {
+                    devices::List { status: "look_failed".into(), monitor: devices::monitor_name(), error: e.clone(), ..Default::default() }
+                }
+            }),
+            _ => kept,
+        }
+    }
+
+    /// Starts a look at connection `uuid` when its page opens (`again`: Listen again), unless the monitor keeps a list for it
+    /// (home) or a look is already listening. Never with made-up systems (the fixtures): a look reads this computer's network.
+    pub(crate) fn lan_look_start(&mut self, ctx: &egui::Context, n: &sys::Network, uuid: &str, again: bool) {
+        if !devices::can_look()
+            || crate::fixture::get().is_some()
+            || n.lan.as_ref().is_some_and(|(u, l)| u == uuid && l.status == "scanned")
+        {
+            return;
+        }
+        match &self.lan_look {
+            Some((u, None)) if u == uuid => return,
+            Some((u, _)) if u == uuid && !again => return,
+            _ => {}
+        }
+        self.lan_look = Some((uuid.to_string(), None));
+        let (tx, ctx, uuid) = (self.tx.clone(), ctx.clone(), uuid.to_string());
+        std::thread::spawn(move || {
+            let r = devices::look(&uuid, sys::unix_now());
+            let _ = tx.send(Msg::LanLook(uuid, r));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Wi-Fi & Network > Devices: every device the security monitor found on this network, router and this computer first;
+    /// on a network that is not home, what the look heard.
     fn devices_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, n: &sys::Network) {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-        let Some((_, l)) = n.lan.clone() else {
+        let uuid = self.net_open.clone().or_else(|| n.lan.as_ref().map(|(u, _)| u.clone()));
+        let Some(l) = uuid.as_deref().and_then(|u| self.lan_shown(n, u)) else {
             self.lan_open = false;
             return;
         };
-        if let Some(mac) = self.lan_dev.clone() {
-            if let Some(d) = l.devices.iter().find(|d| d.mac == mac) {
+        if let Some(key) = self.lan_dev.clone() {
+            if let Some(d) = l.devices.iter().find(|d| devices::key(d) == key) {
                 return self.device_page(ui, pal, ctx, d, &l, now);
             }
             self.lan_dev = None;
         }
+        let looked = l.status == "looked";
         let on = if l.ssid.is_empty() { "This network".to_string() } else { l.ssid.clone() };
         ui.label(RichText::new(format!("{on} · {}", lan_summary(&l, now))).size(12.0).color(pal.dim));
         ui.add_space(8.0);
         let note = match l.status.as_str() {
             "not_trusted" => Some(format!("Devices are listed only on networks you trust (your home network). On other networks {} does not look around: they are not yours.", l.monitor)),
+            "not_home" => Some(format!("Devices are listed only on your home network. On this network {} keeps quiet and does not look around.", l.monitor)),
             "router_changed" => Some(format!("This network's router is not the one it had when you trusted the network, so {} did not look. If you changed the router, trust the network again.", l.monitor)),
             "unavailable" => Some(format!("{} is not running, or is too old to keep a device list.", l.monitor)),
             "waiting" => Some(format!("The first look runs within a few minutes of {} starting.", l.monitor)),
+            "looked" => Some(look_note(&l)),
+            "offline" => Some("This network is not connected now, so nothing was heard.".into()),
+            "look_failed" => Some(format!("{} could not listen: {}", l.monitor, l.error)),
             _ => None,
         };
+        if l.status == "looking" {
+            ui::group(ui, pal, None, |ui| {
+                ui::row(ui, pal, true, "Listening…", Some(&format!("About {} seconds; nothing is sent", devices::LOOK_SECONDS)), |ui| {
+                    ui.spinner();
+                });
+            });
+            ui.add_space(8.0);
+        }
         if let Some(t) = note {
             ui::group(ui, pal, None, |ui| {
                 ui.add(egui::Label::new(RichText::new(t).color(pal.dim)).wrap());
@@ -1863,10 +1939,12 @@ impl App {
             ui.add_space(8.0);
         }
         let mut open: Option<String> = None;
-        let fresh = |d: &devices::Device| security::parse_time(&d.first_seen).is_some_and(|t| now - t < 86_400 && t - first_scan(&l) > 60);
-        let online = |d: &devices::Device| security::parse_time(&d.last_seen).is_some_and(|t| l.last_scan - t < 60);
+        let fresh = |d: &devices::Device| {
+            !looked && security::parse_time(&d.first_seen).is_some_and(|t| now - t < 86_400 && t - first_scan(&l) > 60)
+        };
+        let online = |d: &devices::Device| looked || security::parse_time(&d.last_seen).is_some_and(|t| l.last_scan - t < 60);
         let (on, off): (Vec<&devices::Device>, Vec<&devices::Device>) = l.devices.iter().partition(|d| online(d));
-        for (title, list) in [("Here now", &on), ("Seen before", &off)] {
+        for (title, list) in [(if looked { "Heard just now" } else { "Here now" }, &on), ("Seen before", &off)] {
             if list.is_empty() {
                 continue;
             }
@@ -1890,13 +1968,19 @@ impl App {
                     }
                     let title = if fresh(d) { format!("{name}  ·  New") } else { name };
                     if ui::nav_row(ui, pal, i == 0, &title, Some(&sub.join(" · ")), |_| {}) {
-                        open = Some(d.mac.clone());
+                        open = Some(devices::key(d));
                     }
                 }
             });
             ui.add_space(8.0);
         }
-        if l.status != "unavailable" && ui::quiet(ui, pal, "Scan now").clicked() {
+        if matches!(l.status.as_str(), "looked" | "look_failed" | "offline") {
+            if ui::quiet(ui, pal, "Listen again").clicked() {
+                if let Some(u) = &uuid {
+                    self.lan_look_start(ctx, n, u, true);
+                }
+            }
+        } else if !matches!(l.status.as_str(), "unavailable" | "looking") && ui::quiet(ui, pal, "Scan now").clicked() {
             self.change(ctx, devices::scan_now);
         }
         if let Some(m) = open {
@@ -2003,6 +2087,15 @@ impl App {
         let name = devices::shown_name(d, &self.lan_names);
         ui.label(RichText::new(devices::kind_name(devices::shown_kind(d))).size(12.0).color(pal.dim));
         ui.add_space(8.0);
+        if d.mac.is_empty() {
+            // heard over multicast DNS only: no hardware address to keep a name or a kind under
+            ui::group(ui, pal, None, |ui| {
+                ui.add(egui::Label::new(RichText::new(
+                    "Heard announcing itself, but this computer has never talked with it, so its hardware address is not known. Without one it cannot be renamed or corrected here.",
+                ).color(pal.dim)).wrap());
+            });
+            ui.add_space(8.0);
+        }
         let mut rename = self.lan_rename.take();
         let mut save: Option<String> = None;
         ui::group(ui, pal, Some("Name"), |ui| {
@@ -2016,6 +2109,9 @@ impl App {
                         ui.add_space(6.0);
                         ui::field(ui, pal, text, &name, 220.0, false);
                     });
+                }
+                None if d.mac.is_empty() => {
+                    ui::row(ui, pal, true, &name, None, |_| {});
                 }
                 None => {
                     let sub = if own { "Your name; only this computer uses it" } else { "Rename it to remember whose it is" };
@@ -2048,7 +2144,7 @@ impl App {
             rename = None;
         }
         self.lan_rename = rename;
-        if d.kind != "this" {
+        if d.kind != "this" && !d.mac.is_empty() {
             ui.add_space(8.0);
             let mut choose: Option<&'static str> = None;
             ui::group(ui, pal, Some("What it is"), |ui| {
@@ -2106,8 +2202,12 @@ impl App {
             show(ui, "Offers", services.join(", "));
             let when = |t: &str| security::parse_time(t).map(|t| devices::ago(now, t)).unwrap_or_default();
             let last = security::parse_time(&d.last_seen).unwrap_or(0);
-            show(ui, "First seen", when(&d.first_seen));
-            show(ui, "Last seen", if l.last_scan - last < 60 { "Here now".into() } else { when(&d.last_seen) });
+            if l.status == "looked" {
+                show(ui, "Heard", "Just now".into());
+            } else {
+                show(ui, "First seen", when(&d.first_seen));
+                show(ui, "Last seen", if l.last_scan - last < 60 { "Here now".into() } else { when(&d.last_seen) });
+            }
         });
         if d.private_mac {
             ui.add_space(8.0);
@@ -5089,6 +5189,11 @@ fn lan_summary(l: &devices::List, now: i64) -> String {
         "router_changed" => return "Not listed: the router changed".into(),
         "unavailable" => return format!("{} is not running", l.monitor),
         "waiting" => return "The first look runs in a few minutes".into(),
+        "not_home" => return "Only on your home network".into(),
+        "looking" => return "Listening…".into(),
+        "look_failed" => return "Could not listen".into(),
+        "offline" => return "Not connected".into(),
+        "looked" => return format!("{} heard just now", l.devices.len()),
         _ => {}
     }
     let here = l.devices.iter().filter(|d| security::parse_time(&d.last_seen).is_some_and(|t| l.last_scan - t < 60)).count();
@@ -5102,6 +5207,19 @@ fn lan_summary(l: &devices::List, now: i64) -> String {
         s += &format!(" · {fresh} new today");
     }
     s
+}
+
+/// What a look did and did not do, for its page.
+fn look_note(l: &devices::List) -> String {
+    let heard = match l.mdns.as_str() {
+        "listened" => format!("{} listened for {} seconds and sent nothing", l.monitor, l.listened),
+        "not_member" => format!(
+            "{} listened and sent nothing. This computer is not taking in device announcements on this network, so only devices it has talked with are listed (joining in would announce it)",
+            l.monitor
+        ),
+        _ => format!("{} sent nothing. Another program holds the announcements' port, so only devices this computer has talked with are listed", l.monitor),
+    };
+    format!("{heard}. Devices that keep quiet, or a network that keeps its devices apart (most public Wi-Fi does), are not listed. Nothing of this look is kept after you leave this network's page.")
 }
 
 /// When the list began: the earliest first sighting (devices found by the first look are not "new").

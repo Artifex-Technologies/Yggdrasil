@@ -3,6 +3,10 @@
 //! lets the owner rename a device (kept here, per user), say what it is when the list's guess is wrong (kept by the monitor:
 //! the integration's `devices_kind`, run through pkexec with the hardware address and the kind, comes back as `owner_kind`)
 //! and asks for a look now. Without `devices_scan` there is no page.
+//!
+//! On a network the monitor does not keep a list for (any network but home), the integration's `devices_look` gives one look
+//! when the network's page opens (HEI-74, the owner's decision of 2026-11-22): run as the owner, it listens for a few seconds,
+//! sends nothing and keeps nothing, and prints what it heard. Settings keeps that only while the page is open.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -67,6 +71,13 @@ pub struct List {
     /// seconds since 1970 (UTC)
     pub last_scan: i64,
     pub devices: Vec<Device>,
+    /// A look's multicast DNS: "listened", "not_member" (this computer is not in the group there, so nothing was heard),
+    /// "busy" (another program holds the port alone); empty for a kept list.
+    pub mdns: String,
+    /// How long a look listened, in seconds.
+    pub listened: u64,
+    /// Why a look did not run ("look_failed").
+    pub error: String,
 }
 
 /// Parses the API's answer for connection `uuid`. The status is the last scan's; it speaks for this connection only if the
@@ -129,6 +140,77 @@ pub fn scan_now() -> Result<(), String> {
         Ok(())
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// A look's answer (`devices_look`).
+#[derive(Clone, Debug, Default, Deserialize)]
+struct Heard {
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    mdns: String,
+    #[serde(default)]
+    listened: u64,
+    #[serde(default)]
+    devices: Vec<Device>,
+}
+
+/// How long a look listens.
+pub const LOOK_SECONDS: u64 = 8;
+
+/// Whether the monitor can look at a network it keeps no list for (the integration declares `devices_look`).
+pub fn can_look() -> bool {
+    monitor().and_then(|i| i.command("devices_look")).is_some()
+}
+
+/// The security monitor's name, for a list that is still coming.
+pub fn monitor_name() -> String {
+    monitor().and_then(|i| i.get("name")).unwrap_or("The security monitor").to_string()
+}
+
+/// The look's command line: the integration's `devices_look`, the wait, and the connection. None for a connection id that
+/// is not a NetworkManager UUID (hex digits and dashes).
+pub fn look_args(cmd: &[String], uuid: &str) -> Option<Vec<String>> {
+    let ok = !uuid.is_empty() && uuid.len() <= 64 && uuid.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-');
+    (ok && !cmd.is_empty()).then(|| cmd.iter().cloned().chain(["--wait".into(), LOOK_SECONDS.to_string(), uuid.to_string()]).collect())
+}
+
+/// A look's answer as a list: status "looked" (every device heard now, at `now`), "offline", or "unavailable" (not an
+/// answer). Sorted as the kept lists are.
+pub fn parse_look(body: &str, now: i64) -> List {
+    let Ok(h) = serde_json::from_str::<Heard>(body.trim()) else { return List { status: "unavailable".into(), ..Default::default() } };
+    let status = if h.status == "looked" { "looked" } else { "offline" };
+    let mut devices = h.devices;
+    devices.sort_by_key(|d| (order(shown_kind(d)), d.name.is_empty(), d.name.to_lowercase(), ip_key(&d.ip)));
+    List { status: status.into(), ssid: h.name, last_scan: now, devices, mdns: h.mdns, listened: h.listened, ..Default::default() }
+}
+
+/// One look at connection `uuid`, waiting for it (about LOOK_SECONDS).
+pub fn look(uuid: &str, now: i64) -> Result<List, String> {
+    let cmd = monitor().and_then(|i| i.command("devices_look")).ok_or("The security monitor cannot look at this network.")?;
+    let args = look_args(&cmd, uuid).ok_or("Not a connection the security monitor can look at.")?;
+    let out =
+        std::process::Command::new(&args[0]).args(&args[1..]).stdin(std::process::Stdio::null()).output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let mut l = parse_look(&String::from_utf8_lossy(&out.stdout), now);
+    if l.status == "unavailable" {
+        return Err("The security monitor is too old to look at this network.".into());
+    }
+    l.monitor = monitor_name();
+    Ok(l)
+}
+
+/// What a device in a list is known by: its hardware address, or its address when the list heard it without one.
+pub fn key(d: &Device) -> String {
+    if d.mac.is_empty() {
+        d.ip.clone()
+    } else {
+        d.mac.clone()
     }
 }
 
@@ -315,6 +397,29 @@ mod tests {
         let b = BODY.replace(r#""kind":"tv","services""#, r#""kind":"tv","owner_kind":"router","services""#);
         let l = parse(&b, "u1");
         assert_eq!((shown_kind(&l.devices[0]), shown_kind(&l.devices[1])), ("router", "router"));
+    }
+
+    #[test]
+    fn a_look_heard_now() {
+        let body = r#"{"status":"looked","uuid":"0f1e-2d","name":"Cafe","interface":"wlan0","mdns":"listened","listened":8,"devices":[
+            {"mac":"","ip":"192.0.2.20","name":"Living TV","names":["Living TV"],"vendor":"","model":"Chromecast","kind":"tv","services":["_googlecast._tcp"],"private_mac":false},
+            {"mac":"02:00:00:00:00:01","ip":"192.0.2.1","name":"","names":[],"vendor":"","model":"","kind":"router","services":[],"private_mac":true}]}"#;
+        let l = parse_look(body, 1_800_000_000);
+        assert_eq!((l.status.as_str(), l.ssid.as_str(), l.mdns.as_str(), l.listened), ("looked", "Cafe", "listened", 8));
+        assert_eq!(l.last_scan, 1_800_000_000);
+        assert_eq!(l.devices[0].kind, "router", "the router first, as in a kept list");
+        assert_eq!(key(&l.devices[1]), "192.0.2.20", "heard without a hardware address: known by its address");
+        assert_eq!(key(&l.devices[0]), "02:00:00:00:00:01");
+        assert_eq!(parse_look(r#"{"status":"offline","devices":[]}"#, 0).status, "offline");
+        assert_eq!(parse_look("usage: heimdalld lan scan|list|kind", 0).status, "unavailable", "an older monitor");
+        let cmd = vec!["/usr/bin/heimdalld".to_string(), "lan".into(), "look".into()];
+        assert_eq!(
+            look_args(&cmd, "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0").unwrap(),
+            vec!["/usr/bin/heimdalld", "lan", "look", "--wait", "8", "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"]
+        );
+        assert_eq!(look_args(&cmd, "--dir"), None);
+        assert_eq!(look_args(&cmd, ""), None);
+        assert_eq!(look_args(&cmd, "0f1e 2d"), None);
     }
 
     #[test]
