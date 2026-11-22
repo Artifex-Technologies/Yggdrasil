@@ -200,6 +200,15 @@ pub fn steam_game(app_id: &str) -> Option<&str> {
     (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then_some(n)
 }
 
+/// The Steam game a program belongs to, from its environment (`/proc/<pid>/environ`: NUL-separated `KEY=value`): Steam
+/// starts every game, native or under Proton, with `SteamAppId` set to its number. A native game names its window after
+/// itself (often its program's name), not `steam_app_<id>`, so this is how its window finds Steam's shortcut and icon.
+/// Only that one variable is looked at; nothing else is kept.
+pub fn steam_game_in(environ: &[u8]) -> Option<String> {
+    let v = environ.split(|b| *b == 0).find_map(|kv| kv.strip_prefix(b"SteamAppId="))?;
+    (!v.is_empty() && v != b"0" && v.iter().all(u8::is_ascii_digit)).then(|| String::from_utf8_lossy(v).into_owned())
+}
+
 /// The icon for a window no desktop entry matches: a Steam game's own icon (Steam saves `steam_icon_<id>` in the icon theme
 /// folder whether or not it made a shortcut), otherwise the app id itself (icon themes name many icons after it).
 pub fn fallback_icon(app_id: &str) -> String {
@@ -450,5 +459,19 @@ OnlyShowIn=KDE;GNOME;
         assert_eq!(fallback_icon("steam_app_x"), "steam_app_x");
         assert_eq!(fallback_icon("xterm"), "xterm");
         assert!(for_app_id(&apps, "").is_none());
+    }
+
+    #[test]
+    fn a_native_steam_game_is_known_by_the_number_steam_started_it_with() {
+        let env = b"HOME=/home/someone\0SteamGameId=242760\0SteamAppId=242760\0SDL_VIDEODRIVER=x11\0";
+        assert_eq!(steam_game_in(env).as_deref(), Some("242760"));
+        // a shortcut to a program that is not a Steam game (SteamAppId=0), or none set at all
+        assert_eq!(steam_game_in(b"SteamAppId=0\0SteamGameId=12345678901234567890\0"), None);
+        assert_eq!(steam_game_in(b"PATH=/usr/bin\0"), None);
+        assert_eq!(steam_game_in(b"SteamAppId=\0"), None);
+        assert_eq!(steam_game_in(b"SteamAppId=12x\0"), None);
+        // the name has to be the whole key, not the end of a longer one
+        assert_eq!(steam_game_in(b"NotSteamAppId=5\0"), None);
+        assert_eq!(steam_game_in(b""), None);
     }
 }

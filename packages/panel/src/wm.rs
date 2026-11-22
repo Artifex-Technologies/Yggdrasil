@@ -19,6 +19,13 @@ pub fn restore(app_id: &str, title: &str) -> bool {
     Desk::detect().is_some_and(|d| d.restore_app(app_id, title))
 }
 
+/// The Steam game number of the program behind a window with this app id (from the compositor's window list, which has the
+/// program's process id), for a window no desktop entry matches; see `apps::steam_game_in`.
+pub fn steam_game_of(app_id: &str) -> Option<String> {
+    let pid = Desk::detect()?.windows().into_iter().find(|w| w.class.eq_ignore_ascii_case(app_id))?.pid?;
+    crate::apps::steam_game_in(&std::fs::read(format!("/proc/{pid}/environ")).ok()?)
+}
+
 /// Shows desktop `id`.
 pub fn show_desktop(id: &str) {
     if let Some(d) = Desk::detect() {

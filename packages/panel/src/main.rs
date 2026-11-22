@@ -2176,7 +2176,7 @@ impl State {
         let app =
             apps::for_app_id(apps, &n.entry).or_else(|| apps.iter().find(|a| a.name.to_lowercase() == name || a.id.to_lowercase() == name));
         let win = self.model.wins.iter().find(|w| {
-            let by_app = app.map(|a| apps::for_app_id(apps, &w.app_id).map(|x| x.id == a.id).unwrap_or(false)).unwrap_or(false);
+            let by_app = app.map(|a| shell::app_of(apps, w).map(|x| x.id == a.id).unwrap_or(false)).unwrap_or(false);
             by_app || (!w.app_id.is_empty() && w.app_id.to_lowercase() == name)
         });
         if let Some(w) = win {
@@ -4622,6 +4622,8 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for State {
                 ready: false,
                 proxy: shell::WinHandle::Wlr(toplevel),
                 outputs: vec![],
+                steam: None,
+                steam_for: String::new(),
             });
         }
     }
@@ -4660,7 +4662,11 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
             }
             E::OutputEnter { output } => state.model.wins[pos].outputs.push(output),
             E::OutputLeave { output } => state.model.wins[pos].outputs.retain(|o| *o != output),
-            E::Done => state.model.wins[pos].ready = true,
+            E::Done => {
+                let m = &mut state.model;
+                m.wins[pos].ready = true;
+                m.wins[pos].look_up_game(&m.apps);
+            }
             // the handle is destroyed with the window (WinHandle's Drop)
             E::Closed => drop(state.model.wins.remove(pos)),
             _ => return,

@@ -70,6 +70,10 @@ pub struct Win {
     pub proxy: WinHandle,
     /// The screens it is on (wlr-foreign-toplevel only).
     pub outputs: Vec<WlOutput>,
+    /// The Steam game its program belongs to, for an app id no desktop entry matches (a native game names its window after
+    /// itself): looked up once per app id (`steam_for`), see `wm::steam_game_of`.
+    pub steam: Option<String>,
+    pub steam_for: String,
 }
 
 /// A window as the compositor lets the panel handle it, through the standard wlr-foreign-toplevel-management protocol
@@ -139,6 +143,32 @@ impl Win {
     pub fn listed(&self) -> bool {
         self.ready && self.flags & ST_SKIPTASKBAR == 0 && !self.app_id.is_empty()
     }
+
+    /// The id its desktop entry and icon are found by: the app id, or `steam_app_<n>` for a Steam game whose window is named
+    /// after the game itself.
+    pub fn match_id(&self) -> String {
+        match &self.steam {
+            Some(n) => format!("steam_app_{n}"),
+            None => self.app_id.clone(),
+        }
+    }
+
+    /// Ask, once per app id, which Steam game the window's program is when no desktop entry matches its app id.
+    pub fn look_up_game(&mut self, apps_list: &[App]) {
+        if self.app_id.is_empty() || self.steam_for == self.app_id {
+            return;
+        }
+        self.steam_for = self.app_id.clone();
+        self.steam = None;
+        if apps::for_app_id(apps_list, &self.app_id).is_none() && apps::steam_game(&self.app_id).is_none() {
+            self.steam = crate::wm::steam_game_of(&self.app_id);
+        }
+    }
+}
+
+/// A window's desktop entry: by its app id, else by the Steam game its program is.
+pub fn app_of<'a>(apps_list: &'a [App], w: &Win) -> Option<&'a App> {
+    apps::for_app_id(apps_list, &w.app_id).or_else(|| w.steam.as_ref().and_then(|_| apps::for_app_id(apps_list, &w.match_id())))
 }
 
 pub struct Model {
@@ -256,13 +286,13 @@ pub fn dock_items(m: &Model) -> Vec<DockItem> {
         });
     }
     for (i, w) in m.wins.iter().enumerate().filter(|(_, w)| w.listed()) {
-        let app = apps::for_app_id(&m.apps, &w.app_id);
-        let id = app.map(|a| a.id.clone()).unwrap_or_else(|| w.app_id.clone());
+        let app = app_of(&m.apps, w);
+        let id = app.map(|a| a.id.clone()).unwrap_or_else(|| w.match_id());
         let pos = items.iter().position(|it| it.app_id == id).unwrap_or_else(|| {
             items.push(DockItem {
                 app_id: id.clone(),
                 name: app.map(|a| a.name.clone()).unwrap_or_else(|| w.app_id.clone()),
-                icon: app.map(|a| a.icon.clone()).unwrap_or_else(|| apps::fallback_icon(&w.app_id)),
+                icon: app.map(|a| a.icon.clone()).unwrap_or_else(|| apps::fallback_icon(&w.match_id())),
                 wins: vec![],
                 pinned: false,
                 active: false,
@@ -369,7 +399,7 @@ pub fn dock_size(items: &[DockItem], icon: u32, pos: DockPos) -> (u32, u32) {
 
 pub fn app_name_for_bar(m: &Model) -> String {
     match m.wins.iter().find(|w| w.listed() && w.active()) {
-        Some(w) => apps::for_app_id(&m.apps, &w.app_id).map(|a| a.name.clone()).unwrap_or_else(|| w.app_id.clone()),
+        Some(w) => app_of(&m.apps, w).map(|a| a.name.clone()).unwrap_or_else(|| w.app_id.clone()),
         None => "Desktop".to_string(),
     }
 }

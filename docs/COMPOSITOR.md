@@ -317,7 +317,10 @@ shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
   one app id (X11 class) per line, read again when it changes.
 - **Dock icons for X11 programs** (in the panel, so the Hyprland session has them too): a window is matched to its desktop entry by
   its class (`StartupWMClass`), and a Steam game's window (`steam_app_<id>`) to the shortcut Steam made (`steam://rungameid/<id>`);
-  a game without a shortcut gets the icon Steam saved (`steam_icon_<id>`).
+  a game without a shortcut gets the icon Steam saved (`steam_icon_<id>`). A native Linux game names its window after itself, not
+  `steam_app_<id>`: when no desktop entry matches a window, the panel takes the window's process from the compositor's window list
+  and reads the `SteamAppId` Steam started it with (only that variable), then matches as above (2026-11-22; checked on the
+  headless compositor with a made-up game entry and icon).
 
 **Tried by hand (2026-11-05, nested window on the Hyprland session):**
 - xterm shows with the window controls; typing reaches it (keyboard focus and the X input focus).
