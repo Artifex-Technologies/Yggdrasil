@@ -162,6 +162,12 @@ pub fn about() -> About {
 // where their tests are)
 pub use yggdrasil_netjoin::list::{cable_in, net_devices, nm_fields, wifi_list, NetDevice, Wifi};
 
+/// A wired interface that is a phone sharing its connection over USB: the phone's name (its own, for an iPhone that trusts
+/// this computer; else its model), for "Tether (NAME)".
+pub fn phone_name(dev: &str) -> Option<String> {
+    yggdrasil_netjoin::list::phone_link(std::path::Path::new("/sys"), dev, &yggdrasil_netjoin::list::iphone_name)
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Network {
     pub wifi_on: bool,

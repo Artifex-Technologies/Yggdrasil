@@ -105,6 +105,46 @@ pub fn cable_in(state: &str) -> bool {
     !(state.starts_with("unavailable") || state.starts_with("unmanaged") || state.is_empty())
 }
 
+/// A wired interface that is a phone sharing its connection over USB: the phone's name, for the label "Tether (NAME)". An
+/// iPhone (the ipheth driver) by the name it carries (asked over its USB pairing with `name_of(udid)`: the USB serial is the
+/// phone's UDID), else "iPhone"; an Android phone over RNDIS (rndis_host) by its USB product name, its model. Newer Android
+/// phones on NCM share their driver with USB Ethernet adapters and stay Ethernet. `sys` is /sys (a made-up one in tests).
+pub fn phone_link(sys: &std::path::Path, dev: &str, name_of: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    let iface = sys.join("class/net").join(dev).join("device");
+    let driver = std::fs::read_link(iface.join("driver")).ok()?;
+    let driver = driver.file_name()?.to_string_lossy().into_owned();
+    let usb = iface.join("..");
+    let read = |f: &str| std::fs::read_to_string(usb.join(f)).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    match driver.as_str() {
+        "ipheth" => Some(read("serial").and_then(|u| name_of(&u)).unwrap_or_else(|| "iPhone".into())),
+        "rndis_host" => Some(read("product").unwrap_or_else(|| "phone".into())),
+        _ => None,
+    }
+}
+
+/// An iPhone's name, asked once per phone over its USB pairing (`idevicename -u UDID`, libimobiledevice through usbmuxd; it
+/// answers only for a phone that trusts this computer) and kept for the next asking.
+pub fn iphone_name(udid: &str) -> Option<String> {
+    use std::sync::{Mutex, OnceLock};
+    static NAMES: OnceLock<Mutex<std::collections::HashMap<String, Option<String>>>> = OnceLock::new();
+    let names = NAMES.get_or_init(Default::default);
+    if let Some(n) = names.lock().ok()?.get(udid) {
+        return n.clone();
+    }
+    let name = std::process::Command::new("idevicename")
+        .args(["-u", udid])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|n| !n.is_empty());
+    if let Ok(mut m) = names.lock() {
+        m.insert(udid.to_string(), name.clone());
+    }
+    name
+}
+
 /// `nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device`, Ethernet and Wi-Fi only.
 pub fn net_devices(text: &str) -> Vec<NetDevice> {
     text.lines()
@@ -177,6 +217,38 @@ pub fn nmcli(args: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_phone_on_usb_is_named_after_the_phone() {
+        let root = std::env::temp_dir().join(format!("netjoin-sys-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // /sys/class/net/DEV/device is the USB interface; its driver a link; the USB device (its parent) has product and serial
+        let dev = |name: &str, driver: &str, product: &str, serial: &str| {
+            let usb = root.join("devices").join(name);
+            let iface = usb.join("iface");
+            std::fs::create_dir_all(&iface).unwrap();
+            std::fs::create_dir_all(root.join("drivers").join(driver)).unwrap();
+            std::os::unix::fs::symlink(root.join("drivers").join(driver), iface.join("driver")).unwrap();
+            std::fs::write(usb.join("product"), format!("{product}\n")).unwrap();
+            std::fs::write(usb.join("serial"), format!("{serial}\n")).unwrap();
+            std::fs::create_dir_all(root.join("class/net").join(name)).unwrap();
+            std::os::unix::fs::symlink(&iface, root.join("class/net").join(name).join("device")).unwrap();
+        };
+        dev("iphone0", "ipheth", "iPhone", "00008110-UDID");
+        dev("android0", "rndis_host", "Pixel 8", "X");
+        dev("dock0", "cdc_ncm", "USB 10/100/1000 LAN", "Y");
+        dev("lan0", "r8169", "", "");
+        let names = |udid: &str| (udid == "00008110-UDID").then(|| "Rover".to_string());
+        assert_eq!(super::phone_link(&root, "iphone0", &names).as_deref(), Some("Rover"));
+        // an iPhone that does not trust this computer (no name given): still a phone
+        assert_eq!(super::phone_link(&root, "iphone0", &|_| None).as_deref(), Some("iPhone"));
+        assert_eq!(super::phone_link(&root, "android0", &names).as_deref(), Some("Pixel 8"));
+        // an NCM device may be a dock's Ethernet; a PCI card is Ethernet; a missing device is nothing
+        assert_eq!(super::phone_link(&root, "dock0", &names), None);
+        assert_eq!(super::phone_link(&root, "lan0", &names), None);
+        assert_eq!(super::phone_link(&root, "nope0", &names), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     use super::*;
 
     #[test]

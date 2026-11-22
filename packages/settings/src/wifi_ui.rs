@@ -225,14 +225,27 @@ impl App {
         }
         let mut open: Option<String> = None;
         let mut air_open: Option<AirKey> = None;
-        // Wired shows only while a cable is plugged in
-        let wired: Vec<&sys::NetDevice> = n.devices.iter().filter(|d| d.kind == "ethernet" && sys::cable_in(&d.state)).collect();
-        if !wired.is_empty() {
-            ui::group(ui, pal, Some("Wired"), |ui| {
-                for (i, d) in wired.iter().enumerate() {
+        // Wired shows only while a cable is plugged in. A phone sharing its connection over USB is not Ethernet: it has a group
+        // of its own, named after the phone ("Tether (Rover)")
+        let plugged = n.devices.iter().filter(|d| d.kind == "ethernet" && sys::cable_in(&d.state));
+        let (phones, wired): (Vec<_>, Vec<_>) = plugged.map(|d| (d, sys::phone_name(&d.device))).partition(|(_, p)| p.is_some());
+        for (group, list) in [("Phone", &phones), ("Wired", &wired)] {
+            if list.is_empty() {
+                continue;
+            }
+            ui::group(ui, pal, Some(group), |ui| {
+                for (i, (d, phone)) in list.iter().enumerate() {
                     let on = d.state.starts_with("connected");
-                    let sub = if on { "Connected".to_string() } else { "Cable plugged in, not connected".into() };
-                    let title = format!("Ethernet ({})", d.device);
+                    let sub = match (on, phone.is_some()) {
+                        (true, true) => "Connected through the phone".to_string(),
+                        (true, false) => "Connected".to_string(),
+                        (false, true) => "Plugged in, not connected (is the phone sharing its connection?)".to_string(),
+                        (false, false) => "Cable plugged in, not connected".to_string(),
+                    };
+                    let title = match phone {
+                        Some(name) => format!("Tether ({name})"),
+                        None => format!("Ethernet ({})", d.device),
+                    };
                     match n.saved.iter().find(|p| !p.wifi && p.name == d.connection) {
                         Some(p) => {
                             if ui::nav_row(ui, pal, i == 0, &title, Some(&sub), |_| {}) {
