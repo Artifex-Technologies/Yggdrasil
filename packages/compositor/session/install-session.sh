@@ -61,7 +61,7 @@ if printf '%s' "$out" | grep -q '^WAYLAND_DISPLAY='; then echo "   it started an
 
 step "the session's start and the login screen's entry"
 sh -n "$HERE/yggdrasil-compositor-session" && echo "   yggdrasil-compositor-session: the shell reads it"
-grep -q '^Exec=/usr/local/bin/yggdrasil-compositor-session$' "$HERE/yggdrasil-compositor.desktop" && echo "   yggdrasil-compositor.desktop: Exec as expected"
+grep -q '^Exec=yggdrasil-compositor-session$' "$HERE/yggdrasil-compositor.desktop" && echo "   yggdrasil-compositor.desktop: Exec as expected (found on PATH: /usr/local/bin before the package's /usr/bin)"
 [ -x /usr/bin/yggdrasil-session ] && echo "   the way back, /usr/bin/yggdrasil-session (Hyprland), is installed" || { echo "   /usr/bin/yggdrasil-session is missing: no way back, stopping"; exit 1; }
 
 [ "$MODE" = --check ] || sudo -v

@@ -1,0 +1,42 @@
+# Yggdrasil's own compositor (Smithay; built from packages/compositor in this repository) and its login entry "Yggdrasil (own
+# compositor)": the same desktop as the Yggdrasil session on Hyprland (the panel, idle and lock, the password box, the autostart
+# folder through yggdrasil-session.target), drawn by the compositor itself on the hardware (DRM/KMS through logind). When it
+# ends badly within its first seconds, its session start goes on with the Hyprland session instead, if that is installed.
+pkgname=yggdrasil-compositor
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Yggdrasil's own Wayland compositor and its desktop session"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MPL-2.0')
+depends=('gcc-libs' 'glibc' 'libdrm' 'libinput' 'libxkbcommon' 'lua54' 'mesa' 'pixman' 'seatd' 'systemd-libs'
+         'xorg-xwayland' 'fontconfig'
+         # the session it starts: the target, the autostart's programs, the careful log-out
+         'yggdrasil-session' 'yggdrasil-panel' 'yggdrasil-idle' 'yggdrasil-lock' 'yggdrasil-polkit' 'yggdrasil-portal')
+optdepends=('hyprsunset: Night Light (Settings > Displays)'
+            'xdg-desktop-portal-hyprland: screenshots and screen sharing through the portal')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../compositor"
+_wm="$startdir/../../wm"
+# the system's version (VERSION at the top); the build number counts the commits that touch these folders and this recipe
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src" "$_wm"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  # the headless backend's tests: compositors of their own in private folders, never the running desktop
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-compositor" "$pkgdir/usr/bin/yggdrasil-compositor"
+  install -Dm755 "$_src/session/yggdrasil-compositor-session" "$pkgdir/usr/bin/yggdrasil-compositor-session"
+  install -Dm644 "$_src/session/yggdrasil-compositor.desktop" "$pkgdir/usr/share/wayland-sessions/yggdrasil-compositor.desktop"
+}
