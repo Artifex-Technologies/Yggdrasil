@@ -219,7 +219,7 @@ pub fn nmcli(args: &[&str]) -> Option<String> {
 mod tests {
     #[test]
     fn a_phone_on_usb_is_named_after_the_phone() {
-        let root = std::env::temp_dir().join(format!("netjoin-sys-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("netjoin-phone-link-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         // /sys/class/net/DEV/device is the USB interface; its driver a link; the USB device (its parent) has product and serial
         let dev = |name: &str, driver: &str, product: &str, serial: &str| {
