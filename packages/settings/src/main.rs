@@ -1939,6 +1939,27 @@ impl App {
             ui.add_space(8.0);
         }
         let mut open: Option<String> = None;
+        if !l.asked.is_empty() {
+            ui::group(ui, pal, Some("Asked about this computer"), |ui| {
+                for (i, a) in l.asked.iter().enumerate() {
+                    let d = l.devices.iter().find(|d| d.ip == a.ip);
+                    let name = d
+                        .map(|d| devices::shown_name(d, &self.lan_names))
+                        .unwrap_or_else(|| self.lan_names.get(&a.mac.to_uppercase()).cloned().unwrap_or_else(|| "A device".into()));
+                    let sub = format!("{} · {} · {}", a.what, a.ip, devices::ago(now, a.time));
+                    match d {
+                        Some(d) => {
+                            if ui::nav_row(ui, pal, i == 0, &name, Some(&sub), |_| {}) {
+                                open = Some(devices::key(d));
+                            }
+                        }
+                        None => ui::row(ui, pal, i == 0, &name, Some(&sub), |_| {}),
+                    }
+                }
+                ui::row(ui, pal, false, "Nothing answered them", Some("This computer does not answer these questions on networks that are not home, and its firewall turns connections away"), |_| {});
+            });
+            ui.add_space(8.0);
+        }
         let fresh = |d: &devices::Device| {
             !looked && security::parse_time(&d.first_seen).is_some_and(|t| now - t < 86_400 && t - first_scan(&l) > 60)
         };
@@ -5193,7 +5214,8 @@ fn lan_summary(l: &devices::List, now: i64) -> String {
         "looking" => return "Listening…".into(),
         "look_failed" => return "Could not listen".into(),
         "offline" => return "Not connected".into(),
-        "looked" => return format!("{} heard just now", l.devices.len()),
+        "looked" if l.asked.is_empty() => return format!("{} heard just now", l.devices.len()),
+        "looked" => return format!("{} heard just now · {} asked about this computer", l.devices.len(), l.asked.len()),
         _ => {}
     }
     let here = l.devices.iter().filter(|d| security::parse_time(&d.last_seen).is_some_and(|t| l.last_scan - t < 60)).count();

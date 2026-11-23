@@ -78,6 +78,71 @@ pub struct List {
     pub listened: u64,
     /// Why a look did not run ("look_failed").
     pub error: String,
+    /// The interface a look listened on.
+    pub iface: String,
+    /// Devices that reached for this computer on this network in the last hour (the monitor's firewall log), newest first.
+    pub asked: Vec<Asked>,
+}
+
+/// A device that reached for this computer (the monitor's `lan-watch` `wifi_inbound` alerts): nothing answered it unless a
+/// firewall rule lets it in.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Asked {
+    pub ip: String,
+    pub mac: String,
+    /// What it did, for people ("asked its name (NetBIOS)").
+    pub what: String,
+    /// Seconds since 1970.
+    pub time: i64,
+}
+
+/// What a device asked of this computer, from the protocol, port and ICMP type the firewall logged.
+pub fn asked_what(proto: &str, port: &str, icmp: &str) -> String {
+    match (proto, port) {
+        _ if (proto == "ICMP" && icmp == "8") || (proto == "ICMPv6" && icmp == "128") => "pinged it".into(),
+        ("UDP", "137") => "asked its name (NetBIOS)".into(),
+        ("UDP", "5353") => "asked it directly (multicast DNS)".into(),
+        (_, "5355") => "asked its name (LLMNR)".into(),
+        ("UDP", "1900") => "asked it over UPnP".into(),
+        ("UDP", "161") => "asked for its details (SNMP)".into(),
+        ("TCP", "445" | "139") => "tried Windows file sharing".into(),
+        ("TCP", "22") => "tried SSH".into(),
+        (_, p) if !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()) => format!("tried port {p}"),
+        _ => "sent it a packet".into(),
+    }
+}
+
+/// The devices that reached for this computer on interface `iface` since `since` (seconds), out of `GET /v1/alerts`, one per
+/// address (the newest), newest first. The router is left out: the list names it already.
+pub fn parse_asked(body: &str, iface: &str, since: i64) -> Vec<Asked> {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let list = v.as_array().cloned().or_else(|| v.get("alerts").and_then(|a| a.as_array()).cloned()).unwrap_or_default();
+    let mut out: Vec<Asked> = Vec::new();
+    for a in &list {
+        // the alert's fields: at the top of the monitor's alerts, or under "event" in older ones
+        let fields = a.get("fields").or_else(|| a.get("event").and_then(|e| e.get("Fields").or_else(|| e.get("fields"))));
+        let f = |k: &str| fields.and_then(|x| x.get(k)).and_then(|x| x.as_str()).unwrap_or("");
+        let kind = a.get("event_kind").and_then(|k| k.as_str()).unwrap_or("");
+        let detector = a.get("detector_id").and_then(|k| k.as_str()).unwrap_or("");
+        let time = a.get("time").and_then(|t| t.as_str()).and_then(crate::security::parse_time).unwrap_or(0);
+        if detector != "lan-watch"
+            || kind != "wifi_inbound"
+            || f("iface") != iface
+            || f("router") == "true"
+            || f("src").is_empty()
+            || time < since
+        {
+            continue;
+        }
+        if out.iter().any(|x| x.ip == f("src")) {
+            continue;
+        }
+        let ip: String = f("src").chars().filter(|c| c.is_ascii_hexdigit() || *c == '.' || *c == ':').take(45).collect();
+        let mac: String = f("src_mac").chars().filter(|c| c.is_ascii_hexdigit() || *c == ':').take(17).collect();
+        out.push(Asked { ip, mac, what: asked_what(f("proto"), f("dst_port"), f("icmp_type")), time });
+    }
+    out.sort_by_key(|x| std::cmp::Reverse(x.time));
+    out
 }
 
 /// Parses the API's answer for connection `uuid`. The status is the last scan's; it speaks for this connection only if the
@@ -155,6 +220,8 @@ struct Heard {
     #[serde(default)]
     listened: u64,
     #[serde(default)]
+    interface: String,
+    #[serde(default)]
     devices: Vec<Device>,
 }
 
@@ -185,7 +252,16 @@ pub fn parse_look(body: &str, now: i64) -> List {
     let status = if h.status == "looked" { "looked" } else { "offline" };
     let mut devices = h.devices;
     devices.sort_by_key(|d| (order(shown_kind(d)), d.name.is_empty(), d.name.to_lowercase(), ip_key(&d.ip)));
-    List { status: status.into(), ssid: h.name, last_scan: now, devices, mdns: h.mdns, listened: h.listened, ..Default::default() }
+    List {
+        status: status.into(),
+        ssid: h.name,
+        last_scan: now,
+        devices,
+        mdns: h.mdns,
+        listened: h.listened,
+        iface: h.interface,
+        ..Default::default()
+    }
 }
 
 /// One look at connection `uuid`, waiting for it (about LOOK_SECONDS).
@@ -202,6 +278,13 @@ pub fn look(uuid: &str, now: i64) -> Result<List, String> {
         return Err("The security monitor is too old to look at this network.".into());
     }
     l.monitor = monitor_name();
+    // who reached for this computer here in the last hour: the monitor's own alerts (a local call)
+    if !l.iface.is_empty() {
+        let body = monitor()
+            .and_then(|i| i.loopback("api"))
+            .and_then(|a| crate::sys::run("curl", &["-s", "-m", "3", "--proto", "=http", &format!("http://{a}/v1/alerts?n=300")]));
+        l.asked = parse_asked(&body.unwrap_or_default(), &l.iface, now - 3600);
+    }
     Ok(l)
 }
 
@@ -420,6 +503,28 @@ mod tests {
         assert_eq!(look_args(&cmd, "--dir"), None);
         assert_eq!(look_args(&cmd, ""), None);
         assert_eq!(look_args(&cmd, "0f1e 2d"), None);
+    }
+
+    #[test]
+    fn who_asked_about_this_computer() {
+        let body = r#"[
+            {"time":"2026-11-22T20:10:00Z","detector_id":"lan-watch","severity":"info","event_kind":"wifi_inbound","fields":{"src":"192.0.2.23","src_mac":"0E:00:00:00:00:05","proto":"UDP","dst_port":"137","iface":"wlan0"}},
+            {"time":"2026-11-22T20:05:00Z","detector_id":"lan-watch","severity":"info","event_kind":"wifi_inbound","fields":{"src":"192.0.2.23","proto":"TCP","dst_port":"445","iface":"wlan0"}},
+            {"time":"2026-11-22T20:09:00Z","detector_id":"lan-watch","severity":"info","event_kind":"wifi_inbound","event":{"Fields":{"src":"192.0.2.24","proto":"ICMP","icmp_type":"8","iface":"wlan0"}}},
+            {"time":"2026-11-22T20:08:00Z","detector_id":"lan-watch","severity":"info","event_kind":"wifi_inbound","fields":{"src":"192.0.2.1","proto":"ICMP","icmp_type":"8","iface":"wlan0","router":"true"}},
+            {"time":"2026-11-22T20:07:00Z","detector_id":"lan-watch","severity":"info","event_kind":"wifi_inbound","fields":{"src":"192.0.2.30","proto":"TCP","dst_port":"22","iface":"wlan1"}},
+            {"time":"2026-11-22T18:00:00Z","detector_id":"lan-watch","severity":"info","event_kind":"wifi_inbound","fields":{"src":"192.0.2.31","proto":"TCP","dst_port":"22","iface":"wlan0"}},
+            {"time":"2026-11-22T20:06:00Z","detector_id":"lan-watch","severity":"warning","event_kind":"rogue_router","fields":{"iface":"wlan0"}}
+        ]"#;
+        let since = crate::security::parse_time("2026-11-22T19:15:00Z").unwrap();
+        let a = parse_asked(body, "wlan0", since);
+        let got: Vec<(&str, &str, &str)> = a.iter().map(|x| (x.ip.as_str(), x.mac.as_str(), x.what.as_str())).collect();
+        // one per device (its newest), an older alert shape read too; not the router, another interface, an older hour or
+        // another kind of alert
+        assert_eq!(got, vec![("192.0.2.23", "0E:00:00:00:00:05", "asked its name (NetBIOS)"), ("192.0.2.24", "", "pinged it")]);
+        assert_eq!(asked_what("TCP", "8080", ""), "tried port 8080");
+        assert_eq!(asked_what("TCP", "80; rm", ""), "sent it a packet", "only a port number is shown");
+        assert!(parse_asked("not json", "wlan0", 0).is_empty());
     }
 
     #[test]

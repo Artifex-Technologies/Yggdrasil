@@ -248,7 +248,8 @@ pub fn parse_alerts(body: &str) -> Vec<Alert> {
     let mut out: Vec<Alert> = list
         .iter()
         .filter_map(|a| {
-            let fields = a.get("event").and_then(|e| e.get("Fields").or_else(|| e.get("fields")));
+            // the alert's fields: at the top of the monitor's alerts, or under "event" in older ones
+            let fields = a.get("fields").or_else(|| a.get("event").and_then(|e| e.get("Fields").or_else(|| e.get("fields"))));
             let field = |k: &str| fields.and_then(|f| f.get(k)).and_then(|x| x.as_str()).unwrap_or("").to_string();
             Some(Alert {
                 time: parse_time(a.get("time")?.as_str()?)?,

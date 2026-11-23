@@ -108,7 +108,9 @@ its page opens, Settings runs the command as the user with `--wait 8` and the co
 (`{"status": "looked" | "offline", "name", "mdns": "listened" | "not_member" | "busy", "listened", "devices": [{"mac", "ip",
 "name", "vendor", "model", "kind", "services", "private_mac"}]}`; `mac` is empty for a device heard but never talked with).
 The command must only listen and must write nothing; Settings keeps the answer only while the page is open, and **Listen
-again** runs it once more. With `wifi_check`, it gets **Wi-Fi checks** (there too): the command prints
+again** runs it once more. Beside it, under **Asked about this computer**, Settings lists the monitor's `lan-watch` alerts of event kind
+`wifi_inbound` from the last hour whose `fields.iface` is the look's `interface` (`src`, `src_mac`, `proto`, `dst_port`,
+`icmp_type`; the router's, `router` "true", left out), one per address. With `wifi_check`, it gets **Wi-Fi checks** (there too): the command prints
 `{"connected", "summary", "verdict": "good" | "warn" | "bad", "link": {"ssid", "band", "channel", "width", "signal_dbm",
 "rx_mbps", "tx_mbps"}, "findings": [{"check", "status": "good" | "info" | "warn" | "bad", "title", "detail"}]}`. A monitor's
 new-device alert (`detector_id` "lan-watch", `event_kind` "new_lan_device") opens Devices when clicked.
