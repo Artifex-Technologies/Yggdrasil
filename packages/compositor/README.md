@@ -138,7 +138,8 @@ The session's behaviour is set in `packages/session/hyprland/yggdrasil.lua` (wit
 - Screen sharing for programs (2026-11-24, [packages/screencast](../screencast/README.md)): xdg-desktop-portal's ScreenCast
   answered by yggdrasil-portal; the share picker asks which screens, and yggdrasil-screencast publishes each as a PipeWire stream
   through ext-image-copy-capture. The own session routes it there by its desktop name (`Yggdrasil-Compositor`); Hyprland's
-  session keeps Hyprland's portal. Whole screens, shared memory.
+  session keeps Hyprland's portal. Whole screens, shared memory. Screenshots and picked colours for programs (the portal's
+  Screenshot, [packages/portal](../portal/README.md)): grim, `yggdrasil-shot --portal` and `yggdrasil-colorpicker --portal`.
 - The pointer drawn with the cursor theme, a program's own pointer, hidden while the screen is dimmed (item 7).
 - Yggdrasil's tools through yggdrasil-wm (above): the panel's desktop buttons and window zones, `yggdrasil-snap`, `yggdrasil-close`,
   the idle manager's pointer timeout, `ygg-theme cursor`'s pointer theme.

@@ -379,7 +379,8 @@ but not yet on the hardware backend, and a machine with two GPUs picks the one w
 VRR (while a full screen window covers the screen) and direct scanout of full screen games are built but not yet seen with a
 game; there is no tearing control (Smithay 0.7 has no asynchronous page flips). Screen sharing through the portal (ScreenCast:
 yggdrasil-portal, the share picker and yggdrasil-screencast, packages/screencast) is built and tested headless, whole screens in
-shared memory, but not yet tried with a browser or OBS; there are no screenshots through the portal. It is developed in a virtual machine, never on the live session, and the
+shared memory, but not yet tried with a browser or OBS; screenshots and picked colours through the portal (the same backend)
+are tested headless but not yet tried with a program by hand. It is developed in a virtual machine, never on the live session, and the
 headless tests run in CI the whole time.
 
 Debugging: `YGGDRASIL_COMPOSITOR_DEBUG=1` prints pointer positions, button presses and move requests. To drive it from a script, move the host pointer

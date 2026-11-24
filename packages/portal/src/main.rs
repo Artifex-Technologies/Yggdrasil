@@ -4,7 +4,8 @@
 //! sandbox do that. Nothing is logged but errors.
 //!
 //! It also answers `org.freedesktop.impl.portal.Settings` (settings.rs): dark or light, and the accent colour, for every program;
-//! and `org.freedesktop.impl.portal.ScreenCast` (screencast.rs): screen sharing on Yggdrasil's own compositor.
+//! and, on Yggdrasil's own compositor, `org.freedesktop.impl.portal.ScreenCast` (screencast.rs: screen sharing) and
+//! `org.freedesktop.impl.portal.Screenshot` (screenshot.rs: screenshots and picked colours).
 //!
 //! The dialog opens in the folder the same program last picked from (remembered per program in
 //! `~/.local/state/yggdrasil/picker-folders`), unless the program asks for a folder of its own. "The same program" is the
@@ -12,6 +13,7 @@
 //! asking), else the dialog's title.
 
 mod screencast;
+mod screenshot;
 mod settings;
 
 use std::collections::HashMap;
@@ -314,10 +316,12 @@ impl Chooser {
 fn main() -> zbus::Result<()> {
     let running = Arc::new(Mutex::new(HashMap::new()));
     let cast = screencast::ScreenCast { sessions: Default::default(), running: running.clone(), next: Default::default() };
+    let shots = screenshot::Screenshot { running: running.clone(), count: Default::default() };
     let conn = zbus::blocking::connection::Builder::session()?
         .name("org.freedesktop.impl.portal.desktop.yggdrasil")?
         .serve_at("/org/freedesktop/portal/desktop", Chooser { running })?
         .serve_at("/org/freedesktop/portal/desktop", cast)?
+        .serve_at("/org/freedesktop/portal/desktop", shots)?
         .serve_at("/org/freedesktop/portal/desktop", settings::Settings)?
         .build()?;
     settings::watch(conn.clone(), "/org/freedesktop/portal/desktop");

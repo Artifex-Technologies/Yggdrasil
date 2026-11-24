@@ -29,9 +29,9 @@ jobs:
           export YGGDRASIL_TEST_NESTED_REQUIRED=1
           # likewise yggdrasil-screencast's stream test (packages/screencast/tests/stream.rs): the compositor and PipeWire are here
           export YGGDRASIL_TEST_SCREENCAST_REQUIRED=1
-          # yggdrasil-screencast's portal test (packages/screencast/tests/portal.rs) runs the portal's build, which the loop's
-          # `cargo test` in packages/portal does not make (it has no tests of its own that run it)
-          (cd packages/portal && cargo build --quiet) || failed="$failed packages/portal(build)"
+          # and the portal's own (packages/portal/tests/screenshot.rs: dbus-daemon is here). Its `cargo test` builds
+          # target/debug/yggdrasil-portal, which screencast's portal test runs afterwards (the loop goes in name order)
+          export YGGDRASIL_TEST_PORTAL_REQUIRED=1
           for d in packages/*/; do
             [ -f "$d/Cargo.toml" ] || continue
             # formatting (rustfmt.toml at the top) and lints: the debt cleared on 2026-11-11 must not come back

@@ -7,6 +7,9 @@
 //!   Enter           the whole screen the pointer is on
 //!   Esc, right-click  nothing
 //! The picture goes to Pictures/Screenshots and to the clipboard (wl-copy), with a notification.
+//!
+//!   --portal PATH   for yggdrasil-portal's Screenshot (a program asked): the picture goes to PATH only, with no copy and no
+//!                   notification; exits 1 when nothing was chosen
 
 // shared with the lock screen, which uses all of them; the screenshot only the accent colour
 #[allow(dead_code)]
@@ -438,7 +441,8 @@ fn windows_on_screens(screens: &[yggdrasil_wm::Screen], windows: &[yggdrasil_wm:
     out
 }
 
-fn save(img: &Img, r: R) -> Result<std::path::PathBuf, String> {
+/// Saves the chosen part: to `to` (the portal's), else as a new file in Pictures/Screenshots.
+fn save(img: &Img, r: R, to: Option<&std::path::Path>) -> Result<std::path::PathBuf, String> {
     let r = r.clamp(img.w, img.h).ok_or("nothing chosen")?;
     let mut rgba = Vec::with_capacity((r.w * r.h * 4) as usize);
     for y in r.y..r.y + r.h {
@@ -446,6 +450,10 @@ fn save(img: &Img, r: R) -> Result<std::path::PathBuf, String> {
         for p in row.as_chunks::<4>().0 {
             rgba.extend_from_slice(&[p[2], p[1], p[0], 255]);
         }
+    }
+    if let Some(to) = to {
+        image::save_buffer(to, &rgba, r.w as u32, r.h as u32, image::ExtendedColorType::Rgba8).map_err(|e| e.to_string())?;
+        return Ok(to.to_path_buf());
     }
     let pictures = Command::new("xdg-user-dir")
         .arg("PICTURES")
@@ -473,6 +481,9 @@ fn save(img: &Img, r: R) -> Result<std::path::PathBuf, String> {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let portal: Option<std::path::PathBuf> =
+        args.iter().position(|a| a == "--portal").and_then(|i| args.get(i + 1)).map(std::path::PathBuf::from);
     let Ok(conn) = Connection::connect_to_env() else {
         eprintln!("yggdrasil-shot: no Wayland display");
         std::process::exit(1);
@@ -581,9 +592,18 @@ fn main() {
         }
     }
     let _ = conn.flush();
-    let Some(Some((i, r))) = app.result else { return };
-    let Some(img) = app.screens[i].img.as_ref() else { return };
-    match save(img, r) {
+    let nothing = || std::process::exit(if portal.is_some() { 1 } else { 0 });
+    let Some(Some((i, r))) = app.result else { nothing() };
+    let Some(img) = app.screens[i].img.as_ref() else { nothing() };
+    if let Some(to) = &portal {
+        // the program that asked gets the picture; the person's clipboard and notifications are left alone
+        if let Err(e) = save(img, r, Some(to)) {
+            eprintln!("yggdrasil-shot: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    match save(img, r, None) {
         Ok(path) => {
             if let Ok(f) = std::fs::File::open(&path) {
                 let _ = Command::new("wl-copy").args(["--type", "image/png"]).stdin(f).stdout(Stdio::null()).stderr(Stdio::null()).spawn();

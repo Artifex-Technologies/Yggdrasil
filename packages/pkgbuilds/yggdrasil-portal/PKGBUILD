@@ -3,7 +3,7 @@
 pkgname=yggdrasil-portal
 pkgver=1.0.0
 pkgrel=1
-pkgdesc="Yggdrasil portal backend: Minos as the open and save dialog, and screen sharing on the own compositor"
+pkgdesc="Yggdrasil portal backend: Minos as the open and save dialog; screen sharing and screenshots on the own compositor"
 arch=('x86_64')
 provides=('labyrinth-portal')
 conflicts=('labyrinth-portal')
@@ -12,6 +12,11 @@ url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
 # libpipewire: the screen sharing worker's stream; the rest: the share picker's window
 depends=('gcc-libs' 'xdg-desktop-portal' 'yggdrasil-minos' 'libpipewire' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig')
+# on the own compositor, the Screenshot portal runs these: grim (the whole desktop), yggdrasil-shot (an interactive one) and
+# yggdrasil-colorpicker (a colour)
+optdepends=('grim: screenshots for programs, on the own compositor'
+            'yggdrasil-lock: interactive screenshots for programs (yggdrasil-shot), on the own compositor'
+            'yggdrasil-colorpicker: colours picked for programs, on the own compositor')
 # clang: PipeWire's headers through bindgen
 makedepends=('cargo' 'clang')
 options=('!lto')

@@ -11,6 +11,8 @@
 //!   --print           also print what was copied
 //!   --format NAME     this once: hex, rgb, hsl, hsv, cmyk or float
 //!   --timeout SECS    give up after SECS (for tests: the picker takes the keyboard)
+//!   --portal          for yggdrasil-portal's PickColor (a program asked): only print the colour as three numbers from 0 to 1
+//!                     ("r g b"); nothing copied, kept or shown; exits 1 when nothing was picked
 
 mod draw;
 
@@ -515,6 +517,11 @@ fn arg_after(args: &[String], flag: &str) -> Option<String> {
     args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned()
 }
 
+/// The colour for the portal: red, green and blue from 0 to 1.
+fn portal_text((r, g, b): Rgb) -> String {
+    format!("{} {} {}", r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let format = arg_after(&args, "--format").and_then(|f| Format::parse(&f)).unwrap_or_else(colorpicker::chosen_format);
@@ -625,7 +632,13 @@ fn main() {
         }
     }
     let _ = conn.flush();
-    let Some(Some(c)) = app.result else { return };
+    let portal = args.iter().any(|a| a == "--portal");
+    let Some(Some(c)) = app.result else { std::process::exit(if portal { 1 } else { 0 }) };
+    if portal {
+        // the program that asked gets the colour; the person's clipboard, history and notifications are left alone
+        println!("{}", portal_text(c));
+        return;
+    }
     let text = format.text(c);
     let _ = Command::new("wl-copy").arg("--").arg(&text).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
     if let Err(e) = colorpicker::remember(c) {
@@ -645,6 +658,11 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_portal_gets_fractions() {
+        assert_eq!(portal_text((255, 0, 51)), "1 0 0.2");
+    }
 
     #[test]
     fn ppm_becomes_bgra_and_reads_back_as_rgb() {

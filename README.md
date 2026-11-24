@@ -37,7 +37,7 @@ recipes are parsed. Every program ported from Python was measured against the Py
 | `packages/taskmanager` | `yggdrasil-taskmanager` | the Task Manager (Ctrl + Shift + Esc), laid out like Windows 11's: processes with GPU columns, a Performance page for every graphics card (engines, memory, sensors, the AI models Ollama has loaded), startup apps, users, details and services ([README](packages/taskmanager/README.md)) |
 | `packages/idle` | `yggdrasil-idle` | dims, blacks out the screen (pointer hidden), locks, turns the screen off and sleeps when you are away; keyboard and mouse lights off with the screen ([README](packages/idle/README.md)) |
 | `packages/polkit` | `yggdrasil-polkit` | the password box for administrator actions, Wi-Fi and VPN passwords, and Bluetooth pairing |
-| `packages/portal` | `yggdrasil-portal` | the portal backend: Minos as every program's open and save dialog, dark or light and the accent, and screen sharing on the own compositor |
+| `packages/portal` | `yggdrasil-portal` | the portal backend: Minos as every program's open and save dialog, dark or light and the accent, and on the own compositor screen sharing, screenshots and picked colours ([README](packages/portal/README.md)) |
 | `packages/keyring-sync` | `yggdrasil-keyring-sync` | keeps the keyring and the login password in step ([docs/USERS_KEYRING.md](docs/USERS_KEYRING.md)) |
 | `packages/xmove` | `yggdrasil-xmove` | lets X11 programs that draw their own title bar (Steam) be moved and resized |
 | `packages/compositor` | `yggdrasil-compositor` | Yggdrasil's own compositor (Smithay), in progress |

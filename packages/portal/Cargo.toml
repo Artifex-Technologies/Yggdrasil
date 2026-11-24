@@ -23,3 +23,7 @@ rustix = { version = "1", features = ["process"] }
 opt-level = 2
 lto = "thin"
 strip = true
+
+[dev-dependencies]
+# tests/screenshot.rs: the stand-ins and the test's D-Bus die with the test (parent-death signal)
+rustix = { version = "1", features = ["process"] }

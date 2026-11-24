@@ -15,7 +15,7 @@ Chymaera OS; [LykanOS](https://github.com/Artifex-Technologies/LykanOS)) will us
 | Lock screen, login screen | `yggdrasil-lock`, `yggdrasil-greeter` (package `yggdrasil-lock`) | designs shared |
 | Idle manager (dim, black screen, lock, screen off, sleep) | `yggdrasil-idle` | the pointer hides while dimmed or black. Black screen keeps the monitor on (black pixels; kind to OLEDs), unlike screen off, which some monitors treat as unplugging |
 | Polkit agent, keyring sync, distress password | `yggdrasil-polkit`, `yggdrasil-keyring-sync`, `labyrinth-distress` (+ PAM module) | |
-| Screen sharing on the own compositor (the portal's ScreenCast) | `yggdrasil-portal`, `yggdrasil-share-picker`, `yggdrasil-screencast` (package `yggdrasil-portal`) | built 2026-11-24 ([packages/screencast](../packages/screencast/README.md)); the session on Hyprland uses Hyprland's portal |
+| Screen sharing, screenshots and picked colours for programs on the own compositor (the portal's ScreenCast and Screenshot) | `yggdrasil-portal`, `yggdrasil-share-picker`, `yggdrasil-screencast` (package `yggdrasil-portal`); `yggdrasil-shot`, `yggdrasil-colorpicker` | built 2026-11-24 ([packages/portal](../packages/portal/README.md), [packages/screencast](../packages/screencast/README.md)); the session on Hyprland uses Hyprland's portal |
 | Compositor | `yggdrasil-compositor` | in progress: nested, headless, and the DRM/KMS backend's first milestone in a virtual machine (2026-11-15, COMPOSITOR.md); Hyprland is the compositor today |
 | Calculator, weather | `yggdrasil-calculator`, `yggdrasil-weather` | small apps |
 | Saga MD (Markdown reader) | `saga-md` | Markdown and text files, formatted or as their source (replaced ghostwriter, KDE's, 2026-11-08) |
