@@ -282,6 +282,8 @@ pub struct App {
     pub x11_display: Option<u32>,
     /// Reads what an X11 window asked for before it was shown (x11asked.rs).
     pub x11_reader: Option<crate::x11asked::Reader>,
+    /// the X11 window last marked active (_NET_ACTIVE_WINDOW), while one has the keyboard
+    pub x11_active: Option<u32>,
     pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
     pub overlays: Vec<X11Surface>,
     /// XWayland as a Wayland client: its client scale is the scale X11 programs draw at (xwayland.rs, follow_scale).
@@ -401,8 +403,23 @@ impl WaylandFocus for KbFocus {
 impl smithay::input::keyboard::KeyboardTarget<App> for KbFocus {
     fn enter(&self, seat: &Seat<App>, data: &mut App, keys: Vec<smithay::input::keyboard::KeysymHandle<'_>>, serial: Serial) {
         match self {
-            KbFocus::Wl(s) => smithay::input::keyboard::KeyboardTarget::enter(s, seat, data, keys, serial),
-            KbFocus::X11(x) => smithay::input::keyboard::KeyboardTarget::enter(x, seat, data, keys, serial),
+            KbFocus::Wl(s) => {
+                smithay::input::keyboard::KeyboardTarget::enter(s, seat, data, keys, serial);
+                // no X11 window is active now (Wine stops reading the keys of a game that lost the focus)
+                if data.x11_active.take().is_some() {
+                    if let Some(r) = &data.x11_reader {
+                        r.activate(0);
+                    }
+                }
+            }
+            KbFocus::X11(x) => {
+                smithay::input::keyboard::KeyboardTarget::enter(x, seat, data, keys, serial);
+                // marked active and given the X input focus, as EWMH window managers do (x11asked.rs)
+                data.x11_active = Some(x.window_id());
+                if let Some(r) = &data.x11_reader {
+                    r.activate(x.window_id());
+                }
+            }
         }
     }
     fn leave(&self, seat: &Seat<App>, data: &mut App, serial: Serial) {
@@ -620,6 +637,7 @@ impl App {
             xwm: None,
             x11_display: None,
             x11_reader: None,
+            x11_active: None,
             xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(dh),
             overlays: vec![],
             xwayland_client: None,

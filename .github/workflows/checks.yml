@@ -13,8 +13,8 @@ jobs:
     steps:
       - name: Tools
         # pixman: the compositor's software renderer (its headless tests run a compositor in the container); seatd: libseat, which
-        # the compositor's hardware backend links (it is never started here)
-        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig pam dbus libxcrypt libinput mesa libvlc pixman seatd
+        # the compositor's hardware backend links (it is never started here); xorg-xwayland: its X11 tests (tests/x11.rs)
+        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig pam dbus libxcrypt libinput mesa libvlc pixman seatd xorg-xwayland
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
         with:
           persist-credentials: false
