@@ -32,7 +32,7 @@ const PROGRAMS: [&str; 13] = [
 ];
 
 /// A compositor whose PATH holds only the stand-ins (a command it would find nowhere else does nothing).
-fn with_stand_ins(args: &[&str]) -> (Compositor, PathBuf) {
+fn with_stand_ins(args: &[&str]) -> (Compositor, Called) {
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let bin = std::env::temp_dir().join(format!("ygg-keys-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
     let _ = std::fs::remove_dir_all(&bin);
@@ -46,7 +46,38 @@ fn with_stand_ins(args: &[&str]) -> (Compositor, PathBuf) {
         std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let comp = Compositor::start_env(args, &[("PATH", bin.to_str().unwrap())], |_| {});
-    (comp, log)
+    (comp, Called(log))
+}
+
+/// The stand-ins' log; their folder goes when the test is done (the temporary folder is memory).
+struct Called(PathBuf);
+
+impl std::ops::Deref for Called {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Called {
+    fn drop(&mut self) {
+        if let Some(bin) = self.0.parent() {
+            let _ = std::fs::remove_dir_all(bin);
+        }
+    }
+}
+
+/// A fontconfig file that finds no fonts (no text drawn: the pictures are the same on every machine), in Cargo's folder for
+/// test files; written once, whole (a new file renamed over), as tests running at once read it.
+fn no_fonts() -> &'static Path {
+    static FILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    FILE.get_or_init(|| {
+        let f = Path::new(env!("CARGO_TARGET_TMPDIR")).join("nofonts.conf");
+        let tmp = f.with_extension(format!("conf.{}", std::process::id()));
+        std::fs::write(&tmp, "<?xml version=\"1.0\"?><fontconfig></fontconfig>\n").unwrap();
+        std::fs::rename(&tmp, &f).unwrap();
+        f
+    })
 }
 
 fn calls(log: &Path) -> Vec<String> {
@@ -337,8 +368,7 @@ const CYAN: u32 = 0xff00ffff;
 /// A compositor for the switcher's tests: no fonts (fontconfig finds none, so no text is drawn and the pictures are the same on
 /// every machine), Yggdrasil's purple chosen as the accent, and an icon for the app `test.b` (a red square in a ring).
 fn switcher_compositor(size: &str) -> Compositor {
-    let fonts = std::env::temp_dir().join(format!("ygg-keys-nofonts-{}.conf", std::process::id()));
-    std::fs::write(&fonts, "<?xml version=\"1.0\"?><fontconfig></fontconfig>\n").unwrap();
+    let fonts = no_fonts();
     Compositor::start_env(&["--size", size], &[("FONTCONFIG_FILE", fonts.to_str().unwrap())], |dir| {
         std::fs::write(dir.join("home/.config/yggdrasil/appearance.conf"), "style = dark\naccent = 124,84,214\n").unwrap();
         let icons = dir.join("home/.local/share/icons/hicolor/scalable/apps");
@@ -615,8 +645,7 @@ fn the_switcher_draws_only_when_something_changes_and_nothing_once_closed() {
 #[test]
 fn a_steam_games_card_shows_its_shortcuts_icon() {
     let _l = limit(60, "a Steam game's card");
-    let fonts = std::env::temp_dir().join(format!("ygg-keys-nofonts-steam-{}.conf", std::process::id()));
-    std::fs::write(&fonts, "<?xml version=\"1.0\"?><fontconfig></fontconfig>\n").unwrap();
+    let fonts = no_fonts();
     // the shortcut Steam makes for a game, and the game's icon Steam saves (magenta here)
     let comp = Compositor::start_env(&["--size", "1280x720"], &[("FONTCONFIG_FILE", fonts.to_str().unwrap())], |dir| {
         let apps = dir.join("home/.local/share/applications");
