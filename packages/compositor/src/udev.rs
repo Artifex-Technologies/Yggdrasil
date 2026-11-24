@@ -264,7 +264,7 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     // the signals that end it are taken through a signalfd (blocked here, before any thread or child exists; the programs it
     // starts get them unblocked again: main.rs plain_signals. XWayland, which Smithay starts, keeps them blocked; it ends with
     // the compositor)
-    let signals = block_signals()?;
+    let signals = crate::end_signals()?;
     let mut event_loop: EventLoop<App> = EventLoop::try_new()?;
     let display: Display<App> = Display::new()?;
     let dh = display.handle();
@@ -611,27 +611,6 @@ fn has_screen(gpu: &Path, sysfs: &Path) -> bool {
         e.file_name().to_string_lossy().starts_with(&prefix)
             && std::fs::read_to_string(e.path().join("status")).is_ok_and(|s| s.trim() == "connected")
     })
-}
-
-/// Block SIGTERM, SIGINT and SIGHUP and give a signalfd that becomes readable when one comes.
-fn block_signals() -> Result<std::os::fd::OwnedFd, String> {
-    use std::os::fd::FromRawFd;
-    // SAFETY: plain libc calls on a set of our own, before any other thread exists
-    unsafe {
-        let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut set);
-        for s in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
-            libc::sigaddset(&mut set, s);
-        }
-        if libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) != 0 {
-            return Err("cannot block the signals that end it".into());
-        }
-        let fd = libc::signalfd(-1, &set, libc::SFD_CLOEXEC | libc::SFD_NONBLOCK);
-        if fd < 0 {
-            return Err(format!("signalfd: {}", std::io::Error::last_os_error()));
-        }
-        Ok(std::os::fd::OwnedFd::from_raw_fd(fd))
-    }
 }
 
 /// A GPU appeared (at start, or plugged in): open it through the seat, choose how it draws, and set up its connected screens.

@@ -108,6 +108,47 @@ fn gpu_buffers(
     app.dmabuf_import = Some(Box::new(move |d| r.borrow_mut().renderer().import_dmabuf(d, None).is_ok()));
 }
 
+/// Block SIGTERM, SIGINT and SIGHUP and give a signalfd that becomes readable when one comes: every backend ends cleanly on
+/// them (its loop stops, the Wayland socket, its lock and the control socket are removed). Called before any thread exists;
+/// the programs it starts get them unblocked again (plain_signals).
+pub fn end_signals() -> Result<std::os::fd::OwnedFd, String> {
+    use std::os::fd::FromRawFd;
+    // SAFETY: plain libc calls on a set of our own, before any other thread exists
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        for s in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+            libc::sigaddset(&mut set, s);
+        }
+        if libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) != 0 {
+            return Err("cannot block the signals that end it".into());
+        }
+        let fd = libc::signalfd(-1, &set, libc::SFD_CLOEXEC | libc::SFD_NONBLOCK);
+        if fd < 0 {
+            return Err(format!("signalfd: {}", std::io::Error::last_os_error()));
+        }
+        Ok(std::os::fd::OwnedFd::from_raw_fd(fd))
+    }
+}
+
+/// Stop the loop when `signals` (end_signals) says a signal came.
+pub fn quit_on_signals(
+    handle: &smithay::reexports::calloop::LoopHandle<'static, App>,
+    signals: std::os::fd::OwnedFd,
+) -> Result<(), String> {
+    use smithay::reexports::calloop::{generic::Generic, Interest, Mode, PostAction};
+    handle
+        .insert_source(Generic::new(signals, Interest::READ, Mode::Level), |_, fd, app| {
+            let mut buf = [0u8; 128];
+            // SAFETY: reading into a buffer of our own from the signalfd (one siginfo is 128 bytes)
+            let _ = unsafe { libc::read(std::os::fd::AsRawFd::as_raw_fd(&**fd), buf.as_mut_ptr().cast(), buf.len()) };
+            app.quit();
+            Ok(PostAction::Continue)
+        })
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// A program the compositor starts takes SIGTERM, SIGINT and SIGHUP as any program does. The hardware backend blocks them for
 /// its signalfd (udev.rs), and a blocked mask is passed on to the programs it starts: in the test machine (2026-11-15) Settings
 /// never saw SIGTERM, so a shutdown waited for it.
@@ -234,7 +275,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return udev::run(run);
     }
 
+    let signals = end_signals()?;
     let event_loop: EventLoop<App> = EventLoop::try_new()?;
+    quit_on_signals(&event_loop.handle(), signals)?;
     let display: Display<App> = Display::new()?;
     let (ping, ping_source) = smithay::reexports::calloop::ping::make_ping()?;
     run_nested(event_loop, display, ping, ping_source, run)
@@ -244,7 +287,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_headless(opts: &[String], run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let specs = headless::outputs_from(opts)?;
     let runtime = headless::check_env()?;
+    let signals = end_signals()?;
     let event_loop: EventLoop<App> = EventLoop::try_new()?;
+    quit_on_signals(&event_loop.handle(), signals)?;
     let display: Display<App> = Display::new()?;
     let dh = display.handle();
     let (ping, ping_source) = smithay::reexports::calloop::ping::make_ping()?;

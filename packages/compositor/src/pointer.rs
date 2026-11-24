@@ -301,6 +301,10 @@ impl App {
         if now != self.cursor.configured {
             self.cursor.configured = now;
             self.cursor.cache.clear();
+            // X11 programs follow, unless ygg-theme set one on the running compositor (that one stays)
+            if self.cursor_theme.is_none() {
+                self.x11_resources(false);
+            }
         }
     }
 

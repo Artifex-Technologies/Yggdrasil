@@ -59,7 +59,7 @@ pub fn start(app: &mut App, handle: LoopHandle<'static, App>, then: Box<dyn FnOn
                         let _ = wm.get_randr_primary_output();
                         app.xwm = Some(wm);
                         app.x11_display = Some(display_number);
-                        set_xft_dpi(display_number, app.x11_client_scale());
+                        app.x11_resources(true);
                         app.x11_reader = crate::x11asked::Reader::start(display_number, &wm_handle);
                         println!("DISPLAY=:{display_number}");
                     }
@@ -148,19 +148,20 @@ pub fn unrounded(g: Rectangle<i32, Logical>, scale: f64) -> Rectangle<i32, Logic
     Rectangle::new((f(g.loc.x), f(g.loc.y)).into(), (f(g.size.w), f(g.size.h)).into())
 }
 
-/// X resources with Xft.dpi set to `dpi`, any earlier Xft.dpi line replaced.
-pub fn with_xft_dpi(old: &str, dpi: u32) -> String {
-    let mut s: String = old.lines().filter(|l| !l.trim_start().starts_with("Xft.dpi:")).map(|l| format!("{l}\n")).collect();
-    s.push_str(&format!("Xft.dpi:\t{dpi}\n"));
+/// X resources with each of `set` (name, value) set, any earlier line of that name replaced.
+pub fn with_resources(old: &str, set: &[(&str, String)]) -> String {
+    let named = |l: &str, n: &str| l.trim_start().strip_prefix(n).is_some_and(|r| r.starts_with(':'));
+    let mut s: String = old.lines().filter(|l| !set.iter().any(|(n, _)| named(l, n))).map(|l| format!("{l}\n")).collect();
+    for (n, v) in set {
+        s.push_str(&format!("{n}:\t{v}\n"));
+    }
     s
 }
 
-/// Tell X11 programs the DPI for the scale (Xft.dpi, 96 for each 1.0), as KDE does for programs that scale themselves: the fonts
-/// of GTK and Qt programs, and Chromium-based ones (Steam's window) whole, grow back to the desktop's size. On a thread of its
-/// own: the X server is a client of this compositor and may be waiting on it.
-fn set_xft_dpi(display: u32, scale: f64) {
-    let dpi = (96.0 * scale).round() as u32;
-    let _ = std::thread::Builder::new().name("xft-dpi".into()).spawn(move || {
+/// Set X resources on XWayland's root window (RESOURCE_MANAGER, as xrdb does), the other lines kept. On a thread of its own:
+/// the X server is a client of this compositor and may be waiting on it.
+fn set_x_resources(display: u32, set: Vec<(&'static str, String)>) {
+    let _ = std::thread::Builder::new().name("x-resources".into()).spawn(move || {
         let Ok((conn, screen)) = x11rb::rust_connection::RustConnection::connect(Some(&format!(":{display}"))) else { return };
         let root = conn.setup().roots[screen].root;
         let old = conn
@@ -174,7 +175,7 @@ fn set_xft_dpi(display: u32, scale: f64) {
             root,
             AtomEnum::RESOURCE_MANAGER,
             AtomEnum::STRING,
-            with_xft_dpi(&old, dpi).as_bytes(),
+            with_resources(&old, &set).as_bytes(),
         );
         // an answered request: everything before it has reached the server
         let _ = conn.get_input_focus().map(|c| c.reply());
@@ -188,6 +189,22 @@ pub fn listed(x: &X11Surface, apps: &[String]) -> bool {
 }
 
 impl App {
+    /// What X11 programs read from X resources: the pointer's theme and size (Xcursor.theme, Xcursor.size: libXcursor's, so
+    /// X11 programs show the desktop's pointer, at X11's scale) and, with `dpi`, the DPI for the scale (Xft.dpi, 96 for each
+    /// 1.0, as KDE does for programs that scale themselves: the fonts of GTK and Qt programs, and Chromium-based ones (Steam's
+    /// window) whole, grow back to the desktop's size). Set when the window manager starts, when the scale changes and when
+    /// the pointer's theme does.
+    pub fn x11_resources(&self, dpi: bool) {
+        let Some(d) = self.x11_display else { return };
+        let scale = self.x11_client_scale();
+        let (theme, size) = self.pointer_theme();
+        let mut set = vec![("Xcursor.theme", theme), ("Xcursor.size", ((size as f64 * scale).round() as u32).to_string())];
+        if dpi {
+            set.push(("Xft.dpi", ((96.0 * scale).round() as u32).to_string()));
+        }
+        set_x_resources(d, set);
+    }
+
     /// What an X11 window asked for before it was shown (x11asked.rs), now that the answer is in: full screen or maximized,
     /// unless it already is, or the person has placed it since.
     pub fn x11_asked(&mut self, a: crate::x11asked::Asked) {
@@ -245,9 +262,7 @@ impl App {
                 let _ = x.configure(None);
             }
         }
-        if let Some(d) = self.x11_display {
-            set_xft_dpi(d, want);
-        }
+        self.x11_resources(true);
     }
 
     /// Where an X11 menu or tooltip is: its geometry, set right while Smithay still has its rounded first one (`unrounded`).
@@ -679,7 +694,7 @@ impl RenderElement<GlesRenderer> for OpaqueElement {
 mod tests {
     #[test]
     fn x11_programs_draw_at_the_screens_resolution() {
-        use super::{parse_stretch, unrounded, with_xft_dpi, x11_scale};
+        use super::{parse_stretch, unrounded, with_resources, x11_scale};
         use smithay::utils::Rectangle;
         // the largest scale of the screens that are on; never below 1; 1 when xwayland.conf says stretch
         assert_eq!(x11_scale([1.25].into_iter(), false), 1.25);
@@ -701,8 +716,15 @@ mod tests {
             Rectangle::new((320, 160).into(), (640, 480).into())
         );
         // the programs' DPI, the other resources kept
-        assert_eq!(with_xft_dpi("Xcursor.size:\t24\nXft.dpi:\t96\n", 120), "Xcursor.size:\t24\nXft.dpi:\t120\n");
-        assert_eq!(with_xft_dpi("", 96), "Xft.dpi:\t96\n");
+        let dpi = |d: u32| [("Xft.dpi", d.to_string())];
+        assert_eq!(with_resources("Xcursor.size:\t24\nXft.dpi:\t96\n", &dpi(120)), "Xcursor.size:\t24\nXft.dpi:\t120\n");
+        assert_eq!(with_resources("", &dpi(96)), "Xft.dpi:\t96\n");
+        // a name is the whole name before its colon: Xcursor.size does not take Xcursor.sizeX's line
+        let cur = [("Xcursor.theme", "Adwaita".to_string()), ("Xcursor.size", "48".to_string())];
+        assert_eq!(
+            with_resources("Xcursor.theme: old\nXcursor.sizeX: 1\nXft.dpi:\t96\n", &cur),
+            "Xcursor.sizeX: 1\nXft.dpi:\t96\nXcursor.theme:\tAdwaita\nXcursor.size:\t48\n"
+        );
     }
 
     use super::*;

@@ -78,3 +78,40 @@ fn a_window_that_waits_to_be_told_it_has_the_focus_is_made_active_and_given_it()
     assert!(is_active, "_NET_ACTIVE_WINDOW names the window");
     assert!(has_focus, "the window has the X input focus");
 }
+
+/// X11 programs show the desktop's pointer (YGG-10): the compositor sets Xcursor.theme and Xcursor.size in XWayland's X
+/// resources (libXcursor reads them), with Xft.dpi beside them, and sets them again when the pointer's theme changes.
+#[test]
+fn x11_programs_are_told_the_pointers_theme_and_size() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "the X11 pointer theme");
+    let (comp, display) = with_xwayland();
+    let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = conn.setup().roots[screen].root;
+    let resources = || {
+        let r = conn.get_property(false, root, AtomEnum::RESOURCE_MANAGER, AtomEnum::STRING, 0, 1 << 16).unwrap().reply().unwrap();
+        String::from_utf8_lossy(&r.value).into_owned()
+    };
+    let wait_for = |want: &[&str]| {
+        let start = Instant::now();
+        loop {
+            let r = resources();
+            if want.iter().all(|w| r.lines().any(|l| l == *w)) {
+                return r;
+            }
+            assert!(start.elapsed() < Duration::from_secs(10), "waited for {want:?}; the resources are {r:?}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    // at the start: some theme, a size, and the DPI of scale 1
+    let r = wait_for(&["Xft.dpi:\t96"]);
+    assert!(r.lines().any(|l| l.starts_with("Xcursor.theme:\t")) && r.lines().any(|l| l.starts_with("Xcursor.size:\t")), "{r:?}");
+    // ygg-theme sets another on the running compositor: X11 programs are told, each name once, Xft.dpi kept
+    comp.must("cursor-theme Adwaita 32");
+    let r = wait_for(&["Xcursor.theme:\tAdwaita", "Xcursor.size:\t32"]);
+    assert_eq!(r.lines().filter(|l| l.starts_with("Xcursor.theme:")).count(), 1, "{r:?}");
+    assert!(r.lines().any(|l| l == "Xft.dpi:\t96"), "{r:?}");
+}

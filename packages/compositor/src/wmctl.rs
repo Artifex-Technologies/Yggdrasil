@@ -248,6 +248,7 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
             match size {
                 Some(size) if plain(name) && crate::pointer::plain(name) => {
                     app.cursor_theme = Some((name.to_string(), size));
+                    app.x11_resources(false);
                     app.wake();
                     Ok(vec![])
                 }

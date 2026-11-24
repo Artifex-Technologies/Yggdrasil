@@ -233,3 +233,28 @@ fn other_programs_see_the_workspaces_and_switch_them() {
     c.until("back to four", |s| names(s).len() == 4 && active(s) == ["2"]);
     assert!(comp.ctl("workspace 10").is_err(), "nine at most");
 }
+
+/// SIGTERM, SIGINT and SIGHUP end it cleanly, as on the hardware backend: its loop stops, and its Wayland socket, the socket's
+/// lock and the control socket are removed (YGG-10: a `wayland-N` file was left after SIGTERM).
+#[test]
+fn a_signal_ends_it_and_leaves_no_socket_behind() {
+    let _l = limit(60, "the end signals");
+    for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+        let mut comp = Compositor::start(&["--size", "320x240"]);
+        let run = comp.wayland.parent().unwrap().to_path_buf();
+        let ours = |run: &std::path::Path| -> Vec<String> {
+            std::fs::read_dir(run)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.starts_with("wayland-") || n.ends_with(".ctl"))
+                .collect()
+        };
+        assert_eq!(ours(&run).len(), 3, "the socket, its lock and the control socket: {:?}", ours(&run));
+        // SAFETY: a signal to the child this test started
+        unsafe { libc::kill(comp.child.id() as i32, sig) };
+        let status = comp.child.wait().unwrap();
+        assert!(status.success(), "signal {sig}: it ended by itself, not killed ({status:?})");
+        assert!(ours(&run).is_empty(), "signal {sig}: left behind {:?}", ours(&run));
+    }
+}
