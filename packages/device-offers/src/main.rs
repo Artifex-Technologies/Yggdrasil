@@ -6,7 +6,8 @@
 //! systemd starts it in the signed-in user's session (data/): at sign-in, when a USB device is plugged in (udev), and when the
 //! computer comes online (NetworkManager's dispatcher, device-offers-online). It looks once and exits; offline it exits at once.
 //!
-//! What it reads: the OS's `packages` integration (Yggdrasil's docs/INTEGRATIONS.md): `devices` (its list, the installer's
+//! What it looks at: the USB devices plugged in (/sys), the Bluetooth devices paired that name a USB maker (BlueZ, through
+//! busctl), and what the computer is. What it reads: the OS's `packages` integration (Yggdrasil's docs/INTEGRATIONS.md): `devices` (its list, the installer's
 //! extras file), `components` and `component` (what Agora installs with), `first_login` (what the OS still installs by itself:
 //! left to it). Asked once per session ($XDG_RUNTIME_DIR/yggdrasil/device-offers-asked); "Don't ask again" is kept in
 //! ~/.local/state/yggdrasil/device-offers-never; what installing said goes to ~/.local/state/yggdrasil/device-offers.log.
@@ -75,6 +76,20 @@ fn installed() -> HashSet<String> {
         .unwrap_or_default()
 }
 
+/// The paired Bluetooth devices that name a USB maker (BlueZ over the system bus, one `busctl` call: it fails at once where
+/// BlueZ is not running, where bluetoothctl would wait for it).
+fn bluetooth() -> Vec<offers::Usb> {
+    Command::new("busctl")
+        .args(["--system", "--json=short", "call", "org.bluez", "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| offers::bluetooth_paired(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_default()
+}
+
 fn asked_file() -> Option<PathBuf> {
     std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|p| p.is_absolute()).map(|d| d.join("yggdrasil/device-offers-asked"))
 }
@@ -86,7 +101,8 @@ fn never_file() -> PathBuf {
 /// What to offer now, leaving out `asked` (this session's) and, unless `with_never`, the ones said no to.
 fn look(os: &Os, asked: &HashSet<String>, with_never: bool) -> Vec<Offer> {
     let root = root();
-    let hw = Hardware::read(&root);
+    let mut hw = Hardware::read(&root);
+    hw.usb.extend(bluetooth());
     let list = std::fs::read_to_string(&os.devices).unwrap_or_default();
     let comps = offers::component_packages(&std::fs::read_to_string(&os.components).unwrap_or_default());
     let user = std::env::var("USER").unwrap_or_default();

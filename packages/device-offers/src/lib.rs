@@ -68,6 +68,41 @@ pub struct Hardware {
     pub tablet_switch: bool,
 }
 
+/// Paired Bluetooth devices that name a USB maker and product: BlueZ's `Modalias` "usb:vVVVVpPPPPdDDDD", from the answer
+/// of `busctl --system --json=short call org.bluez / org.freedesktop.DBus.ObjectManager GetManagedObjects`. They count as
+/// plugged in. One named by its Bluetooth company number ("bluetooth:v...") does not: those numbers are not USB's. The kind
+/// comes from its icon (input-keyboard, input-mouse, input-gaming, printer).
+pub fn bluetooth_paired(json: &str) -> Vec<Usb> {
+    let v: Value = serde_json::from_str(json).unwrap_or(Value::Null);
+    let Some(objects) = v["data"][0].as_object() else { return vec![] };
+    let mut out: Vec<Usb> = objects
+        .values()
+        .filter_map(|o| {
+            let d = &o["org.bluez.Device1"];
+            if d["Paired"]["data"].as_bool() != Some(true) {
+                return None;
+            }
+            let m = d["Modalias"]["data"].as_str()?.to_ascii_lowercase();
+            let rest = m.strip_prefix("usb:v")?;
+            let (vendor, rest) = rest.split_at_checked(4)?;
+            let product = rest.strip_prefix('p')?.get(..4)?;
+            if !(vendor.chars().chain(product.chars()).all(|c| c.is_ascii_hexdigit())) {
+                return None;
+            }
+            let kind: &[&'static str] = match d["Icon"]["data"].as_str().unwrap_or("") {
+                "input-keyboard" => &["keyboard"],
+                "input-mouse" | "input-tablet" => &["mouse"],
+                "input-gaming" => &["gamepad"],
+                "printer" => &["printer"],
+                _ => &[],
+            };
+            Some(Usb::new(vendor, product, kind))
+        })
+        .collect();
+    out.sort_by(|a, b| (&a.vendor, &a.product).cmp(&(&b.vendor, &b.product)));
+    out
+}
+
 fn entries(dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.path()).collect()).unwrap_or_default();
     v.sort();
@@ -303,6 +338,35 @@ fn write_ids(path: &Path, mut all: Vec<String>) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paired_bluetooth_devices_with_a_usb_id_count_as_plugged_in() {
+        let dev = |path: &str, alias: Option<&str>, paired: bool, icon: &str| {
+            let mut d = json!({"Paired": {"type": "b", "data": paired}, "Icon": {"type": "s", "data": icon}});
+            if let Some(a) = alias {
+                d["Modalias"] = json!({"type": "s", "data": a});
+            }
+            (path.to_string(), json!({"org.bluez.Device1": d}))
+        };
+        let objects: serde_json::Map<String, Value> = [
+            dev("/org/bluez/hci0/dev_A", Some("usb:v1532p0084d0100"), true, "input-mouse"),
+            dev("/org/bluez/hci0/dev_B", Some("usb:v046DpB35Bd0012"), true, "input-keyboard"),
+            dev("/org/bluez/hci0/dev_C", Some("usb:v1B1Cp1B7Dd0001"), false, "input-keyboard"),
+            dev("/org/bluez/hci0/dev_D", Some("bluetooth:v000Dp0001d0001"), true, "audio-headset"),
+            dev("/org/bluez/hci0/dev_E", None, true, "phone"),
+            dev("/org/bluez/hci0/dev_F", Some("usb:vZZZZp0001d0001"), true, ""),
+            ("/org/bluez/hci0".to_string(), json!({"org.bluez.Adapter1": {}})),
+        ]
+        .into_iter()
+        .collect();
+        let answer = json!({"type": "a{oa{sa{sv}}}", "data": [objects]}).to_string();
+        let got = bluetooth_paired(&answer);
+        assert_eq!(got, vec![Usb::new("046d", "b35b", &["keyboard"]), Usb::new("1532", "0084", &["mouse"])]);
+        let hw = Hardware { usb: got, ..Hardware::default() };
+        assert!(hw.plugged(&json!(["1532"]), Some("mouse")) && hw.plugged(&json!(["046d:b35b"]), None));
+        assert!(!hw.plugged(&json!(["1b1c"]), None), "not paired");
+        assert!(bluetooth_paired("").is_empty() && bluetooth_paired(r#"{"data": []}"#).is_empty());
+    }
     use serde_json::json;
 
     /// A made-up computer under a temporary folder: USB devices with their interfaces, /proc/cpuinfo, power supplies, input switches.

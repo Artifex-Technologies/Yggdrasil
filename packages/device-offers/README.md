@@ -21,7 +21,10 @@ The OS's own device list, named by `devices` in its `packages` integration (docs
 installer's list, `installer-extras.json`, so the vendors and devices are written down in one place. An entry is offered when
 this computer asks for it, by the same code the installer ticks it with (this crate's library):
 
-- `chosen_if_usb`: a USB device plugged in, by exact `vendor:product`, or by vendor. A vendor alone counts only for a device of the
+- `chosen_if_usb`: a USB device plugged in, by exact `vendor:product`, or by vendor. A device paired over Bluetooth counts as
+  plugged in when BlueZ names its USB maker and product (its `Modalias` is `usb:v...p...`; read with one `busctl` call on
+  the system bus, which fails at once where BlueZ is not running); one named by its Bluetooth company number does not, those
+  numbers not being USB's. Its kind comes from its icon (keyboard, mouse, gamepad, printer). A vendor alone counts only for a device of the
   entry's `usb_kind` when it gives one:
   - `keyboard`, `mouse`, or `input` (either);
   - `printer`;

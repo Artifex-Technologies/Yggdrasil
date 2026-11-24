@@ -265,6 +265,41 @@ fn settings_lists_the_offers_and_undoes_dont_ask_again() {
     assert_eq!(w.offers(&["--install"], &[]).0, 2);
 }
 
+/// A device paired over Bluetooth only (nothing plugged in): BlueZ names its USB maker, so it gets the question like a plugged
+/// one (YGG-52). A stand-in busctl answers as BlueZ does; a device not paired, or named by its Bluetooth company number, does not.
+#[test]
+fn a_paired_bluetooth_device_gets_the_question() {
+    let w = World::new("bluetooth");
+    // shell built-ins only: the world's PATH holds nothing but stand-ins
+    w.tool("busctl", "while IFS= read -r l || [ -n \"$l\" ]; do printf '%s\\n' \"$l\"; done < \"$WORLD/bluez.json\"");
+    let dev = |alias: &str, paired: bool| {
+        format!(
+            r#"{{"org.bluez.Device1": {{"Paired": {{"type": "b", "data": {paired}}}, "Modalias": {{"type": "s", "data": "{alias}"}}, "Icon": {{"type": "s", "data": "input-mouse"}}}}}}"#
+        )
+    };
+    w.write(
+        "bluez.json",
+        &format!(
+            r#"{{"type": "a{{oa{{sa{{sv}}}}}}", "data": [{{"/org/bluez/hci0/dev_1": {}, "/org/bluez/hci0/dev_2": {}}}]}}"#,
+            dev("bluetooth:v1532p0084d0001", true),
+            dev("usb:v1B1Cp1B7Dd0001", false)
+        ),
+    );
+    w.offers(&[], &[("ANSWER", "install")]);
+    assert!(World::questions(&w.calls()).is_empty(), "a Bluetooth company number and a device not paired are not offered");
+    std::fs::remove_dir_all(w.dir.join("run/yggdrasil")).ok();
+    w.write(
+        "bluez.json",
+        &format!(r#"{{"type": "a{{oa{{sa{{sv}}}}}}", "data": [{{"/org/bluez/hci0/dev_1": {}}}]}}"#, dev("usb:v1532p0084d0001", true)),
+    );
+    w.offers(&[], &[("ANSWER", "install")]);
+    let calls = w.calls();
+    let q = World::questions(&calls);
+    assert!(q.len() == 1 && q[0].contains("[Software for Razer]"), "{calls}");
+    assert!(calls.contains("busctl [--system] [--json=short] [call] [org.bluez] [/]"), "{calls}");
+    assert!(calls.contains("os-apps [install] [razer]\n"), "{calls}");
+}
+
 #[test]
 fn installed_or_left_to_the_first_login_is_not_offered() {
     let w = World::new("left");
