@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use common::*;
 use wayland_client::backend::ObjectId;
 use wayland_client::protocol::wl_surface::WlSurface;
-use wayland_client::{delegate_noop, Connection, Dispatch, Proxy, QueueHandle};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1;
 use wayland_protocols::xdg::shell::client::xdg_popup::{self, XdgPopup};
 use wayland_protocols::xdg::shell::client::xdg_positioner::{Anchor as PAnchor, Gravity, XdgPositioner};
@@ -51,7 +51,6 @@ impl Dispatch<XdgPopup, usize> for State {
         }
     }
 }
-delegate_noop!(State: ignore XdgPositioner);
 
 /// A bar (red, Top layer, across the top) and a dock (green, Top layer, at the bottom), both reserving their room, as the panel.
 fn bar_and_dock(c: &mut Client, output: usize) -> (LayerSurf, LayerSurf) {

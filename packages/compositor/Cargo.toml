@@ -48,7 +48,8 @@ lto = "thin"
 # Smithay 0.7.0 with changes of ours: the X11 sockets bound apart from starting XWayland (X11Sockets,
 # XWayland::spawn_with_sockets), so XWayland starts on the first X11 program (xwayland.rs); and three X11 window manager fixes
 # (no events dropped after set_randr_primary_output, a new window's first geometry at fractional scales, close ending a
-# client that cannot be asked); and a session lock security fix (a refused locker could unlock the session or pass for the
-# lock screen). Our fork, pinned by commit (branch yggdrasil/lazy-xwayland on the 0.7.0 tag).
+# client that cannot be asked); a session lock security fix (a refused locker could unlock the session or pass for the
+# lock screen); and master's checks of client input (regions, size hints, window geometry). Our fork, pinned by commit (branch
+# yggdrasil/lazy-xwayland on the 0.7.0 tag).
 [patch.crates-io]
-smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "f6276c7f94c090e97008530a64d3a6988ea0ddc3" }
+smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "bb80bfa02378ac9892301c76418eba687029b77b" }

@@ -1476,6 +1476,11 @@ delegate_noop!(State: ignore ZwlrLayerShellV1);
 delegate_noop!(State: ignore ZxdgOutputManagerV1);
 delegate_noop!(State: ignore WpFractionalScaleManagerV1);
 delegate_noop!(State: ExtSessionLockManagerV1);
+// regions have no events (tests/hostile.rs makes some)
+delegate_noop!(State: wayland_client::protocol::wl_region::WlRegion);
+// positioners have no events, and the hostile tests ignore what their menus are told
+delegate_noop!(State: wayland_protocols::xdg::shell::client::xdg_positioner::XdgPositioner);
+delegate_noop!(State: ignore wayland_protocols::xdg::shell::client::xdg_popup::XdgPopup);
 delegate_noop!(State: ZwlrScreencopyManagerV1);
 delegate_noop!(State: ZwlrOutputPowerManagerV1);
 delegate_noop!(State: ExtIdleNotifierV1);

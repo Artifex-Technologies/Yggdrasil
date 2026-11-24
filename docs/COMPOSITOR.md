@@ -340,7 +340,11 @@ shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
   Smithay fork itself (X11Surface::close), with two more of its X11 bugs: every X11 event was dropped after the window manager
   set the primary screen until it made another request (it ignored that request's sequence number, which every following
   event carries), and a new window's first place and size were converted with 1.25 taken as 1. The compositor's workarounds
-  for all three are gone (`tests/x11.rs` fails without the fixes and passes with them).
+  for all three are gone (`tests/x11.rs` fails without the fixes and passes with them). The fork also has a session lock
+security fix (a program refused as a second locker could unlock the session, or put up its own lock screen in place of the
+real one and get the password; docs/LOCKSCREEN.md) and Smithay master's checks of what programs send (a region of negative
+size ended a debug build; negative size hints and window geometry of no size are protocol errors), with `tests/hostile.rs`:
+programs sending what the protocols forbid, which the compositor must survive.
 - Minimize: the window went away and showed `_NET_WM_STATE_HIDDEN`, but kept `_NET_WM_STATE_FOCUSED`. **Fixed:** a minimized
   window is marked inactive and the window now on top becomes the active one.
 - The panel inside the compositor: the minimized xterm was in the dock; a click brought it back with the keyboard, and the top
