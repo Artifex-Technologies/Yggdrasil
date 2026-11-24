@@ -345,6 +345,9 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
 - **Peripherals** (`yggdrasil-settings peripherals`, `mouse`, `keyboard`; 2026-11-12): the mouse and the keyboard, each on its own
   page, with the lights, DPI and polling rate of the devices that have them. It took the old Keyboard page's place in the
   sidebar; `yggdrasil-settings keyboard:shortcuts` and `shortcuts` still open the shortcut list.
+  - **Device software** (2026-11-24): what this computer's devices ask for that is not installed, as the sign-in offer
+    finds it (`yggdrasil-device-offers --json`, packages/device-offers), with Install, and Ask again for the ones answered
+    "Don't ask again". Shown only when there is something; nothing is installed without the click.
   - **Mouse:** pointer speed, mouse acceleration (adaptive, or flat as most games want), scroll speed, natural scrolling and
     which side the main button is on, for every mouse, and under "Each mouse" for one mouse alone (its switch gives it settings
     of its own, starting from everyone's). Find my mouse moved here from Keyboard.

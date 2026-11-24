@@ -9,6 +9,7 @@
   "df -B1 --output=size,avail /": "     1B-blocks         Avail\n1999844147200 1287458000896\n",
   "lspci -mm": "01:00.0 \"VGA compatible controller\" \"NVIDIA Corporation\" \"AD104 [GeForce RTX 4070]\" -ra1 \"\" \"\"\n",
   "uname -r": "6.17.8-2-cachyos\n",
+  "yggdrasil-device-offers --json": "[{\"id\":\"razer\",\"name\":\"Razer\",\"note\":\"OpenRazer: lights, DPI and polling rate for Razer mice and keyboards.\",\"components\":[\"razer\"],\"never\":false},{\"id\":\"ckb-next\",\"name\":\"Corsair keyboards and mice\",\"note\":\"\",\"components\":[\"ckb-next\"],\"never\":true}]",
   "bluetoothctl show": "Controller 5A:00:00:B7:00:01 (public)\n\tName: example-pc\n\tAlias: example-pc\n\tPowered: yes\n\tDiscoverable: no\n\tPairable: yes\n",
   "bluetoothctl devices Paired": "Device 5A:00:00:B7:10:01 Example Headphones\nDevice 5A:00:00:B7:10:02 Example Keyboard\nDevice 5A:00:00:B7:10:03 Wireless Controller\n",
   "bluetoothctl info 5A:00:00:B7:10:01": "Device 5A:00:00:B7:10:01 (public)\n\tName: Example Headphones\n\tIcon: audio-headset\n\tPaired: yes\n\tConnected: yes\n\tBattery Percentage: 0x50 (80)\n",

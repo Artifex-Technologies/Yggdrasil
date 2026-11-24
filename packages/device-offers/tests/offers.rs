@@ -222,6 +222,49 @@ fn closed_means_not_this_session_and_never_means_never() {
     assert!(World::questions(&w.calls()).is_empty(), "never again, in any session");
 }
 
+/// Settings > Peripherals: the offers as JSON, the ones said no to among them; "Ask again" undoes "Don't ask again", and
+/// Install installs one offer without a question.
+#[test]
+fn settings_lists_the_offers_and_undoes_dont_ask_again() {
+    let w = World::new("settings");
+    w.plug("1-1", "1532", "0084", false);
+    w.plug("1-2", "1b1c", "1b7d", true);
+    let (rc, out) = w.offers(&["--json"], &[]);
+    assert_eq!(rc, 0);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let ids: Vec<(&str, bool)> = v.as_array().unwrap().iter().map(|o| (o["id"].as_str().unwrap(), o["never"].as_bool().unwrap())).collect();
+    assert_eq!(ids, [("razer", false), ("ckb-next", false)]);
+    assert_eq!(v[0]["name"], "Razer");
+    assert_eq!(v[0]["components"], serde_json::json!(["razer"]));
+    assert!(!w.calls().contains("notify-send"), "--json asks nothing");
+
+    // "Don't ask again" for both, then Settings lists them as such
+    w.offers(&[], &[("ANSWER", "never")]);
+    assert_eq!(w.read("home/state/yggdrasil/device-offers-never"), "ckb-next\nrazer\n");
+    let (_, out) = w.offers(&["--json"], &[]);
+    assert!(out.contains(r#""id":"razer""#) && !out.contains(r#""never":false"#), "{out}");
+
+    // "Ask again" for one: the next look asks about it (and only it)
+    assert_eq!(w.offers(&["--ask-again", "razer"], &[]).0, 0);
+    assert_eq!(w.read("home/state/yggdrasil/device-offers-never"), "ckb-next\n");
+    std::fs::remove_dir_all(w.dir.join("run/yggdrasil")).unwrap();
+    w.calls();
+    w.offers(&[], &[("ANSWER", "")]);
+    let calls = w.calls();
+    let q = World::questions(&calls);
+    assert!(q.len() == 1 && q[0].contains("[Software for Razer]"), "{calls}");
+    w.offers(&["--ask-again", "ckb-next"], &[]);
+    assert!(!w.dir.join("home/state/yggdrasil/device-offers-never").exists(), "an empty list is removed");
+
+    // Install from Settings: no question, the component command at once; an id with nothing missing is refused
+    let (rc, _) = w.offers(&["--install", "razer"], &[]);
+    assert_eq!(rc, 0);
+    let calls = w.calls();
+    assert!(calls.contains("os-apps [install] [razer]\n") && World::questions(&calls).is_empty(), "{calls}");
+    assert_eq!(w.offers(&["--install", "sarina"], &[]).0, 1);
+    assert_eq!(w.offers(&["--install"], &[]).0, 2);
+}
+
 #[test]
 fn installed_or_left_to_the_first_login_is_not_offered() {
     let w = World::new("left");

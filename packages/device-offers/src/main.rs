@@ -11,8 +11,12 @@
 //! left to it). Asked once per session ($XDG_RUNTIME_DIR/yggdrasil/device-offers-asked); "Don't ask again" is kept in
 //! ~/.local/state/yggdrasil/device-offers-never; what installing said goes to ~/.local/state/yggdrasil/device-offers.log.
 //!
-//!   yggdrasil-device-offers           look now and offer
-//!   yggdrasil-device-offers --print   what would be offered now (id and components, one per line); asks nothing, online or not
+//!   yggdrasil-device-offers                  look now and offer
+//!   yggdrasil-device-offers --print          what would be offered now (id and components, one per line); asks nothing, online or not
+//!   yggdrasil-device-offers --json           this computer's offers as JSON, the ones said no to among them ("never": true), for
+//!                                            Settings > Peripherals: [{"id", "name", "note", "components", "never"}]
+//!   yggdrasil-device-offers --install ID...  installs those offers now (as the Install button does)
+//!   yggdrasil-device-offers --ask-again ID...  undoes "Don't ask again" for them
 //!
 //! For tests only: DEVICE_OFFERS_ROOT (another / for /sys and /proc/cpuinfo), DEVICE_OFFERS_INTEGRATIONS (folders with integration files,
 //! separated by ':'), DEVICE_OFFERS_AGORA_SUDO (another password box).
@@ -79,8 +83,8 @@ fn never_file() -> PathBuf {
     yggdrasil_conf::dirs::state().join("device-offers-never")
 }
 
-/// What to offer now, leaving out `asked` (this session's) and the ones said no to.
-fn look(os: &Os, asked: &HashSet<String>) -> Vec<Offer> {
+/// What to offer now, leaving out `asked` (this session's) and, unless `with_never`, the ones said no to.
+fn look(os: &Os, asked: &HashSet<String>, with_never: bool) -> Vec<Offer> {
     let root = root();
     let hw = Hardware::read(&root);
     let list = std::fs::read_to_string(&os.devices).unwrap_or_default();
@@ -88,7 +92,7 @@ fn look(os: &Os, asked: &HashSet<String>) -> Vec<Offer> {
     let user = std::env::var("USER").unwrap_or_default();
     let pending =
         os.first_login.as_ref().and_then(|f| std::fs::read_to_string(f).ok()).map(|t| offers::pending(&t, &user)).unwrap_or_default();
-    let mut leave = offers::read_ids(&never_file());
+    let mut leave = if with_never { HashSet::new() } else { offers::read_ids(&never_file()) };
     leave.extend(asked.iter().cloned());
     let exists = |p: &str| root.join(p.trim_start_matches('/')).exists();
     offers::offers(&list, &comps, &hw, &exists, &installed(), &leave, &pending)
@@ -149,8 +153,9 @@ fn ask(list: &[Offer]) -> Answer {
     }
 }
 
-/// Installs the offers' components with the OS's component command (`install ID...`), its root steps through Agora's password box.
-fn install(os: &Os, list: &[Offer]) {
+/// Installs the offers' components with the OS's component command (`install ID...`), its root steps through Agora's password box;
+/// true when it did.
+fn install(os: &Os, list: &[Offer]) -> bool {
     let ids: Vec<String> = list.iter().flat_map(|o| o.components.iter().cloned()).collect();
     let names = names(list);
     tell(&format!("Installing {names}"), "Your password is asked once; this can take a while.");
@@ -173,34 +178,80 @@ fn install(os: &Os, list: &[Offer]) {
     }
     if c.status().is_ok_and(|s| s.success()) {
         tell("Installed", &format!("Ready: {names}."));
+        true
     } else {
         tell(&format!("Could not install {names}"), "Agora can install it too. Details: ~/.local/state/yggdrasil/device-offers.log");
+        false
     }
+}
+
+/// The offers as Settings reads them (`--json`).
+fn offers_json(list: &[Offer], never: &HashSet<String>) -> String {
+    let v: Vec<serde_json::Value> = list
+        .iter()
+        .map(
+            |o| serde_json::json!({"id": o.id, "name": o.name, "note": o.note, "components": o.components, "never": never.contains(&o.id)}),
+        )
+        .collect();
+    serde_json::Value::Array(v).to_string()
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let print = match args.as_slice() {
-        [] => false,
-        [a] if a == "--print" => true,
-        _ => {
-            eprintln!("usage: yggdrasil-device-offers [--print]");
-            std::process::exit(2);
-        }
+    let usage = || -> ! {
+        eprintln!("usage: yggdrasil-device-offers [--print | --json | --install ID... | --ask-again ID...]");
+        std::process::exit(2);
     };
-    // an OS without a device list: nothing to do
-    let Some(os) = os() else { return };
-    if print {
-        for o in look(&os, &HashSet::new()) {
-            println!("{}\t{}", o.id, o.components.join(" "));
+    let ids: Vec<String> = args.iter().skip(1).cloned().collect();
+    let mode = match (args.first().map(String::as_str), ids.is_empty()) {
+        (None, _) => "",
+        (Some("--print"), true) => "print",
+        (Some("--json"), true) => "json",
+        (Some("--install"), false) => "install",
+        (Some("--ask-again"), false) => "ask-again",
+        _ => usage(),
+    };
+    if mode == "ask-again" {
+        // the user's own list: no OS needed to take a name off it
+        if let Err(e) = offers::remove_ids(&never_file(), &ids) {
+            eprintln!("yggdrasil-device-offers: {}: {e}", never_file().display());
+            std::process::exit(1);
         }
         return;
+    }
+    // an OS without a device list: nothing to do
+    let Some(os) = os() else {
+        if mode == "json" {
+            println!("[]");
+        }
+        return;
+    };
+    match mode {
+        "print" => {
+            for o in look(&os, &HashSet::new(), false) {
+                println!("{}\t{}", o.id, o.components.join(" "));
+            }
+            return;
+        }
+        "json" => {
+            println!("{}", offers_json(&look(&os, &HashSet::new(), true), &offers::read_ids(&never_file())));
+            return;
+        }
+        "install" => {
+            let list: Vec<Offer> = look(&os, &HashSet::new(), true).into_iter().filter(|o| ids.contains(&o.id)).collect();
+            if list.is_empty() {
+                eprintln!("yggdrasil-device-offers: nothing of {} is missing on this computer", ids.join(", "));
+                std::process::exit(1);
+            }
+            std::process::exit(if install(&os, &list) { 0 } else { 1 });
+        }
+        _ => {}
     }
     let asked_path = asked_file();
     let mut asked = asked_path.as_deref().map(offers::read_ids).unwrap_or_default();
     // a device plugged in while the question was open is looked at when it is answered; each offer is asked once a session
     while online() {
-        let list = look(&os, &asked);
+        let list = look(&os, &asked, false);
         if list.is_empty() {
             return;
         }
@@ -214,7 +265,9 @@ fn main() {
             let _ = offers::add_ids(p, &ids);
         }
         match answer {
-            Answer::Install => install(&os, &list),
+            Answer::Install => {
+                install(&os, &list);
+            }
             Answer::Never => {
                 let _ = offers::add_ids(&never_file(), &ids);
             }

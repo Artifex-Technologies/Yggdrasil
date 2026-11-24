@@ -67,9 +67,52 @@ struct Layout {
     options: String,
 }
 
+/// Software this computer's devices ask for that is not installed (yggdrasil-device-offers --json).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DeviceOffer {
+    pub id: String,
+    pub name: String,
+    pub note: String,
+    pub components: Vec<String>,
+    /// "Don't ask again" was answered: it is not offered by itself any more.
+    pub never: bool,
+}
+
+/// The device-offers program (packages/device-offers): what it offers, installing one, undoing "Don't ask again".
+const OFFERS: &str = "yggdrasil-device-offers";
+
+/// `yggdrasil-device-offers --json`'s list; nothing for anything else.
+pub fn parse_offers(json: &str) -> Vec<DeviceOffer> {
+    let v: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
+    let text =
+        |o: &serde_json::Value, k: &str| o[k].as_str().unwrap_or("").chars().filter(|c| !c.is_control()).take(200).collect::<String>();
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|o| o["id"].as_str().is_some_and(|i| !i.is_empty()))
+                .map(|o| DeviceOffer {
+                    id: text(o, "id"),
+                    name: text(o, "name"),
+                    note: text(o, "note"),
+                    components: o["components"]
+                        .as_array()
+                        .map(|c| c.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                        .unwrap_or_default(),
+                    never: o["never"].as_bool().unwrap_or(false),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn read_offers() -> Vec<DeviceOffer> {
+    sys::run(OFFERS, &["--json"]).map(|j| parse_offers(&j)).unwrap_or_default()
+}
+
 enum Msg {
     /// The compositor's mice (None: it cannot list them).
     Mice(Option<Vec<String>>),
+    Offers(Vec<DeviceOffer>),
     Razer(Razer),
     Layout(Option<Layout>),
     /// What a change said: an error, or a note.
@@ -126,6 +169,9 @@ pub struct State {
     try_text: String,
     /// The star key's group (read when the Keyboard page is first shown)
     star: Option<crate::starkey::State>,
+    offers: Vec<DeviceOffer>,
+    /// An offer being installed or asked about again (its id): its buttons wait.
+    offer_busy: Option<String>,
 }
 
 impl Default for State {
@@ -151,6 +197,8 @@ impl Default for State {
             note: None,
             try_text: String::new(),
             star: None,
+            offers: vec![],
+            offer_busy: None,
         }
     }
 }
@@ -175,6 +223,7 @@ impl State {
         std::thread::spawn(move || {
             let _ = tx.send(Msg::Mice(read_mice()));
             let _ = tx.send(Msg::Layout(read_layout()));
+            let _ = tx.send(Msg::Offers(read_offers()));
             c.request_repaint();
         });
     }
@@ -196,6 +245,10 @@ impl State {
         while let Ok(m) = self.rx.try_recv() {
             match m {
                 Msg::Mice(m) => self.mice = m,
+                Msg::Offers(o) => {
+                    self.offers = o;
+                    self.offer_busy = None;
+                }
                 Msg::Razer(r) => self.razer = r,
                 Msg::Layout(l) => self.layout = l,
                 Msg::Note(n, error) => self.note = (!n.is_empty()).then_some((n, error)),
@@ -334,9 +387,55 @@ impl State {
         for d in &others {
             self.razer_device(ui, pal, &ctx, d);
         }
+        self.offers_group(ui, pal, &ctx);
         if let Some(s) = go {
             self.sub = s;
         }
+    }
+
+    /// Device software: what this computer's devices ask for that is not installed, as the sign-in offer says it, with Install;
+    /// the ones answered "Don't ask again" with Ask again.
+    fn offers_group(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        if self.offers.is_empty() {
+            return;
+        }
+        let mut act: Option<(&'static str, String)> = None;
+        ui::group(ui, pal, Some("Device software"), |ui| {
+            for (n, o) in self.offers.iter().enumerate() {
+                let what = if o.note.is_empty() { format!("Not installed: {}.", o.components.join(", ")) } else { o.note.clone() };
+                let sub = if o.never { format!("{what} You said not to ask again.") } else { what };
+                let free = self.offer_busy.is_none();
+                ui::row(ui, pal, n == 0, &o.name, Some(&sub), |ui| {
+                    if ui
+                        .add_enabled(
+                            free,
+                            egui::Button::new(if self.offer_busy.as_deref() == Some(&o.id) { "Working…" } else { "Install" }),
+                        )
+                        .clicked()
+                    {
+                        act = Some(("--install", o.id.clone()));
+                    }
+                    if o.never
+                        && ui.add_enabled(free, egui::Button::new("Ask again")).on_hover_text("Offer it again when it is missing").clicked()
+                    {
+                        act = Some(("--ask-again", o.id.clone()));
+                    }
+                });
+            }
+        });
+        if let Some((what, id)) = act {
+            self.offer_busy = Some(id.clone());
+            let (tx, c) = (self.tx.clone(), ctx.clone());
+            std::thread::spawn(move || {
+                // installing asks for the password in the desktop's password box and says how it went in a notification
+                if let Err(e) = sys::act(OFFERS, &[what, &id]) {
+                    let _ = tx.send(Msg::Note(if e.is_empty() { "That did not work.".into() } else { e }, true));
+                }
+                let _ = tx.send(Msg::Offers(read_offers()));
+                c.request_repaint();
+            });
+        }
+        self.note(ui, pal);
     }
 
     fn razer_devices(&self, keep: impl Fn(&razer::Device) -> bool) -> impl Iterator<Item = &razer::Device> {
@@ -898,6 +997,17 @@ fn parse_xkb(text: &str) -> Layouts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The desktop fixture's device offers: one to install, one answered "Don't ask again"; junk is no offer.
+    #[test]
+    fn the_device_offers_come_from_the_offers_program() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/system.json")).unwrap();
+        let f: crate::fixture::Fixture = serde_json::from_str(&text).unwrap();
+        let o = parse_offers(&f.answer(OFFERS, &["--json"]).unwrap());
+        assert_eq!(o.iter().map(|o| (o.id.as_str(), o.never)).collect::<Vec<_>>(), [("razer", false), ("ckb-next", true)]);
+        assert_eq!(o[1].components, ["ckb-next"]);
+        assert!(parse_offers("not json").is_empty() && parse_offers(r#"[{"name": "no id"}]"#).is_empty());
+    }
 
     #[test]
     fn the_system_layout_is_read() {

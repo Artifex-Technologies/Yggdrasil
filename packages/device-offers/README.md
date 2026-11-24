@@ -7,7 +7,10 @@ sign-in, one notification names what is missing.
 - **Install** runs the operating system's component command (`labyrinth-apps install razer ...` on Labyrinth). Root steps go
   through Agora's password box. A notification says when it is done or what failed (details in
   `~/.local/state/yggdrasil/device-offers.log`).
-- **Don't ask again** is kept in `~/.local/state/yggdrasil/device-offers-never`. Agora still installs it.
+- **Don't ask again** is kept in `~/.local/state/yggdrasil/device-offers-never`. Agora still installs it, and Settings >
+  Peripherals > Device software lists it with **Ask again** (`yggdrasil-device-offers --ask-again ID`) and **Install**
+  (`--install ID`, the same install as the notification's button). That card is `yggdrasil-device-offers --json`: this
+  computer's offers, the ones said no to among them (`"never": true`).
 - Closing the notification means not now. Each offer is asked once a session (`$XDG_RUNTIME_DIR/yggdrasil/device-offers-asked`).
 
 Nothing is installed without the click. Offline nothing is asked at all.

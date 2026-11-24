@@ -276,6 +276,22 @@ pub fn read_ids(path: &Path) -> HashSet<String> {
 pub fn add_ids(path: &Path, ids: &[String]) -> std::io::Result<()> {
     let mut all: Vec<String> = read_ids(path).into_iter().collect();
     all.extend(ids.iter().cloned());
+    write_ids(path, all)
+}
+
+/// Takes ids out of such a list (a list left empty is removed).
+pub fn remove_ids(path: &Path, ids: &[String]) -> std::io::Result<()> {
+    let all: Vec<String> = read_ids(path).into_iter().filter(|i| !ids.contains(i)).collect();
+    if all.is_empty() {
+        return match std::fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
+    }
+    write_ids(path, all)
+}
+
+fn write_ids(path: &Path, mut all: Vec<String>) -> std::io::Result<()> {
     all.sort();
     all.dedup();
     if let Some(d) = path.parent() {
