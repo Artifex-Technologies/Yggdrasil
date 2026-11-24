@@ -1,5 +1,5 @@
-//! yggdrasil-zoom in|out|off: the magnifier. Hyprland's zoom around the pointer (cursor:zoom_factor), in steps of half a time,
-//! from 1 (off) to 8. Super+Alt+= zooms in, Super+Alt+- out, Super+Alt+0 turns it off (docs/ACCESSIBILITY.md).
+//! yggdrasil-zoom in|out|off: the magnifier. Hyprland's zoom around the pointer (cursor:zoom_factor), or Yggdrasil's own
+//! compositor's (`zoom`, through yggdrasil-wm), in steps of half a time, from 1 (off) to 8. Super+Alt+= zooms in, Super+Alt+- out, Super+Alt+0 turns it off (docs/ACCESSIBILITY.md).
 //!
 //! As the script: the factor now from `hyprctl getoption cursor:zoom_factor` (its "float:" line), the next one worked out as awk
 //! did (a number read from the front of the text, nothing readable being 0; printed with one decimal, rounded as C's printf
@@ -15,6 +15,13 @@ pub fn main() {
     if !matches!(a.as_str(), "in" | "out" | "off") {
         eprintln!("usage: yggdrasil-zoom in|out|off");
         std::process::exit(2);
+    }
+    // Yggdrasil's own compositor: the same steps through its control socket (yggdrasil-wm)
+    if let Some(d) = yggdrasil_wm::Desk::detect().filter(|d| !d.is_hyprland()) {
+        let cur = d.zoom().unwrap_or(1.0);
+        let next = next_factor(&cur.to_string(), &a).parse::<f32>().unwrap_or(1.0);
+        d.set_zoom(next);
+        return;
     }
     let out = run::output(Command::new("hyprctl").args(["getoption", "cursor:zoom_factor"]));
     let cur = current(&String::from_utf8_lossy(&out));

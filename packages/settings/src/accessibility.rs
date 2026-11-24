@@ -2,7 +2,8 @@
 //!
 //! - Text and control size, and Reduce motion (panel.conf: the egui apps within a second; Reduce motion also turns Hyprland's
 //!   animations off, through the session's config, and Yggdrasil's compositor's).
-//! - Zoom: Hyprland's zoom around the pointer (cursor:zoom_factor), the same one Super+Alt+= / - / 0 change.
+//! - Zoom: the magnifier around the pointer (Hyprland's cursor:zoom_factor, or Yggdrasil's own compositor's `zoom`, through
+//!   yggdrasil-wm), the same one Super+Alt+= / - / 0 change.
 //! - Pointer size (`ygg-theme cursor-size`: the compositor at once, programs as they start, everything at the next sign-in).
 //! - Colour filters: a screen shader Settings writes (~/.config/yggdrasil/shaders/NAME.frag), named in accessibility.conf, which
 //!   the session gives Hyprland at every start (decoration:screen_shader); Settings also sets it at once.
@@ -96,27 +97,24 @@ pub fn set_filter(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// `getoption cursor:zoom_factor`'s "float: N".
-pub fn parse_float(text: &str) -> Option<f32> {
-    text.lines().find_map(|l| l.trim().strip_prefix("float:")).and_then(|v| v.trim().parse().ok())
-}
-
-/// Hyprland's zoom around the pointer, now.
+/// The magnifier's zoom around the pointer, now (Hyprland's or Yggdrasil's own compositor's, through yggdrasil-wm).
 pub fn set_zoom(z: f32) -> Result<(), String> {
     match sys::desk() {
-        Some(yggdrasil_wm::Desk::Hyprland(h)) => {
-            h.eval(&format!("hl.config({{ cursor = {{ zoom_factor = {:.1} }} }})", z.clamp(1.0, 8.0)));
+        Some(d) => {
+            d.set_zoom(z);
             Ok(())
         }
-        _ => Err("Zoom works on Hyprland for now.".into()),
+        None => Err("No compositor to zoom with.".into()),
     }
 }
 
 /// What the page reads when it opens.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct State {
-    /// Hyprland is the compositor (zoom and colour filters work there; with a fixture: as if it were).
+    /// Hyprland is the compositor (colour filters work there; with a fixture: as if it were).
     pub hyprland: bool,
+    /// The magnifier works: Hyprland or Yggdrasil's own compositor (with a fixture: as if it did).
+    pub zoom_works: bool,
     pub zoom: f32,
     pub cursor_size: u32,
     pub filter: String,
@@ -126,14 +124,13 @@ pub struct State {
 
 pub fn load() -> State {
     let fixture = crate::fixture::get().is_some();
-    let (hyprland, zoom) = match sys::desk() {
-        Some(yggdrasil_wm::Desk::Hyprland(h)) => {
-            (true, h.query("getoption cursor:zoom_factor").and_then(|t| parse_float(&t)).unwrap_or(1.0))
-        }
-        _ => (fixture, 1.0),
+    let (hyprland, zoom_works, zoom) = match sys::desk() {
+        Some(d) => (d.is_hyprland(), true, d.zoom().unwrap_or(1.0)),
+        None => (fixture, fixture, 1.0),
     };
     State {
         hyprland,
+        zoom_works,
         zoom,
         cursor_size: sys::run("ygg-theme", &["cursor-size"]).and_then(|s| s.trim().parse().ok()).unwrap_or(24),
         filter: filter_in(&std::fs::read_to_string(conf_path()).unwrap_or_default()),
@@ -191,7 +188,7 @@ impl App {
                     size = Some(CURSOR_SIZES[i]);
                 }
             });
-            if st.hyprland {
+            if st.zoom_works {
                 ui::row(
                     ui,
                     pal,
@@ -218,6 +215,8 @@ impl App {
                         }
                     },
                 );
+            }
+            if st.hyprland {
                 let cur = FILTERS.iter().find(|f| f.0 == st.filter).unwrap_or(&FILTERS[0]);
                 ui::row(
                     ui,
@@ -238,7 +237,7 @@ impl App {
             }
         });
         if !st.hyprland {
-            ui::footnote(ui, pal, "Zoom and colour filters work on Hyprland; Yggdrasil's own compositor does not offer them yet.");
+            ui::footnote(ui, pal, "Colour filters work on Hyprland; Yggdrasil's own compositor does not offer them yet.");
         }
         ui::group(ui, pal, Some("Motion"), |ui| {
             ui::row(ui, pal, true, "Reduce motion", Some("No fades or slides in the desktop's own apps, and no window animations"), |ui| {
@@ -331,11 +330,5 @@ mod tests {
             assert!(seen.insert(s), "{id} differs from the others");
         }
         assert_eq!(shader("../x"), None);
-    }
-
-    #[test]
-    fn hyprlands_zoom_factor_reads() {
-        assert_eq!(parse_float("float: 2.500000\nset: true\n"), Some(2.5));
-        assert_eq!(parse_float("no such option"), None);
     }
 }

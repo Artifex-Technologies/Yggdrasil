@@ -14,7 +14,8 @@ animations follow), the pointer's size (`ygg-theme cursor-size 24|32|48|64|96`: 
 `cursor_size` in appearance.conf), Hyprland's zoom around the pointer with the Super+Alt+= / - / 0 keys beside it, and colour
 filters (greyscale, protanopia, deuteranopia, tritanopia: a screen shader Settings writes to ~/.config/yggdrasil/shaders, named
 in accessibility.conf, which the session's yggdrasil.lua gives Hyprland at every start; `packages/session/tests/color-filter.lua`).
-Zoom and colour filters are Hyprland's: Yggdrasil's own compositor does not offer them yet. Since 2026-11-24 a High contrast
+Colour filters are Hyprland's: Yggdrasil's own compositor does not offer them yet; since 2026-11-24 it zooms (the same keys
+and Settings' Zoom, through yggdrasil-wm; packages/compositor/README.md, "The magnifier"). Since 2026-11-24 a High contrast
 switch there gives the egui apps a black-and-white palette (`yggdrasil_ui::theme::palette_with`): text and dim text at least
 7:1 on every background, lines 3:1, status colours 4.5:1, the chosen accent moved toward white or black until it reads at 7:1,
 buttons and fields outlined; `the_high_contrast_palettes_meet_the_contrast_levels` checks every pair on both styles with six
@@ -70,8 +71,9 @@ with Orca before trusting the table below**, and again when eframe is upgraded.
    by default. Super+Alt+S starts or stops Orca (`yggdrasil-screen-reader`) and says how to install it when it is missing. The
    live ISO has no boot entry that starts with speech, and there is no braille support.
 7. **No sticky, slow or bounce keys, no mouse keys and no mono audio:** the keys came from KDE, which is gone, and Hyprland 0.57
-   has no setting for them. The magnifier is Hyprland's zoom around the pointer (Super+Alt+= / - / 0, and Zoom in Settings >
-   Accessibility); Yggdrasil's own compositor does not zoom yet.
+   has no setting for them. The magnifier zooms around the pointer (Super+Alt+= / - / 0, and Zoom in Settings >
+   Accessibility) on Hyprland and on Yggdrasil's own compositor; on the own compositor the window switcher's cards and a full
+   screen game drawn opaque are not magnified.
 8. **On-screen keyboard:** wvkbd (Agora's "On-screen keyboard") shows in tablet mode on a 2-in-1 while no keyboard is plugged in
    (DESKTOP.md, "Tablet mode and rotation"). It cannot be opened on demand, and the lock screen and password box, which draw
    their own fields, have none.

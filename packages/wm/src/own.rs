@@ -105,6 +105,14 @@ impl Own {
         self.act(&format!("pointer-timeout {secs}"));
     }
 
+    pub fn zoom(&self) -> Option<f32> {
+        self.ask("zoom").ok()?.first()?.trim().parse().ok()
+    }
+
+    pub fn set_zoom(&self, z: f32) {
+        self.act(&format!("zoom {:.1}", z.clamp(1.0, 8.0)));
+    }
+
     pub fn close_window(&self, window: &str) -> bool {
         id(window).is_some_and(|w| self.act(&format!("close {w}")))
     }

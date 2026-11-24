@@ -383,3 +383,56 @@ fn idle_cost() {
         println!("idle again after: {} us over 5 s", t8 - t7);
     }
 }
+
+/// The magnifier (YGG-6): `zoom 2` draws the screen under the pointer twice as large about the pointer (the point under it stays
+/// where it is). A layer's picture, a window's picture, its rounded clip and its border all grow together; `zoom 1` puts the
+/// screen back as it was, pixel for pixel.
+#[test]
+fn the_magnifier_draws_the_screen_larger_about_the_pointer() {
+    let _l = limit(60, "the magnifier");
+    let comp = Compositor::start(&["--size", "800x600"]);
+    let mut c = comp.connect();
+    // a yellow bar across the top (a layer: no border, no rounding) and a blue window at 100,200, 200x150
+    let (bar, _ls) = c.layer(40);
+    let yellow = c.buffer(800, 40, YELLOW);
+    bar.attach(Some(&yellow), 0, 0);
+    bar.damage_buffer(0, 0, 800, 40);
+    bar.commit();
+    let w = c.window("test.zoom", "Zoom");
+    c.draw(&w, (200, 150), BLUE);
+    comp.must(&format!("place {} 100 200 200 150", client_id(&comp, "test.zoom")));
+    settle(&comp, &mut c, &w, "test.zoom", BLUE);
+    let (x, y, ww, wh) = comp.window("test.zoom").unwrap().rect();
+    assert_eq!((x, y, ww, wh), (100, 200, 200, 150));
+    let before = comp.screenshot("HEADLESS-1");
+    assert_eq!(before.count((0, 0, 800, 600), RGB_YELLOW), 800 * 40);
+    assert!(before.fills((100, 200, 200, 150), RGB_BLUE, 10));
+    assert_eq!(comp.must("zoom"), ["1"]);
+
+    // the pointer on the window's middle (200,275), zoom 2: the window covers 0..400 x 125..425, cut round at twice the radius
+    comp.must("pointer 200 275");
+    comp.must("zoom 2");
+    assert_eq!(comp.must("zoom"), ["2"]);
+    let pic = comp.screenshot("HEADLESS-1");
+    // (its outermost row and column are smoothed by the scaling: one pixel in from the edge it is solid)
+    assert!(pic.fills((1, 126, 398, 298), RGB_BLUE, 20), "the picture and its clip grew together");
+    assert_eq!(pic.count((0, 0, 800, 600), RGB_BLUE), pic.count((0, 125, 400, 300), RGB_BLUE), "nothing blue outside it");
+    assert_ne!(pic.at(399, 424), RGB_BLUE, "its corner is cut, twice as round");
+    assert_eq!(pic.at(200, 275), RGB_BLUE, "the point under the pointer stays");
+    // the bar, 0..40 high, now -275*2+275.. : off the top of the screen
+    assert_eq!(pic.count((0, 0, 800, 600), RGB_YELLOW), 0);
+
+    // the pointer near the top (400,20): the bar grows to 60 rows, across the whole width
+    comp.must("pointer 400 20");
+    let pic = comp.screenshot("HEADLESS-1");
+    // (rows -20..60 drawn, the screen shows 0..60; the last one smoothed by the scaling)
+    assert_eq!(pic.count((0, 0, 800, 59), RGB_YELLOW), 800 * 59);
+    assert_eq!(pic.count((0, 60, 800, 540), RGB_YELLOW), 0);
+
+    // off: the screen as it was
+    comp.must("zoom 1");
+    let after = comp.screenshot("HEADLESS-1");
+    assert_eq!(after.count((0, 0, 800, 600), RGB_YELLOW), 800 * 40);
+    assert_eq!(after.count((0, 0, 800, 600), RGB_BLUE), before.count((0, 0, 800, 600), RGB_BLUE));
+    assert!(comp.ctl("zoom 9").is_err() && comp.ctl("zoom 0.5").is_err() && comp.ctl("zoom x").is_err());
+}

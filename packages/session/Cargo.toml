@@ -35,6 +35,8 @@ path = "src/bin/yggdrasil-hypr-logkeep.rs"
 [dependencies]
 libc = "0.2"
 serde_json = "1"
+# yggdrasil-zoom on Yggdrasil's own compositor (its control socket); Hyprland is still asked with hyprctl as before
+yggdrasil-wm = { path = "../wm" }
 
 [profile.release]
 opt-level = "s"

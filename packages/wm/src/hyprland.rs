@@ -187,6 +187,15 @@ impl Hyprland {
         self.eval(&format!("hl.config({{ cursor = {{ inactive_timeout = {secs} }} }})"));
     }
 
+    /// Hyprland's zoom around the pointer (cursor:zoom_factor).
+    pub fn zoom(&self) -> Option<f32> {
+        parse_option_float(&self.query("getoption cursor:zoom_factor")?)
+    }
+
+    pub fn set_zoom(&self, z: f32) {
+        self.eval(&format!("hl.config({{ cursor = {{ zoom_factor = {:.1} }} }})", z.clamp(1.0, 8.0)));
+    }
+
     /// The Task Manager's close (the request it always sent): the window is asked, as its close button would.
     pub fn close_window(&self, window: &str) -> bool {
         let Some(a) = address(window) else { return false };

@@ -33,7 +33,7 @@ so nothing it starts can reach the running desktop. A control socket (`yggdrasil
 | `touch-down ID X Y`, `touch-move ID X Y`, `touch-up ID` | a finger (ID 0 to 15) on a touchscreen at X,Y of the touchscreen's screen (the laptop's own, else the main one), as wl_touch to the program under it (`src/touch.rs`) |
 | `clock`, `clock stop`, `clock +MS`, `clock run` | the clock the animations run on: stopped and moved on by hand, a frame in the middle of an animation can be looked at |
 | `quit` | end it |
-| `clients`, `active`, `workspaces`, `workspace N`, `activate`/`close`/`minimize ID`, `maximize ID on\|off\|toggle`, `send ID N`, `place ID X Y W H`, `cursor`, `screens`, `screens all`, `layers`, `binds`, `reload`, `pointer-timeout [S]`, `cursor-theme [NAME SIZE]`, `keyboard [LAYOUT [VARIANT]]`, `devices`, `modifiers`, `paste ctrl\|ctrl+shift`, `exit` | the desktop commands Yggdrasil's own tools use through yggdrasil-wm (`src/wmctl.rs`; below): nothing outside the compositor; the only key presses are `paste`'s Ctrl+V into the window with the keyboard (as Hyprland's sendshortcut), refused while locked |
+| `clients`, `active`, `workspaces`, `workspace N`, `activate`/`close`/`minimize ID`, `maximize ID on\|off\|toggle`, `send ID N`, `place ID X Y W H`, `cursor`, `screens`, `screens all`, `layers`, `binds`, `reload`, `pointer-timeout [S]`, `zoom [FACTOR]`, `cursor-theme [NAME SIZE]`, `keyboard [LAYOUT [VARIANT]]`, `devices`, `modifiers`, `paste ctrl\|ctrl+shift`, `exit` | the desktop commands Yggdrasil's own tools use through yggdrasil-wm (`src/wmctl.rs`; below): nothing outside the compositor; the only key presses are `paste`'s Ctrl+V into the window with the keyboard (as Hyprland's sendshortcut), refused while locked |
 
 Headless it also offers wlr-screencopy (grim, yggdrasil-shot, Sunshine's shared-memory path), ext-image-copy-capture with
 ext-image-capture-source (single windows and screens: the panel's window previews) and wlr-output-power (yggdrasil-idle), served
@@ -155,8 +155,7 @@ RESOURCE_MANAGER` shows Xft.dpi 120, and a GTK window under X11 drew at its plac
 **The gap to Hyprland, item by item** (what each item has, and what it still lacks):
 1. **What is left of "our tools call hyprctl"** (every tool moved to yggdrasil-wm on 2026-11-12, above). Hyprland's own on purpose:
    hyprsunset's night light (its own socket; this compositor has no gamma control yet, item 11), the Hyprland plugin builder
-   (`yggdrasil-hypr-plugin`), the magnifier (`yggdrasil-zoom`, Hyprland's zoom: its keys are bound here, it zooms nothing yet),
-   the config-error toast's event socket and
+   (`yggdrasil-hypr-plugin`), the config-error toast's event socket and
    xmove (both do nothing elsewhere), and Settings' own Hyprland file and night light. Settings > Displays lists and changes this
    compositor's screens (it writes `monitors.lua` and reloads through yggdrasil-wm, as on Hyprland; the compositor takes the file
    on reload, item 3). Other programs see its workspaces through ext-workspace (one group on every screen, workspaces 1 to 4 and
@@ -171,8 +170,16 @@ RESOURCE_MANAGER` shows Xft.dpi 120, and a GTK window under X11 drew at its plac
    take the key: Super for the start menu, Ctrl for Find my mouse), repeat while held for volume, brightness and the magnifier at
    Hyprland's 600 ms and 25 a second (also what programs are told now; was 300 ms and 40). The control socket's `binds` gives
    each one's kind and the mouse's two binds, and yggdrasil-wm reads the release flag. Headless, programs it starts get no system
-   bus (Super+L's `loginctl` would otherwise lock the running desktop). Left: the magnifier's zoom itself (item 1), and the
-   switcher is this compositor's own (Hyprland only cycles).
+   bus (Super+L's `loginctl` would otherwise lock the running desktop). The switcher is this compositor's own (Hyprland only
+   cycles).
+   - **The magnifier** (2026-11-24): Super+Alt+= / - / 0 run `yggdrasil-zoom`, which steps this compositor's `zoom` through
+     yggdrasil-wm (as Settings > Accessibility > Zoom does), 1 to 8 in halves. The screen under the pointer is drawn that many
+     times larger about the pointer, which stays on the same point: every placement of a frame goes through one camera
+     (`look::Camera`), so pictures, title bars, borders, rounded clips and layers stay together, and programs' pictures are
+     stretched about their zoomed corner (`look::Clipped`, as an animation stretches a window). Off, the frame is placed
+     exactly as before (the pixel snapshots of `tests/look.rs` are unchanged). Not zoomed: the window switcher and the
+     profile question's cards, a full screen game drawn opaque on the GPU, and the pointer itself. `tests/look.rs`
+     (`the_magnifier_draws_the_screen_larger_about_the_pointer`) and `tests/tools.rs` (through yggdrasil-wm).
 3. ~~Input and outputs from the system's settings~~, closed 2026-11-12:
    - **The keyboard layout** (`src/keymap.rs`) from `/etc/X11/xorg.conf.d/00-keyboard.conf`, read as `yggdrasil.lua` reads it
      (`XkbLayout`, `XkbVariant`, `XkbOptions`; US when there is none), and when that file is missing from `/etc/vconsole.conf`'s
@@ -395,7 +402,7 @@ the same files the desktop reads.
 Not in it yet, in the order of the next milestones: a GPU drawing for another (Smithay's GpuManager/MultiRenderer, for hybrid
 laptops); several monitors; VRR; direct scanout of full
 screen games tuned per GPU; wp-tearing-control; 10-bit), and meanwhile: presentation-time feedback, VR headsets leased
-(drm-lease), the pen as a tablet (tablet-v2), the magnifier (Super+Alt+=).
+(drm-lease), the pen as a tablet (tablet-v2).
 
 **Lightness**, measured in the VM (QEMU, 4 vCPUs; CPU of all the compositor's threads from /proc/PID/task/*/schedstat over 60 s
 of idling, nothing moving; release build, 1920x1080 at 75 Hz, the panel's bar, notch and dock; XWayland running):

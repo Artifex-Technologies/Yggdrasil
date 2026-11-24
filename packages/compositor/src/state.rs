@@ -303,6 +303,8 @@ pub struct App {
     /// while the screen is dimmed; Hyprland's `cursor:inactive_timeout`). Headless the pointer is then left out of the screen's
     /// picture (pointer.rs); nested, the host window draws the pointer and nothing is hidden.
     pub pointer_timeout: f64,
+    /// The magnifier: the screen under the pointer drawn this many times larger about the pointer (1: off; up to 8).
+    pub zoom: f64,
     /// The pointer's theme and size as Yggdrasil's tools set it on the running compositor (ygg-theme); None: the files' (pointer.rs).
     pub cursor_theme: Option<(String, u32)>,
     /// Settings > Peripherals' mouse and keyboard settings (input.rs) and when their file was changed as last seen.
@@ -653,6 +655,7 @@ impl App {
             loop_handle,
             opaque_shader: None,
             pointer_timeout: 0.0,
+            zoom: 1.0,
             cursor_theme: None,
             cursor: Default::default(),
             dragging: false,
@@ -2199,6 +2202,18 @@ impl App {
         true
     }
 
+    /// How this frame sees `output`: its corner and scale, and the magnifier's zoom about the pointer when the pointer is on it.
+    pub fn camera(&self, output: &Output) -> crate::look::Camera {
+        let origin = output.current_location();
+        let scale = output.current_scale().fractional_scale();
+        let mut cam = crate::look::Camera::plain(origin, scale);
+        if self.zoom > 1.0 && output_rect(output).to_f64().contains(self.pointer_location) {
+            cam.zoom = self.zoom;
+            cam.focus = (self.pointer_location - origin.to_f64()).to_physical(scale);
+        }
+        cam
+    }
+
     /// What is drawn this frame, front to back: panels on the top layers, the windows with their title bars, then the layers behind.
     /// One output's part: everything is placed relative to the output's own corner and drawn at its scale (the nested window has
     /// one output at 0,0 with scale 1; the headless backend may have several, side by side, at any scale). The switcher shows on
@@ -2209,19 +2224,28 @@ impl App {
     {
         use smithay::backend::renderer::element::AsRenderElements;
         let mut out: Vec<R::Elem> = vec![];
-        let scale = Scale::from(output.current_scale().fractional_scale());
         let origin = output.current_location();
+        let cam = self.camera(output);
+        // A program's pictures are made at the output's scale (Smithay sizes them by it when drawn) and, under the magnifier,
+        // stretched by the zoom about their zoomed corner (look::Clipped, as an animation stretches a window); the compositor's
+        // own pictures are given their zoomed size.
+        let scale = Scale::from(cam.scale);
+        let zoomed = |size: smithay::utils::Size<i32, Logical>| (cam.zoom != 1.0).then(|| size.to_f64().upscale(cam.zoom).to_i32_round());
+        let lift = |els: Vec<WaylandSurfaceRenderElement<R>>, at: Point<i32, smithay::utils::Physical>| -> Vec<R::Elem> {
+            if cam.zoom == 1.0 {
+                els.into_iter().map(R::Elem::from).collect()
+            } else {
+                els.into_iter().map(|e| R::Elem::from(crate::look::Clipped::new(e, None, at, Scale::from(cam.zoom)))).collect()
+            }
+        };
         let primary = output == &self.output;
         let layer_els = |renderer: &mut R, layers: &[Layer], out: &mut Vec<R::Elem>| {
             let map = layer_map_for_output(output);
             for layer in layers {
                 for l in map.layers_on(*layer).rev() {
                     let Some(geo) = map.layer_geometry(l) else { continue };
-                    out.extend(
-                        l.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, geo.loc.to_physical_precise_round(scale), scale, 1.0)
-                            .into_iter()
-                            .map(R::Elem::from),
-                    );
+                    let at = cam.point((origin + geo.loc).to_f64()).to_i32_round();
+                    out.extend(lift(l.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, at, scale, 1.0), at));
                 }
             }
         };
@@ -2230,16 +2254,15 @@ impl App {
             self.maybe_ask();
         }
         // where a picture made by the compositor (in logical coordinates of the space) goes on this output
-        let at = |p: Point<i32, Logical>| -> Point<f64, smithay::utils::Physical> { (p - origin).to_f64().to_physical(scale) };
+        let at = |p: Point<i32, Logical>| -> Point<f64, smithay::utils::Physical> { cam.point(p.to_f64()) };
         let screen = logical_size(output);
         // a drag's icon, under the pointer (which is drawn on top of the scene)
         if let Some(icon) = self.dnd_icon.as_ref().filter(|i| i.is_alive()) {
             let p = at(self.pointer_location.to_i32_round() + self.dnd_offset).to_i32_round();
-            out.extend(
-                render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<R>>(renderer, icon, p, scale, 1.0, Kind::Unspecified)
-                    .into_iter()
-                    .map(R::Elem::from),
-            );
+            out.extend(lift(
+                render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<R>>(renderer, icon, p, scale, 1.0, Kind::Unspecified),
+                p,
+            ));
         }
         if primary {
             if let Some((ws, sel)) = self.chooser {
@@ -2251,7 +2274,8 @@ impl App {
                 if let Some((_, buf)) = &self.chooser_art {
                     let (w, h) = switcher::chooser_size();
                     let p = at(origin + Point::from(((screen.w - w) / 2, (screen.h - h) / 2)));
-                    if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, p, buf, None, None, None, Kind::Unspecified) {
+                    let size = zoomed((w, h).into());
+                    if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, p, buf, None, None, size, Kind::Unspecified) {
                         out.push(R::Elem::from(el));
                     }
                 }
@@ -2265,12 +2289,8 @@ impl App {
         }
         // X11 menus and tooltips, last shown in front, over everything but the switcher and the profile question
         for x in self.overlays.iter().rev() {
-            let loc = self.overlay_geo(x).loc - origin;
-            out.extend(
-                x.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, loc.to_physical_precise_round(scale), scale, 1.0)
-                    .into_iter()
-                    .map(R::Elem::from),
-            );
+            let loc = cam.point(self.overlay_geo(x).loc.to_f64()).to_i32_round();
+            out.extend(lift(x.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, loc, scale, 1.0), loc));
         }
         // A full screen window in front (a game, a video) covers the top bar and the dock: the Top layer then goes behind the
         // windows. The Overlay layer (the lock's own picture, alerts that must be seen) stays in front.
@@ -2278,7 +2298,7 @@ impl App {
         let full_front = self.fullscreen_in_front(output);
         layer_els(renderer, if full_front { &[Layer::Overlay][..] } else { &[Layer::Overlay, Layer::Top][..] }, &mut out);
         let now = self.clock.now();
-        let s = output.current_scale().fractional_scale();
+        let s = cam.s();
         let art = crate::look::art(&mut self.art, &self.look, s);
         // closed windows shrinking away, over the windows
         self.closing.retain(|c| crate::look::closing_place(c, now).is_some());
@@ -2288,7 +2308,7 @@ impl App {
                 continue;
             }
             if let Some((rect, alpha)) = crate::look::closing_place(c, now) {
-                let geo = rect.physical(origin, s);
+                let geo = rect.seen(&cam);
                 out.extend(crate::look::closing_piece(renderer, c, buffer, geo, alpha).map(R::Elem::from));
             }
         }
@@ -2318,40 +2338,48 @@ impl App {
                     self.bars.insert(surface.clone(), deco::make(key));
                 }
                 if let Some(bar) = self.bars.get(&surface) {
-                    if let Ok(el) =
-                        MemoryRenderBufferRenderElement::from_buffer(renderer, at(r.loc), &bar.buffer, None, None, None, Kind::Unspecified)
-                    {
+                    if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(
+                        renderer,
+                        at(r.loc),
+                        &bar.buffer,
+                        None,
+                        None,
+                        zoomed(r.size),
+                        Kind::Unspecified,
+                    ) {
                         out.push(R::Elem::from(el));
                     }
                 }
             }
             // drawn at `rect`: its picture stretched there while an animation runs (as Hyprland does), else as it is
+            // (made at the output's scale `s0`, stretched about the corner by the animation and the magnifier together)
+            let s0 = cam.scale;
             let (sx, sy) = crate::look::stretch(rect, geo.size);
-            let stretch = Scale::from((sx, sy));
-            let corner = crate::look::RectF { x: rect.x, y: rect.y, w: 0.0, h: 0.0 }.physical(origin, s).loc;
+            let stretch = Scale::from((sx * cam.zoom, sy * cam.zoom));
+            let corner = crate::look::RectF { x: rect.x, y: rect.y, w: 0.0, h: 0.0 }.seen(&cam).loc;
             let draw_at: Point<i32, smithay::utils::Physical> =
-                corner - Point::from(((geo.loc.x as f64 * s).round() as i32, (geo.loc.y as f64 * s).round() as i32));
+                corner - Point::from(((geo.loc.x as f64 * s0).round() as i32, (geo.loc.y as f64 * s0).round() as i32));
             let main: Vec<WaylandSurfaceRenderElement<R>> = match w.toplevel() {
                 Some(t) => {
                     // its menus (xdg popups) in front, not clipped
                     let mut menus = vec![];
                     for (popup, offset) in PopupManager::popups_for_surface(t.wl_surface()) {
-                        let o = (geo.loc + offset - popup.geometry().loc).to_physical_precise_round(s);
+                        let o = (geo.loc + offset - popup.geometry().loc).to_physical_precise_round(s0);
                         menus.extend(render_elements_from_surface_tree::<R, WaylandSurfaceRenderElement<R>>(
                             renderer,
                             popup.wl_surface(),
                             draw_at + o,
-                            s,
+                            s0,
                             alpha,
                             Kind::Unspecified,
                         ));
                     }
                     out.extend(R::window_elements(self, renderer, menus, false, (None, corner, stretch)));
-                    render_elements_from_surface_tree(renderer, t.wl_surface(), draw_at, s, alpha, Kind::Unspecified)
+                    render_elements_from_surface_tree(renderer, t.wl_surface(), draw_at, s0, alpha, Kind::Unspecified)
                 }
-                None => w.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, draw_at, Scale::from(s), alpha),
+                None => w.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, draw_at, Scale::from(s0), alpha),
             };
-            let clip = crate::look::clip_of(rect, origin, s, &self.look, full);
+            let clip = crate::look::clip_of(rect, &cam, &self.look, full);
             // the border in front of the picture, the shadow behind it; neither in full screen
             let around = (!full).then(|| {
                 let active = front.as_ref().is_some_and(|f| is_window_of(&w, f));
@@ -2779,6 +2807,10 @@ impl App {
         let pointer = self.pointer.clone();
         let from = self.output_at(self.pointer_location);
         self.pointer_location = pos;
+        if self.zoom > 1.0 {
+            // the magnified picture follows the pointer
+            self.wake();
+        }
         if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
             eprintln!("pointer {:.0},{:.0}", pos.x, pos.y);
         }

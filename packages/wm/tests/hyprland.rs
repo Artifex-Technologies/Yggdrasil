@@ -322,6 +322,24 @@ fn idle_hides_the_pointer_and_puts_it_back() {
     assert_eq!(h.desk().pointer_timeout(), Some(0.25), "an earlier run left it hidden");
 }
 
+/// The magnifier (yggdrasil-zoom on the own compositor, Settings > Accessibility > Zoom): Hyprland's cursor:zoom_factor.
+#[test]
+fn the_magnifier_is_hyprlands_zoom_factor() {
+    let h = FakeHyprland::start("zoom", &[("j/getoption cursor:zoom_factor", "getoption-zoom.json")]);
+    let d = h.desk();
+    assert_eq!(d.zoom(), Some(2.5));
+    d.set_zoom(3.0);
+    d.set_zoom(20.0);
+    assert_eq!(
+        h.take(),
+        dispatches(&[
+            "j/getoption cursor:zoom_factor",
+            "/eval hl.config({ cursor = { zoom_factor = 3.0 } })",
+            "/eval hl.config({ cursor = { zoom_factor = 8.0 } })"
+        ])
+    );
+}
+
 /// yggdrasil-snap as the shell script did it (its Python worked out the free room of the focused screen).
 #[test]
 fn snap_on_hyprland() {

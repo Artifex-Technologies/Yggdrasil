@@ -189,6 +189,16 @@ fn the_tools_place_maximize_minimize_and_close_windows() {
     d.set_pointer_timeout(0.0);
     assert_eq!(d.pointer_timeout(), Some(0.0));
     assert!(comp.ctl("pointer-timeout -1").is_err() && comp.ctl("pointer-timeout nan").is_err());
+
+    // the magnifier (yggdrasil-zoom and Settings > Accessibility > Zoom): read and set, kept between 1 and 8
+    assert_eq!(d.zoom(), Some(1.0));
+    d.set_zoom(2.5);
+    assert_eq!(d.zoom(), Some(2.5));
+    assert_eq!(comp.must("zoom"), ["2.5"]);
+    d.set_zoom(20.0);
+    assert_eq!(d.zoom(), Some(8.0));
+    d.set_zoom(1.0);
+    assert_eq!(d.zoom(), Some(1.0));
 }
 
 #[test]

@@ -160,12 +160,67 @@ impl RectF {
         RectF { x: self.x + (self.w - w) / 2.0, y: self.y + (self.h - h) / 2.0, w, h }
     }
     /// In physical pixels of an output at `origin` and `scale`, the edges rounded (neighbours share their edge).
+    /// The rectangle on an output as `cam` sees it, its edges rounded (neighbours keep sharing an edge).
+    pub fn seen(self, cam: &Camera) -> Rectangle<i32, Physical> {
+        let x0 = cam.x(self.x).round() as i32;
+        let y0 = cam.y(self.y).round() as i32;
+        let x1 = cam.x(self.x + self.w).round() as i32;
+        let y1 = cam.y(self.y + self.h).round() as i32;
+        Rectangle::new((x0, y0).into(), ((x1 - x0).max(0), (y1 - y0).max(0)).into())
+    }
+
     pub fn physical(self, origin: Point<i32, Logical>, scale: f64) -> Rectangle<i32, Physical> {
         let x0 = ((self.x - origin.x as f64) * scale).round() as i32;
         let y0 = ((self.y - origin.y as f64) * scale).round() as i32;
         let x1 = ((self.x + self.w - origin.x as f64) * scale).round() as i32;
         let y1 = ((self.y + self.h - origin.y as f64) * scale).round() as i32;
         Rectangle::new((x0, y0).into(), ((x1 - x0).max(0), (y1 - y0).max(0)).into())
+    }
+}
+
+/// How the space is seen on one output: from its corner (`origin`) at its `scale`, and through the magnifier, `zoom` times about
+/// `focus` (the pointer, in the output's physical pixels; that point stays where it is). Every placement of a frame goes through
+/// it, so pictures, title bars, borders, clip rectangles and layers stay together. Without zoom a point goes to
+/// (p - origin) * scale, exactly as before.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Camera {
+    pub origin: Point<i32, Logical>,
+    pub scale: f64,
+    pub zoom: f64,
+    pub focus: Point<f64, Physical>,
+}
+
+impl Camera {
+    pub fn plain(origin: Point<i32, Logical>, scale: f64) -> Camera {
+        Camera { origin, scale, zoom: 1.0, focus: (0.0, 0.0).into() }
+    }
+
+    /// The scale pictures are drawn at.
+    pub fn s(&self) -> f64 {
+        self.scale * self.zoom
+    }
+
+    fn x(&self, x: f64) -> f64 {
+        let p = (x - self.origin.x as f64) * self.scale;
+        if self.zoom == 1.0 {
+            p
+        } else {
+            (p - self.focus.x) * self.zoom + self.focus.x
+        }
+    }
+
+    fn y(&self, y: f64) -> f64 {
+        let p = (y - self.origin.y as f64) * self.scale;
+        if self.zoom == 1.0 {
+            p
+        } else {
+            (p - self.focus.y) * self.zoom + self.focus.y
+        }
+    }
+
+    /// Where a point of the space shows on the output.
+    pub fn point(&self, p: Point<f64, Logical>) -> Point<f64, Physical> {
+        (self.x(p.x), self.y(p.y)).into()
     }
 }
 
@@ -846,9 +901,9 @@ where
 }
 
 /// The clip a window's picture gets on an output: its rectangle in physical pixels, and the rounding (none in full screen).
-pub fn clip_of(rect: RectF, origin: Point<i32, Logical>, scale: f64, look: &Look, fullscreen: bool) -> (Rectangle<i32, Physical>, i32) {
-    let radius = if fullscreen { 0 } else { (look.rounding as f64 * scale).round() as i32 };
-    (rect.physical(origin, scale), radius)
+pub fn clip_of(rect: RectF, cam: &Camera, look: &Look, fullscreen: bool) -> (Rectangle<i32, Physical>, i32) {
+    let radius = if fullscreen { 0 } else { (look.rounding as f64 * cam.s()).round() as i32 };
+    (rect.seen(cam), radius)
 }
 
 /// The scale to draw a window's picture at so that its `size` fills `rect` (an animation stretches it, as Hyprland does).

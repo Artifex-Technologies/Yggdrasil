@@ -25,6 +25,8 @@
 //!                               rate (Hz), the modes it offers (comma separated, as Hyprland writes them: 2560x1440@59.95Hz)
 //!                               and "on" or "off", then the monitor's maker and model (Settings > Displays' main display)
 //!   pointer-timeout [SECONDS]   how long the pointer may rest before it is hidden (0: never); with a number, set it
+//!   zoom [FACTOR]               the magnifier: the screen under the pointer drawn FACTOR times larger about it (1: off, up to
+//!                               8, as yggdrasil-zoom steps it); with a number, set it
 //!   modifiers                   the modifier keys held now: super, ctrl, alt, shift (one line, space separated)
 //!   layers                      one line per panel or background: output, namespace, layer, place, size and what it asks of
 //!                               the keyboard: none, exclusive or on-demand (tab separated)
@@ -145,6 +147,15 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
         ["cursor"] => Ok(vec![format!("{} {}", app.pointer_location.x, app.pointer_location.y)]),
         ["screens"] => Ok(screens(app)),
         ["screens", "all"] => Ok(screens_all(app)),
+        ["zoom"] => Ok(vec![app.zoom.to_string()]),
+        ["zoom", f] => match f.parse::<f64>() {
+            Ok(v) if (1.0..=8.0).contains(&v) => {
+                app.zoom = v;
+                app.wake();
+                Ok(vec![])
+            }
+            _ => Err(format!("{f}: a zoom from 1 (off) to 8")),
+        },
         ["pointer-timeout"] => Ok(vec![app.pointer_timeout.to_string()]),
         ["pointer-timeout", secs] => match secs.parse::<f64>() {
             Ok(v) if v.is_finite() && (0.0..=86_400.0).contains(&v) => {

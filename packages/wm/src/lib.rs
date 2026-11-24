@@ -346,6 +346,22 @@ impl Desk {
         }
     }
 
+    /// The magnifier: how many times larger the screen is drawn about the pointer (1: off).
+    pub fn zoom(&self) -> Option<f32> {
+        match self {
+            Desk::Hyprland(h) => h.zoom(),
+            Desk::Own(o) => o.zoom(),
+        }
+    }
+
+    /// Sets the magnifier's zoom (1 to 8; 1 is off).
+    pub fn set_zoom(&self, z: f32) {
+        match self {
+            Desk::Hyprland(h) => h.set_zoom(z),
+            Desk::Own(o) => o.set_zoom(z),
+        }
+    }
+
     /// The Task Manager's close: the window is asked, as its close button would (the program may ask to save first).
     pub fn close_window(&self, window: &str) -> bool {
         match self {
