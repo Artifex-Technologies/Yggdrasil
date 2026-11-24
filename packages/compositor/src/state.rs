@@ -212,6 +212,8 @@ pub struct App {
     /// Windows hidden with minimize (still alive, listed to shell programs, brought back with activate).
     pub minimized: Vec<Window>,
     pub toplevels: Toplevels,
+    /// ext-workspace: the programs that asked for the workspaces
+    pub workspaces: crate::workspaces::Workspaces,
     /// Copies of the screen asked for (wlr-screencopy, screencopy.rs) and outputs switched off (outputpower.rs): headless only.
     pub screencopy: crate::screencopy::Screencopy,
     pub power: crate::outputpower::OutputPower,
@@ -589,6 +591,7 @@ impl App {
             saved: vec![],
             minimized: vec![],
             toplevels: Toplevels::default(),
+            workspaces: Default::default(),
             screencopy: Default::default(),
             power: Default::default(),
             touch_wake_at: None,

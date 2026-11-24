@@ -48,6 +48,10 @@ use wayland_protocols::ext::session_lock::v1::client::{
     ext_session_lock_manager_v1::ExtSessionLockManagerV1, ext_session_lock_surface_v1,
     ext_session_lock_surface_v1::ExtSessionLockSurfaceV1, ext_session_lock_v1, ext_session_lock_v1::ExtSessionLockV1,
 };
+use wayland_protocols::ext::workspace::v1::client::{
+    ext_workspace_group_handle_v1, ext_workspace_group_handle_v1::ExtWorkspaceGroupHandleV1, ext_workspace_handle_v1,
+    ext_workspace_handle_v1::ExtWorkspaceHandleV1, ext_workspace_manager_v1, ext_workspace_manager_v1::ExtWorkspaceManagerV1,
+};
 use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, wp_fractional_scale_v1, wp_fractional_scale_v1::WpFractionalScaleV1,
 };
@@ -462,6 +466,23 @@ pub struct State {
     pub list_finished: bool,
     /// ext-image-copy-capture: each session's side (a session's frames report to it too)
     pub caps: Vec<CapState>,
+    /// ext-workspace: the workspaces as told, the group's capabilities and the screens it entered, and the dones
+    pub ws: Vec<Ws>,
+    pub ws_group_caps: Option<u32>,
+    pub ws_group_outputs: usize,
+    pub ws_done: usize,
+}
+
+/// One workspace as ext-workspace tells it.
+#[derive(Debug, Clone)]
+pub struct Ws {
+    pub handle: ExtWorkspaceHandleV1,
+    pub id: String,
+    pub name: String,
+    pub coordinates: Vec<u8>,
+    pub active: bool,
+    pub can_activate: bool,
+    pub in_group: bool,
 }
 
 /// One window as ext-foreign-toplevel-list tells it.
@@ -750,6 +771,14 @@ impl Client {
         surface.commit();
         self.until("the window's first configure", |s| s.wins[index].configured);
         Window { index, surface, xdg, toplevel }
+    }
+
+    /// The workspaces as ext-workspace lists them (bound now; `state.ws` follows from here on).
+    pub fn workspaces(&mut self) -> ExtWorkspaceManagerV1 {
+        let m: ExtWorkspaceManagerV1 = self.globals.bind(&self.qh, 1..=1, ()).expect("ext-workspace");
+        self.roundtrip();
+        self.roundtrip();
+        m
     }
 
     /// The windows as ext-foreign-toplevel-list lists them (bound now; `state.listed` follows from here on).
@@ -1123,6 +1152,90 @@ delegate_noop!(State: ExtImageCaptureSourceV1);
 delegate_noop!(State: ExtImageCopyCaptureManagerV1);
 delegate_noop!(State: wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1);
 delegate_noop!(State: wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
+
+impl Dispatch<ExtWorkspaceManagerV1, ()> for State {
+    fn event(
+        st: &mut Self,
+        _: &ExtWorkspaceManagerV1,
+        event: ext_workspace_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            ext_workspace_manager_v1::Event::Workspace { workspace } => st.ws.push(Ws {
+                handle: workspace,
+                id: String::new(),
+                name: String::new(),
+                coordinates: vec![],
+                active: false,
+                can_activate: false,
+                in_group: false,
+            }),
+            ext_workspace_manager_v1::Event::Done => st.ws_done += 1,
+            _ => {}
+        }
+    }
+
+    event_created_child!(State, ExtWorkspaceManagerV1, [
+        ext_workspace_manager_v1::EVT_WORKSPACE_GROUP_OPCODE => (ExtWorkspaceGroupHandleV1, ()),
+        ext_workspace_manager_v1::EVT_WORKSPACE_OPCODE => (ExtWorkspaceHandleV1, ()),
+    ]);
+}
+
+impl Dispatch<ExtWorkspaceGroupHandleV1, ()> for State {
+    fn event(
+        st: &mut Self,
+        _: &ExtWorkspaceGroupHandleV1,
+        event: ext_workspace_group_handle_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            ext_workspace_group_handle_v1::Event::Capabilities { capabilities } => {
+                st.ws_group_caps = Some(match capabilities {
+                    WEnum::Value(c) => c.bits(),
+                    WEnum::Unknown(u) => u,
+                })
+            }
+            ext_workspace_group_handle_v1::Event::OutputEnter { .. } => st.ws_group_outputs += 1,
+            ext_workspace_group_handle_v1::Event::OutputLeave { .. } => st.ws_group_outputs -= 1,
+            ext_workspace_group_handle_v1::Event::WorkspaceEnter { workspace } => {
+                if let Some(w) = st.ws.iter_mut().find(|w| w.handle == workspace) {
+                    w.in_group = true;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<ExtWorkspaceHandleV1, ()> for State {
+    fn event(
+        st: &mut Self,
+        h: &ExtWorkspaceHandleV1,
+        event: ext_workspace_handle_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some(w) = st.ws.iter_mut().find(|w| w.handle == *h) else { return };
+        match event {
+            ext_workspace_handle_v1::Event::Id { id } => w.id = id,
+            ext_workspace_handle_v1::Event::Name { name } => w.name = name,
+            ext_workspace_handle_v1::Event::Coordinates { coordinates } => w.coordinates = coordinates,
+            ext_workspace_handle_v1::Event::State { state } => {
+                w.active = matches!(state, WEnum::Value(s) if s.contains(ext_workspace_handle_v1::State::Active))
+            }
+            ext_workspace_handle_v1::Event::Capabilities { capabilities } => {
+                w.can_activate =
+                    matches!(capabilities, WEnum::Value(c) if c.contains(ext_workspace_handle_v1::WorkspaceCapabilities::Activate))
+            }
+            _ => {}
+        }
+    }
+}
 
 impl Dispatch<ExtForeignToplevelListV1, ()> for State {
     fn event(

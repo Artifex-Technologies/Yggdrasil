@@ -172,3 +172,30 @@ fn no_runtime_folder_is_refused() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("XDG_RUNTIME_DIR"));
 }
+
+#[test]
+fn other_programs_see_the_workspaces_and_switch_them() {
+    let _l = limit(60, "ext-workspace");
+    let comp = Compositor::start(&["--output", "1280x720", "--output", "800x600"]);
+    let mut c = comp.connect();
+    let m = c.workspaces();
+    let active = |s: &State| s.ws.iter().filter(|w| w.active).map(|w| w.name.clone()).collect::<Vec<_>>();
+    let ws = &c.state.ws;
+    assert_eq!(ws.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["1", "2", "3", "4"]);
+    assert!(ws.iter().all(|w| w.can_activate && w.in_group && !w.id.is_empty() && w.coordinates.len() == 4), "{ws:?}");
+    assert_eq!(active(&c.state), ["1"]);
+    assert_eq!(c.state.ws_group_caps, Some(0), "workspaces are not made or removed from outside");
+    assert_eq!(c.state.ws_group_outputs, 2, "one group on both screens");
+    assert!(c.state.ws_done >= 1);
+    // asked through the protocol: done at the commit, not before
+    let third = c.state.ws[2].handle.clone();
+    third.activate();
+    c.roundtrip();
+    assert_eq!(comp.must("workspace"), ["1"], "nothing before the commit");
+    m.commit();
+    c.until("workspace 3 active", |s| active(s) == ["3"]);
+    assert_eq!(comp.must("workspace"), ["3"]);
+    // switched in the compositor (a shortcut, the dock): told as well
+    comp.must("workspace 2");
+    c.until("workspace 2 active", |s| active(s) == ["2"]);
+}

@@ -315,6 +315,8 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let first = outputs.first().cloned().ok_or("no screen is connected")?;
 
     crate::toplevels::create_global(&dh);
+    // the workspaces for other programs (ext-workspace: a bar, a pager)
+    crate::workspaces::create_global(&dh);
     // a screen's colour matrix (hyprsunset: Settings' Night Light), put into its CRTC's gamma table (`draw`)
     crate::ctm::create_global(&dh);
     // screens off and on (yggdrasil-idle): the CRTC switched off
@@ -1402,6 +1404,7 @@ fn after_frame(udev: &Rc<RefCell<Udev>>, app: &mut App) {
     app.send_frames(t);
     app.space.refresh();
     app.foreign_refresh();
+    app.workspaces_refresh();
     app.popups.cleanup();
     let _ = app.display_handle.flush_clients();
 }

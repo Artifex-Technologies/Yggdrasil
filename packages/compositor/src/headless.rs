@@ -364,6 +364,7 @@ impl Headless {
         app.send_frames(self.start.elapsed());
         app.space.refresh();
         app.foreign_refresh();
+        app.workspaces_refresh();
         app.popups.cleanup();
         let _ = app.display_handle.flush_clients();
     }

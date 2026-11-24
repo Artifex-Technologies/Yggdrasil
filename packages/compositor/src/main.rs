@@ -48,6 +48,7 @@ mod toplevels;
 mod touch;
 mod udev;
 mod wmctl;
+mod workspaces;
 mod x11asked;
 mod xwayland;
 
@@ -249,6 +250,8 @@ fn run_headless(opts: &[String], run: Vec<Vec<String>>) -> Result<(), Box<dyn st
     let (ping, ping_source) = smithay::reexports::calloop::ping::make_ping()?;
     let outputs: Vec<_> = specs.iter().enumerate().map(|(i, s)| headless::make_output(format!("HEADLESS-{}", i + 1), s)).collect();
     toplevels::create_global(&dh);
+    // the workspaces for other programs (ext-workspace: a bar, a pager)
+    workspaces::create_global(&dh);
     // a screen's colour matrix (hyprsunset: Settings' Night Light)
     ctm::create_global(&dh);
     // screenshots and screen streaming (grim, Sunshine), and screens off and on (yggdrasil-idle): served from the pictures in memory
@@ -288,6 +291,8 @@ fn run_nested(
     );
     let _global = output.create_global::<App>(&dh);
     toplevels::create_global(&dh);
+    // the workspaces for other programs (ext-workspace: a bar, a pager)
+    workspaces::create_global(&dh);
     // a screen's colour matrix (hyprsunset: Settings' Night Light)
     ctm::create_global(&dh);
     output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
@@ -361,6 +366,7 @@ fn run_nested(
             app.send_frames(start.elapsed());
             app.space.refresh();
             app.foreign_refresh();
+            app.workspaces_refresh();
             app.popups.cleanup();
             let _ = dh2.flush_clients();
         }
