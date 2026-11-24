@@ -8,6 +8,7 @@ mod details;
 mod history;
 mod install;
 mod names;
+mod recent;
 mod vendor;
 
 use std::collections::{HashMap, HashSet};
@@ -58,6 +59,9 @@ struct App {
     page: Page,
     history: Vec<Page>,
     search: String,
+    /// recent searches, and whether the pointer was over their list (so a click on one lands before the field's focus goes)
+    recent: recent::Recent,
+    recent_hover: bool,
     catalogs: Vec<Catalog>,
     repos: Vec<Repo>,
     /// Errors per repository, by index into `repos`.
@@ -126,6 +130,8 @@ impl App {
             page: Page::Discover,
             history: vec![],
             search: String::new(),
+            recent: recent::Recent::load(recent::Recent::path()),
+            recent_hover: false,
             catalogs: vec![],
             repos: catalog::load_repos(),
             repo_status: vec![],
@@ -355,6 +361,10 @@ impl App {
     }
 
     fn go(&mut self, p: Page) {
+        // an app opened from search results: the search is worth remembering
+        if self.page == Page::Search && matches!(p, Page::Detail(_)) {
+            self.recent.remember(&self.search);
+        }
         if self.page != p {
             let old = std::mem::replace(&mut self.page, p);
             self.history.push(old);
@@ -1223,7 +1233,15 @@ impl App {
                     FontId::proportional(14.0),
                     self.pal.accent,
                 );
-                if resp.on_hover_text(if pinned { "Take it off the dock" } else { "Keep it on the dock" }).clicked() {
+                // the start menu's Pinned grid is the dock's list: pinned here, it is in both
+                if resp
+                    .on_hover_text(if pinned {
+                        "Take it off the dock and Start's Pinned"
+                    } else {
+                        "Keep it on the dock and in Start's Pinned"
+                    })
+                    .clicked()
+                {
                     yggdrasil_conf::dock::set_pinned(&id, !pinned);
                 }
             });
@@ -1639,6 +1657,58 @@ impl eframe::App for App {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.search).hint_text("Search").desired_width(f32::INFINITY).margin(vec2(8.0, 6.0)),
                 );
+                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    self.recent.remember(&self.search);
+                }
+                // recent searches under the empty field while it is in use
+                if self.search.trim().is_empty() && !self.recent.items.is_empty() && (r.has_focus() || self.recent_hover) {
+                    let mut chosen: Option<String> = None;
+                    let mut clear = false;
+                    let block = ui
+                        .vertical(|ui| {
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Recent").size(11.5).color(pal.dim));
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    clear = ui
+                                        .add(egui::Label::new(RichText::new("Clear").size(11.5).color(pal.accent)).sense(Sense::click()))
+                                        .clicked();
+                                });
+                            });
+                            for q in self.recent.items.iter().take(5) {
+                                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+                                if resp.hovered() {
+                                    ui.painter().rect_filled(rect, CornerRadius::same(6), pal.hover);
+                                }
+                                ui.painter().text(
+                                    rect.left_center() + vec2(10.0, 0.0),
+                                    Align2::LEFT_CENTER,
+                                    q,
+                                    FontId::proportional(13.0),
+                                    pal.text,
+                                );
+                                if resp.clicked() {
+                                    chosen = Some(q.clone());
+                                }
+                            }
+                        })
+                        .response;
+                    self.recent_hover = block.contains_pointer();
+                    if clear {
+                        self.recent.clear();
+                        self.recent_hover = false;
+                    }
+                    if let Some(q) = chosen {
+                        self.search = q;
+                        self.recent_hover = false;
+                        if self.page != Page::Search {
+                            let old = std::mem::replace(&mut self.page, Page::Search);
+                            self.history.push(old);
+                        }
+                    }
+                } else {
+                    self.recent_hover = false;
+                }
                 if r.changed() {
                     if self.search.trim().is_empty() {
                         if self.page == Page::Search {
