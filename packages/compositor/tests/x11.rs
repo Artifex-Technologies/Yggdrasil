@@ -324,3 +324,44 @@ fn an_x11_programs_own_icon_is_kept_for_the_dock() {
     let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert!(names.iter().all(|n| !n.starts_with('.')), "{names:?}");
 }
+
+#[test]
+fn xwayland_starts_again_after_it_went_away() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(90, "XWayland started again after a crash");
+    let (comp, display) = with_xwayland_on(&["--size", "800x600"], |_| {});
+    let show = |class: &[u8]| {
+        let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+        let root = conn.setup().roots[screen].root;
+        let win = conn.generate_id().unwrap();
+        conn.create_window(0, win, root, 0, 0, 200, 150, 0, WindowClass::INPUT_OUTPUT, 0, &CreateWindowAux::new()).unwrap();
+        conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, class).unwrap();
+        conn.map_window(win).unwrap();
+        conn.flush().unwrap();
+        conn
+    };
+    let wait = |what: &str, done: &dyn Fn() -> bool| {
+        let start = Instant::now();
+        while !done() {
+            assert!(start.elapsed() < Duration::from_secs(10), "{what}: {:?}\n{}", comp.must("windows"), comp.log_tail(10));
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let _before = show(b"before\0Before\0");
+    wait("the first window managed", &|| comp.window("Before").is_some());
+    let first = xwayland_of(&comp).expect("an Xwayland");
+    // XWayland crashes: its windows go, and it waits to start again on the same display
+    unsafe { libc::kill(first as i32, libc::SIGKILL) };
+    wait("its window gone", &|| comp.window("Before").is_none());
+    wait("the crashed one gone", &|| xwayland_of(&comp).is_none());
+    let said = format!("it starts again with the next X11 program (DISPLAY={display})");
+    wait("said so", &|| comp.log.lock().unwrap().iter().any(|l| l.contains(&said)));
+    // the next X11 program, on the same DISPLAY: a new XWayland, and its window managed
+    let _after = show(b"after\0After\0");
+    wait("the next program's window managed", &|| comp.window("After").is_some());
+    let second = xwayland_of(&comp).expect("a new Xwayland");
+    assert_ne!(first, second);
+}

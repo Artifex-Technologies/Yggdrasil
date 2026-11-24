@@ -40,9 +40,21 @@ use crate::state::{self, App, KbFocus};
 /// is accepted then (XWayland accepts no X11 program before the window manager holds WM_S0, so its windows are managed from
 /// the first).
 pub fn start(app: &mut App, handle: LoopHandle<'static, App>, then: Box<dyn FnOnce(&mut App)>) -> Result<(), Box<dyn std::error::Error>> {
+    let display_number = watch(app, &handle, None)?;
+    println!("DISPLAY=:{display_number}");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    then(app);
+    Ok(())
+}
+
+/// Bind the X11 display's sockets (display `display`, else the first free one) and wait for an X11 program on them: the
+/// first connection starts XWayland. At the start, and again after XWayland went away (the same display, so the programs
+/// already told DISPLAY reach the next one). The display's number.
+fn watch(app: &mut App, handle: &LoopHandle<'static, App>, display: Option<u32>) -> Result<u32, Box<dyn std::error::Error>> {
     use smithay::reexports::calloop::generic::Generic;
     use smithay::reexports::calloop::{Interest, Mode, PostAction};
-    let sockets = X11Sockets::bind(None, true)?;
+    let sockets = X11Sockets::bind(display, true)?;
     let display_number = sockets.display_number();
     let fds = sockets.poll_fds().into_iter().map(|f| f.try_clone_to_owned()).collect::<Result<Vec<OwnedFd>, _>>()?;
     for fd in fds {
@@ -61,11 +73,7 @@ pub fn start(app: &mut App, handle: LoopHandle<'static, App>, then: Box<dyn FnOn
     }
     app.x11_sockets = Some(sockets);
     app.x11_display = Some(display_number);
-    println!("DISPLAY=:{display_number}");
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
-    then(app);
-    Ok(())
+    Ok(display_number)
 }
 
 /// The X11 display's lock and socket files (/tmp/.X11-unix/Xn, /tmp/.Xn-lock), removed when the compositor ends: Smithay
@@ -88,7 +96,7 @@ fn spawn(app: &mut App, handle: LoopHandle<'static, App>, sockets: X11Sockets) -
     app.xwayland_client = Some(client.clone());
     app.follow_scale();
     let wm_handle = handle.clone();
-    handle
+    let token = handle
         .insert_source(xwayland, move |event, _, app| {
             match event {
                 XWaylandEvent::Ready { x11_socket, display_number } => match X11Wm::start_wm(wm_handle.clone(), x11_socket, client.clone())
@@ -111,6 +119,8 @@ fn spawn(app: &mut App, handle: LoopHandle<'static, App>, sockets: X11Sockets) -
             }
         })
         .map_err(|e| e.error)?;
+    // kept to let this XWayland go when it has gone away (its display's lock with it: see disconnected)
+    app.xwayland_source = Some(token);
     Ok(())
 }
 
@@ -625,16 +635,34 @@ impl XwmHandler for App {
         }
     }
 
-    /// XWayland went away (it crashed or was killed): its windows are gone too.
+    /// XWayland went away (it crashed or was killed): its windows are gone too, and the next X11 program starts a new one on
+    /// the same display (the programs already told DISPLAY find it there).
     fn disconnected(&mut self, _xwm: XwmId) {
-        eprintln!("yggdrasil-compositor: XWayland went away; X11 programs cannot start until the compositor is started again");
         self.xwm = None;
-        self.x11_display = None;
+        self.x11_reader = None;
+        self.x11_active = None;
+        self.xwayland_client = None;
         self.overlays.clear();
         let x11: Vec<Window> = self.all_windows().into_iter().map(|(w, _)| w).filter(|w| w.x11_surface().is_some()).collect();
         for w in x11 {
             let s = state::surface_of(&w);
             self.window_gone(s.as_ref(), |x| *x == w);
+        }
+        // the old XWayland let go: its display's lock and socket files go with it, so the display can be bound again
+        if let Some(t) = self.xwayland_source.take() {
+            self.loop_handle.remove(t);
+        }
+        let was = self.x11_display.take();
+        let handle = self.loop_handle.clone();
+        let again = watch(self, &handle, was).or_else(|_| watch(self, &handle, None));
+        match again {
+            Ok(n) if Some(n) == was => {
+                eprintln!("yggdrasil-compositor: XWayland went away; it starts again with the next X11 program (DISPLAY=:{n})")
+            }
+            Ok(n) => {
+                eprintln!("yggdrasil-compositor: XWayland went away; X11 programs now use DISPLAY=:{n} (the old display was not free)")
+            }
+            Err(e) => eprintln!("yggdrasil-compositor: XWayland went away and X11 programs cannot start again ({e})"),
         }
     }
 }

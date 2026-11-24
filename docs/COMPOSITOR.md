@@ -376,9 +376,10 @@ by commit in packages/compositor/Cargo.toml) and offered to Smithay. An X11 prog
 dock when no desktop entry matches its window (a Windows program through Wine, say; since 2026-11-24): the compositor keeps the
 best size of it as a PNG for each window class in the runtime folder's `yggdrasil-window-icons` (read on a thread of its own
 when the window shows, and again when its title changes), and the panel looks there for an icon its theme does not have and
-watches the folder, so the icon shows a moment after the window (`tests/x11.rs`, `tests/apps.rs`). Still missing for X11: drag
-and drop between X11 and Wayland programs; XSETTINGS; and XWayland started again after it crashed (until then X11 programs need
-the compositor started again).
+watches the folder, so the icon shows a moment after the window (`tests/x11.rs`, `tests/apps.rs`). When XWayland goes away
+(it crashed or was killed), its windows go and the next X11 program starts a new one on the same display, so programs already
+told DISPLAY reach it (since 2026-11-24, `tests/x11.rs`). Still missing for X11: drag and drop between X11 and Wayland
+programs, and XSETTINGS.
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton
