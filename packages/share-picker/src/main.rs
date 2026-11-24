@@ -9,7 +9,6 @@
 //! question never guesses who is asking.
 
 use std::io::Write;
-use std::path::PathBuf;
 
 use eframe::egui::{self, pos2, vec2, Align, Color32, CornerRadius, Key, Layout, Margin, Rect, RichText, Sense, Stroke, StrokeKind};
 use yggdrasil_ui::{chrome, theme};
@@ -32,43 +31,6 @@ fn parse_args(args: &[String]) -> Result<Opts, String> {
         }
     }
     Ok(o)
-}
-
-/// The folders menu entries are in: the person's own first, then the system's.
-fn application_dirs() -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let data_home =
-        std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).or_else(|| home.map(|h| h.join(".local/share")));
-    let data_dirs = std::env::var("XDG_DATA_DIRS").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-    data_home
-        .into_iter()
-        .chain(data_dirs.split(':').filter(|d| d.starts_with('/')).map(PathBuf::from))
-        .map(|d| d.join("applications"))
-        .collect()
-}
-
-/// The program's name from its menu entry: `Name=` in the `[Desktop Entry]` group of APP_ID.desktop.
-fn app_name(app_id: &str, dirs: &[PathBuf]) -> Option<String> {
-    // an app id is a D-Bus-style name: anything else is not looked up as a file name
-    if app_id.is_empty() || !app_id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')) || app_id.starts_with('.') {
-        return None;
-    }
-    dirs.iter().find_map(|d| entry_name(&std::fs::read_to_string(d.join(format!("{app_id}.desktop"))).ok()?))
-}
-
-fn entry_name(text: &str) -> Option<String> {
-    let mut in_entry = false;
-    for l in text.lines().map(str::trim) {
-        if l.starts_with('[') {
-            in_entry = l == "[Desktop Entry]";
-        } else if in_entry {
-            if let Some(v) = l.strip_prefix("Name=") {
-                let v = v.trim();
-                return (!v.is_empty()).then(|| v.to_string());
-            }
-        }
-    }
-    None
 }
 
 /// The question's words.
@@ -268,7 +230,7 @@ fn main() -> eframe::Result {
             std::process::exit(2);
         }
     };
-    let name = opts.app.as_deref().and_then(|a| app_name(a, &application_dirs()));
+    let name = opts.app.as_deref().and_then(yggdrasil_conf::apps::app_name);
     let mut screens: Vec<Screen> =
         yggdrasil_wm::Desk::detect().map(|d| d.screens()).unwrap_or_default().into_iter().filter(|s| !s.disabled).collect();
     screens.sort_by_key(|s| (s.x, s.y));
@@ -332,21 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn the_program_is_named_by_its_menu_entry_and_never_guessed() {
-        let dir = std::env::temp_dir().join(format!("share-picker-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("org.example.Call.desktop"),
-            "[Desktop Action new]\nName=New call\n[Desktop Entry]\nType=Application\nName=Example Call\n",
-        )
-        .unwrap();
-        let dirs = vec![PathBuf::from("/nonexistent"), dir.clone()];
-        assert_eq!(app_name("org.example.Call", &dirs).as_deref(), Some("Example Call"));
-        // no entry, or an id that is not one: no name, so the question says "A program"
-        assert_eq!(app_name("org.example.Other", &dirs), None);
-        assert_eq!(app_name("../org.example.Call", &dirs), None);
-        assert_eq!(app_name("", &dirs), None);
-        std::fs::remove_dir_all(&dir).unwrap();
+    fn the_question_names_the_program_or_says_a_program() {
         assert_eq!(summary(None, false), "A program wants to see the screen you choose.");
         assert_eq!(summary(Some("Example Call"), true), "Example Call wants to see the screens you choose.");
     }

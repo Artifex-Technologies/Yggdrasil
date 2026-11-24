@@ -4,6 +4,7 @@
 //! hand-edited file can never break the panel.
 
 pub mod appearance;
+pub mod apps;
 pub mod bar_hidden;
 
 /// Yggdrasil's own session (on Hyprland, `yggdrasil-session`), rather than another desktop's with Yggdrasil's panel in it:

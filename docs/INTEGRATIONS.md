@@ -170,6 +170,14 @@ at all the pill is off.
 
 ![The Agents item's card, made-up agents](../assets/screenshots/agents.png)
 
+#### The screen sharing item (packages/portal)
+
+`screen-sharing.conf`, shipped with yggdrasil-portal, is a `file` item: the portal writes `~/.local/state/yggdrasil/screen-sharing.json`
+whenever a program starts or stops sharing a screen on Yggdrasil's own compositor. While nothing is shared it is off; while
+anything is, a red "Sharing" pill with the screen-shared icon, whose card lists each program (by its menu entry, else "A
+program") with the screens it sees, and a Stop sharing button: its `act`, `yggdrasil-portal --stop-sharing`, has the running
+portal end every share at once (each program is told its session closed).
+
 #### Cards you can use (`card` and `act`)
 
 An add-on whose card has controls lists them in `"card"`, an array of blocks drawn in order (after `lines`, before `help`), and names

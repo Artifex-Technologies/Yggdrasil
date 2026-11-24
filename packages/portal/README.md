@@ -14,6 +14,13 @@ Which backend answers what is set per session: `data/yggdrasil-portals.conf` for
 screenshots and global shortcuts: Hyprland's portal) and `data/yggdrasil-compositor-portals.conf` for the session on the own
 compositor (its desktop names are `Yggdrasil-Compositor:Yggdrasil`).
 
+While a screen is shared the bar says so: the portal writes `~/.local/state/yggdrasil/screen-sharing.json` whenever sharing
+starts or stops (and "off" when it starts, so a portal that ended leaves no stale pill), and the bar's screen sharing item
+(`data/screen-sharing.conf`, a `bar-item` integration, docs/INTEGRATIONS.md) shows a red "Sharing" pill with the screen-shared
+icon. Its card names each program (by its menu entry, else "A program") with the screens it sees, and **Stop sharing** runs
+`yggdrasil-portal --stop-sharing`, which asks the running portal (`org.yggdrasil.ScreenSharing.StopAll` at
+`/org/yggdrasil/ScreenSharing`) to end every share at once; each session then says Closed, so the program knows.
+
 Screenshots and colours for programs leave the person's things alone: no copy to the clipboard, nothing in Pictures, the
 colour history or the notifications. A screenshot is a file of the portal's own in the runtime folder
 (`$XDG_RUNTIME_DIR/yggdrasil-portal/screenshots`, this user's only; the newest ten kept, all gone at log-out). The Screenshot
@@ -22,7 +29,8 @@ interactive.
 
 ## Tests
 
-`cargo test`: the unit tests, and `tests/screenshot.rs` on a D-Bus of the test's own with stand-ins for grim,
+`cargo test`: the unit tests (among them the bar item's JSON read back as the panel reads it, and the shipped item reading the
+file the portal writes), and `tests/screenshot.rs` on a D-Bus of the test's own with stand-ins for grim,
 yggdrasil-shot and yggdrasil-colorpicker: a whole-desktop screenshot (in the portal's own folder, the folder this user's
 only), an interactive one, a cancel (no file left), only the newest ten kept, a colour, a cancelled pick, and a pick the
 program closes while the picker is open. Screen sharing is tested end to end in `packages/screencast/tests`. Skipped where

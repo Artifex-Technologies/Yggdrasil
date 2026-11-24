@@ -3,9 +3,11 @@
 //! yggdrasil-screencast. A stand-in picker answers for the person (the screen named in the world's `pick` file, or a cancel)
 //! and notes what it was asked; a stand-in worker notes its process and runs the real one in its place.
 //!
-//! Four sessions, as the portal frontend drives them: one shared and closed by the program (its worker ends); one whose
-//! screen is unplugged (its worker ends, the session says Closed); one the person cancels (no worker); and one whose portal
-//! dies (its worker dies with it: a screen is never left shared by a worker nobody owns).
+//! Five sessions, as the portal frontend drives them: one shared and closed by the program (its worker ends; the bar's item
+//! says Sharing, then off); one whose screen is unplugged (its worker ends, the session says Closed); one the person cancels
+//! (no worker); one ended from the bar (`yggdrasil-portal --stop-sharing`: the worker ends, the session says Closed, the
+//! item goes off); and one whose portal dies (its worker dies with it: a screen is never left shared by a worker nobody
+//! owns).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -41,6 +43,38 @@ fn request(n: u32) -> String {
 /// The processes the stand-in worker noted, in order.
 fn workers(dir: &Path) -> Vec<u32> {
     std::fs::read_to_string(dir.join("workers")).unwrap_or_default().lines().filter_map(|l| l.parse().ok()).collect()
+}
+
+/// The bar item's state and its lines' titles and values, as the portal last wrote them.
+fn bar(dir: &Path) -> (String, Vec<(String, String)>) {
+    let text = std::fs::read_to_string(dir.join(".local/state/yggdrasil/screen-sharing.json")).unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("the bar item's JSON: {e}: {text}"));
+    let lines = v["lines"]
+        .as_array()
+        .map(|l| l.iter().map(|x| (x["title"].as_str().unwrap_or("").into(), x["value"].as_str().unwrap_or("").into())).collect())
+        .unwrap_or_default();
+    (v["state"].as_str().unwrap_or("").to_string(), lines)
+}
+
+/// Waits for the session `path` to say Closed (a thread listening from now on): the receiver hears it.
+fn closed_signal(conn: &zbus::blocking::Connection, path: &str) -> mpsc::Receiver<()> {
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface(SESSION)
+        .unwrap()
+        .member("Closed")
+        .unwrap()
+        .path(path.to_string())
+        .unwrap()
+        .build();
+    let signals = zbus::blocking::MessageIterator::for_match_rule(rule, conn, None).unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        if signals.into_iter().next().is_some() {
+            let _ = tx.send(());
+        }
+    });
+    rx
 }
 
 fn alive(pid: u32) -> bool {
@@ -87,6 +121,13 @@ fn a_program_shares_the_screen_it_was_given_until_it_stops() {
         "#!/bin/sh\necho $$ >> {d}/workers\nprintf '%s\\n' \"$*\" >> {d}/worker-args\nexec {} \"$@\"\n",
         env!("CARGO_BIN_EXE_yggdrasil-screencast")
     );
+    // the program's menu entry: the bar names it
+    std::fs::create_dir_all(dir.join(".local/share/applications")).unwrap();
+    std::fs::write(
+        dir.join(".local/share/applications/org.example.Call.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Example Call\n",
+    )
+    .unwrap();
     for (name, text) in [("yggdrasil-share-picker", picker), ("yggdrasil-screencast", worker)] {
         std::fs::write(bin.join(name), text).unwrap();
         std::process::Command::new("chmod").arg("+x").arg(bin.join(name)).status().unwrap();
@@ -110,6 +151,7 @@ fn a_program_shares_the_screen_it_was_given_until_it_stops() {
     let conn = zbus::blocking::connection::Builder::address(address.as_str()).unwrap().build().unwrap();
     let dbus = zbus::blocking::fdo::DBusProxy::new(&conn).unwrap();
     assert!(wait_for(10, || dbus.name_has_owner(NAME.try_into().unwrap()).unwrap_or(false)), "the portal on the bus");
+    assert_eq!(bar(&dir).0, "off", "nothing shared: the bar item is off from the start");
     let cast = zbus::blocking::Proxy::new(&conn, NAME, PATH, CAST).unwrap();
     assert_eq!(cast.get_property::<u32>("AvailableSourceTypes").unwrap(), 1, "screens only");
     assert_eq!(cast.get_property::<u32>("AvailableCursorModes").unwrap(), 3, "hidden or painted in");
@@ -131,29 +173,15 @@ fn a_program_shares_the_screen_it_was_given_until_it_stops() {
     assert_eq!(ran.lines().last(), Some("--output HEADLESS-1 --cursor"), "the chosen screen, with the pointer as asked");
     let first = workers(&dir)[0];
     assert!(alive(first));
+    assert_eq!(bar(&dir), ("alert".into(), vec![("Example Call".into(), "HEADLESS-1".into())]), "the bar says who sees what");
     let s1 = zbus::blocking::Proxy::new(&conn, NAME, session(1), SESSION).unwrap();
     let () = s1.call("Close", &()).unwrap();
     assert!(wait_for(5, || !alive(first)), "the worker ends with its session");
+    assert_eq!(bar(&dir).0, "off");
 
     // 2. its screen unplugged: the worker ends and the session says Closed
     std::fs::write(dir.join("pick"), "HEADLESS-2\n").unwrap();
-    let s2 = session(2);
-    let rule = zbus::MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        .interface(SESSION)
-        .unwrap()
-        .member("Closed")
-        .unwrap()
-        .path(s2.as_str())
-        .unwrap()
-        .build();
-    let signals = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None).unwrap();
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        if signals.into_iter().next().is_some() {
-            let _ = tx.send(());
-        }
-    });
+    let rx = closed_signal(&conn, &session(2));
     let (code, res) = share(&cast, 2, false);
     assert_eq!(code, 0);
     let streams = Streams::try_from(res["streams"].clone()).unwrap();
@@ -163,6 +191,7 @@ fn a_program_shares_the_screen_it_was_given_until_it_stops() {
     ctl(&ctl_sock, "unplug HEADLESS-2");
     assert!(wait_for(5, || !alive(second)), "the worker ends with its screen");
     rx.recv_timeout(Duration::from_secs(5)).expect("the session says Closed");
+    assert!(wait_for(5, || bar(&dir).0 == "off"), "the bar item goes off with the screen");
 
     // 3. the person cancels: no worker
     std::fs::remove_file(dir.join("pick")).unwrap();
@@ -171,11 +200,23 @@ fn a_program_shares_the_screen_it_was_given_until_it_stops() {
     assert!(!res.contains_key("streams"));
     assert_eq!(workers(&dir).len(), 2, "nothing started");
 
-    // 4. the portal dies: its worker dies with it
+    // 4. ended from the bar: Stop sharing runs `yggdrasil-portal --stop-sharing stop` (the item's act with the button's id)
     std::fs::write(dir.join("pick"), "HEADLESS-1\n").unwrap();
-    let (code, _) = share(&cast, 4, false);
+    let rx = closed_signal(&conn, &session(4));
+    assert_eq!(share(&cast, 4, false).0, 0);
+    let stopped = workers(&dir)[2];
+    assert_eq!(bar(&dir).0, "alert");
+    let mut stop = w.command(&portal);
+    stop.args(["--stop-sharing", "stop"]).env("DBUS_SESSION_BUS_ADDRESS", &address);
+    assert!(stop.status().unwrap().success(), "yggdrasil-portal --stop-sharing");
+    assert_eq!(bar(&dir).0, "off", "the bar item goes off at once");
+    assert!(wait_for(5, || !alive(stopped)), "the worker ends");
+    rx.recv_timeout(Duration::from_secs(5)).expect("the session says Closed, so the program knows");
+
+    // 5. the portal dies: its worker dies with it
+    let (code, _) = share(&cast, 5, false);
     assert_eq!(code, 0);
-    let fourth = workers(&dir)[2];
+    let fourth = workers(&dir)[3];
     assert!(alive(fourth));
     let _ = portal_child.kill();
     let _ = portal_child.wait();

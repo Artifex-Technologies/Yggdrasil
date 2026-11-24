@@ -768,6 +768,7 @@ dependencies = [
  "blocking",
  "libc",
  "rustix",
+ "serde_json",
  "yggdrasil-conf",
  "yggdrasil-wm",
  "zbus",

@@ -4170,6 +4170,7 @@ name = "yggdrasil-share-picker"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "yggdrasil-conf",
  "yggdrasil-ui",
  "yggdrasil-wm",
 ]

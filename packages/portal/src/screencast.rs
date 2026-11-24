@@ -6,6 +6,10 @@
 //! A worker ends when the program closes the session (Session.Close), when its screen goes or its compositor ends (once the
 //! last of a session's workers has ended the session says Closed), and with this portal: each worker is tied to a thread of
 //! its own here by a parent-death signal, so a screen is never left shared by a worker nobody owns.
+//!
+//! While anything is shared the bar says so: the portal writes `~/.local/state/yggdrasil/screen-sharing.json`, which the bar's
+//! screen sharing item (`data/screen-sharing.conf`, a `bar-item` integration) shows as a red "Sharing" pill whose card names
+//! each program and its screens, with Stop sharing (`yggdrasil-portal --stop-sharing`, `org.yggdrasil.ScreenSharing.StopAll`).
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -33,29 +37,94 @@ const SESSION_IFACE: &str = "org.freedesktop.impl.portal.Session";
 /// The sessions by their object path.
 pub type Sessions = Arc<Mutex<HashMap<String, Sess>>>;
 
-/// A session: what the program chose in SelectSources, the workers sharing its screens, and whether Start answered.
+/// A session: what the program chose in SelectSources, the workers sharing its screens, whether Start answered, and the
+/// program's name for the bar.
 pub struct Sess {
     multiple: bool,
     cursor: u32,
     workers: Vec<Worker>,
     started: bool,
+    app: String,
 }
 
 struct Worker {
     id: u64,
     /// the worker's process as a pidfd: a signal reaches this process and never one that took its number later
     pidfd: OwnedFd,
+    /// the screen it shares
+    screen: String,
 }
 
 impl Sess {
     fn new() -> Sess {
-        Sess { multiple: false, cursor: CURSOR_HIDDEN, workers: vec![], started: false }
+        Sess { multiple: false, cursor: CURSOR_HIDDEN, workers: vec![], started: false, app: String::new() }
     }
 
     fn stop(&mut self) {
         for w in self.workers.drain(..) {
             let _ = rustix::process::pidfd_send_signal(&w.pidfd, rustix::process::Signal::TERM);
         }
+    }
+}
+
+/// A string as JSON.
+fn js(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// The bar item's JSON (docs/INTEGRATIONS.md, `bar-item`): off while nothing is shared; else a red pill, each program with the
+/// screens it sees, and Stop sharing.
+fn bar_json(shares: &[(String, Vec<String>)]) -> String {
+    let n: usize = shares.iter().map(|(_, s)| s.len()).sum();
+    if n == 0 {
+        return "{\"state\": \"off\"}\n".into();
+    }
+    let text = if n == 1 { "Sharing".to_string() } else { format!("Sharing {n} screens") };
+    let lines: Vec<String> = shares
+        .iter()
+        .filter(|(_, s)| !s.is_empty())
+        .map(|(app, screens)| format!("{{\"title\": {}, \"value\": {}}}", js(app), js(&screens.join(", "))))
+        .collect();
+    format!(
+        "{{\"text\": {}, \"state\": \"alert\", \"icon\": \"screen-shared-symbolic\", \"lines\": [{}], \
+         \"card\": [{{\"buttons\": [{{\"id\": \"stop\", \"label\": \"Stop sharing\", \"accent\": true, \"close\": true}}]}}], \
+         \"help\": \"These programs see the screens named. Stop sharing ends every share at once; a program shares again only by asking again.\"}}\n",
+        js(&text),
+        lines.join(", ")
+    )
+}
+
+/// The bar item's file.
+fn bar_file() -> std::path::PathBuf {
+    yggdrasil_conf::dirs::state().join("screen-sharing.json")
+}
+
+/// Tells the bar what is shared now (written whole, then moved into place, so the bar never reads half of it).
+pub fn publish(sessions: &Sessions) {
+    let shares: Vec<(String, Vec<String>)> = sessions
+        .lock()
+        .unwrap()
+        .values()
+        .filter(|s| s.started)
+        .map(|s| (s.app.clone(), s.workers.iter().map(|w| w.screen.clone()).collect()))
+        .collect();
+    let path = bar_file();
+    if let Some(d) = path.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let tmp = path.with_extension("json.new");
+    if std::fs::write(&tmp, bar_json(&shares)).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
     }
 }
 
@@ -150,6 +219,7 @@ fn launch(
 ) -> Result<u32, String> {
     let (tx, rx) = mpsc::channel::<Ev>();
     let output = output.to_string();
+    let output_name = output.clone();
     std::thread::Builder::new()
         .name("screencast".into())
         .spawn(move || {
@@ -207,7 +277,7 @@ fn launch(
         Ok(Ev::Spawned(fd)) => {
             let mut s = sessions.lock().unwrap();
             match s.get_mut(path) {
-                Some(sess) => sess.workers.push(Worker { id, pidfd: fd }),
+                Some(sess) => sess.workers.push(Worker { id, pidfd: fd, screen: output_name }),
                 // the program closed the session meanwhile
                 None => {
                     let _ = rustix::process::pidfd_send_signal(&fd, rustix::process::Signal::TERM);
@@ -287,8 +357,8 @@ impl ScreenCast {
             _ => return (2, Results::new()),
         };
         let _ = server.at(handle.as_str(), Request { handle: handle.to_string(), running: self.running.clone() }).await;
-        let (h, run) = (handle.to_string(), self.running.clone());
-        let picked = blocking::unblock(move || pick_screens(&h, &run, &app_id, multiple)).await;
+        let (h, run, id) = (handle.to_string(), self.running.clone(), app_id.clone());
+        let picked = blocking::unblock(move || pick_screens(&h, &run, &id, multiple)).await;
         let _ = server.remove::<Request, _>(handle.as_str()).await;
         let Some(names) = picked else { return (1, Results::new()) };
         let screens = blocking::unblock(|| yggdrasil_wm::Desk::detect().map(|d| d.screens()).unwrap_or_default()).await;
@@ -312,10 +382,15 @@ impl ScreenCast {
                 }
             }
         }
+        let app = yggdrasil_conf::apps::app_name(&app_id).unwrap_or_else(|| "A program".into());
         match self.sessions.lock().unwrap().get_mut(&path) {
-            Some(s) => s.started = true,
+            Some(s) => {
+                s.started = true;
+                s.app = app;
+            }
             None => return (2, Results::new()),
         }
+        publish(&self.sessions);
         let mut r = Results::new();
         if let Ok(v) = OwnedValue::try_from(Value::from(streams)) {
             r.insert("streams".into(), v);
@@ -342,16 +417,37 @@ impl ScreenCast {
 /// A worker ended: out of its session; when it was the session's last and the session had started, the session is over and
 /// says Closed.
 fn worker_ended(sessions: &Sessions, bus: &zbus::blocking::Connection, path: &str, id: u64) {
-    let mut s = sessions.lock().unwrap();
-    let Some(sess) = s.get_mut(path) else { return };
-    sess.workers.retain(|w| w.id != id);
-    if !(sess.started && sess.workers.is_empty()) {
-        return;
+    let closed = {
+        let mut s = sessions.lock().unwrap();
+        let Some(sess) = s.get_mut(path) else { return };
+        sess.workers.retain(|w| w.id != id);
+        let over = sess.started && sess.workers.is_empty();
+        if over {
+            s.remove(path);
+        }
+        over
+    };
+    publish(sessions);
+    if closed {
+        let _ = bus.emit_signal(None::<zbus::names::BusName>, path, SESSION_IFACE, "Closed", &());
+        let _ = bus.object_server().remove::<Session, _>(path);
     }
-    s.remove(path);
-    drop(s);
-    let _ = bus.emit_signal(None::<zbus::names::BusName>, path, SESSION_IFACE, "Closed", &());
-    let _ = bus.object_server().remove::<Session, _>(path);
+}
+
+/// Yggdrasil's own control of screen sharing: the bar's Stop sharing.
+pub struct Sharing {
+    pub sessions: Sessions,
+}
+
+#[zbus::interface(name = "org.yggdrasil.ScreenSharing")]
+impl Sharing {
+    /// Every share ends at once: each worker is stopped, and each session says Closed once its workers have ended.
+    fn stop_all(&self) {
+        for s in self.sessions.lock().unwrap().values_mut() {
+            s.stop();
+        }
+        publish(&self.sessions);
+    }
 }
 
 /// A session's object: the program (through the frontend) closes it.
@@ -366,6 +462,7 @@ impl Session {
         let gone = self.sessions.lock().unwrap().remove(&self.path);
         if let Some(mut s) = gone {
             s.stop();
+            publish(&self.sessions);
         }
         let _ = server.remove::<Session, _>(self.path.as_str()).await;
     }
@@ -414,6 +511,43 @@ mod tests {
         // turned a quarter: width and height swap
         assert_eq!(logical_size(&screen("DP-2", 0, 1920, 1080, 1.0, 1)), (1080, 1920));
         assert_eq!(logical_size(&screen("DP-3", 0, 2560, 1440, 1.25, 0)), (2048, 1152));
+    }
+
+    #[test]
+    fn the_bar_shows_what_is_shared_and_nothing_else() {
+        assert_eq!(bar_json(&[]), "{\"state\": \"off\"}\n");
+        // a session whose workers have all ended shares nothing
+        assert_eq!(bar_json(&[("Example Call".into(), vec![])]), "{\"state\": \"off\"}\n");
+        let one = bar_json(&[("Example Call".into(), vec!["DP-1".into()])]);
+        assert!(one.contains("\"text\": \"Sharing\"") && one.contains("\"state\": \"alert\""), "{one}");
+        assert!(one.contains("{\"title\": \"Example Call\", \"value\": \"DP-1\"}"), "{one}");
+        assert!(one.contains("\"id\": \"stop\""), "{one}");
+        let two = bar_json(&[("Say \"hi\"\\".into(), vec!["DP-1".into(), "DP-2".into()]), ("A program".into(), vec!["eDP-1".into()])]);
+        assert!(two.contains("\"Sharing 3 screens\"") && two.contains("\"DP-1, DP-2\""), "{two}");
+        assert!(two.contains(r#""title": "Say \"hi\"\\""#), "a name is quoted, never ends the string: {two}");
+        // valid JSON, read back as the panel reads it
+        for text in [one, two, bar_json(&[])] {
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|e| panic!("{e}: {text}"));
+            assert!(v["state"].is_string());
+        }
+        let v: serde_json::Value = serde_json::from_str(&bar_json(&[("Say \"hi\"\\\n".into(), vec!["DP-1".into()])])).unwrap();
+        assert_eq!(v["lines"][0]["title"], "Say \"hi\"\\\n");
+        assert_eq!(v["card"][0]["buttons"][0]["id"], "stop");
+    }
+
+    #[test]
+    fn the_bar_item_reads_the_file_the_portal_writes() {
+        let i = yggdrasil_conf::integrations::Integration::parse(
+            std::path::Path::new("screen-sharing.conf"),
+            include_str!("../data/screen-sharing.conf"),
+        )
+        .unwrap();
+        assert_eq!(i.kind, "bar-item");
+        // bar_file() with the state folder at its usual place (%h/.local/state/yggdrasil)
+        assert_eq!(i.get("file"), Some("%h/.local/state/yggdrasil/screen-sharing.json"));
+        assert_eq!(bar_file().file_name().and_then(|n| n.to_str()), Some("screen-sharing.json"));
+        // Stop sharing: the panel runs act with the button's id
+        assert_eq!(i.command("act"), Some(vec!["/usr/bin/yggdrasil-portal".to_string(), "--stop-sharing".to_string()]));
     }
 
     #[test]

@@ -314,14 +314,30 @@ impl Chooser {
 }
 
 fn main() -> zbus::Result<()> {
+    // the bar's Stop sharing (the screen sharing item's `act`): the running portal ends every share
+    if std::env::args().nth(1).as_deref() == Some("--stop-sharing") {
+        let bus = zbus::blocking::Connection::session()?;
+        bus.call_method(
+            Some("org.freedesktop.impl.portal.desktop.yggdrasil"),
+            "/org/yggdrasil/ScreenSharing",
+            Some("org.yggdrasil.ScreenSharing"),
+            "StopAll",
+            &(),
+        )?;
+        return Ok(());
+    }
     let running = Arc::new(Mutex::new(HashMap::new()));
-    let cast = screencast::ScreenCast { sessions: Default::default(), running: running.clone(), next: Default::default() };
+    let sessions: screencast::Sessions = Default::default();
+    // nothing is shared yet: a bar item left from a portal that ended is put out
+    screencast::publish(&sessions);
+    let cast = screencast::ScreenCast { sessions: sessions.clone(), running: running.clone(), next: Default::default() };
     let shots = screenshot::Screenshot { running: running.clone(), count: Default::default() };
     let conn = zbus::blocking::connection::Builder::session()?
         .name("org.freedesktop.impl.portal.desktop.yggdrasil")?
         .serve_at("/org/freedesktop/portal/desktop", Chooser { running })?
         .serve_at("/org/freedesktop/portal/desktop", cast)?
         .serve_at("/org/freedesktop/portal/desktop", shots)?
+        .serve_at("/org/yggdrasil/ScreenSharing", screencast::Sharing { sessions })?
         .serve_at("/org/freedesktop/portal/desktop", settings::Settings)?
         .build()?;
     settings::watch(conn.clone(), "/org/freedesktop/portal/desktop");

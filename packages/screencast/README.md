@@ -47,6 +47,8 @@ compositor ends, or it gets SIGTERM or SIGINT.
   parent-death signal to a thread of the portal's that lives exactly as long as the worker, and is signalled through a pidfd
   (never a process that took its number later). A screen is never left shared by a worker nobody owns.
 - `Request.Close` while the picker is open closes the picker: nothing is shared.
+- While anything is shared, the bar shows a red "Sharing" pill: its card names each program and its screens, and Stop sharing
+  ends every share at once ([packages/portal](../portal/README.md)).
 
 ## Tests
 
@@ -57,10 +59,12 @@ compositor ends, or it gets SIGTERM or SIGINT.
   PipeWire's registry, links them and reads the first frame: one whole screen of 32-bit pixels, its first pixel the
   compositor's background colour.
 - `tests/portal.rs`: the portal's build on a D-Bus of the test's own, with the same PipeWire and a headless compositor with two
-  screens, a stand-in picker that answers for the person, and the real worker. Four sessions: one shared and closed by the
+  screens, a stand-in picker that answers for the person, and the real worker. Five sessions: one shared and closed by the
   program (the picker told who asks and that one screen is wanted; the worker told the chosen screen and the pointer; the
-  stream's node, place and size answered; the worker gone after Close); one whose screen is unplugged (the worker ends, the
-  session says Closed); one the person cancels (no worker); and one whose portal is killed (its worker dies with it).
+  stream's node, place and size answered; the bar item naming the program by its menu entry with the screen, then off; the
+  worker gone after Close); one whose screen is unplugged (the worker ends, the session says Closed, the bar item goes off);
+  one the person cancels (no worker); one ended from the bar (`yggdrasil-portal --stop-sharing`: the item off at once, the
+  worker gone, the session Closed); and one whose portal is killed (its worker dies with it).
 
 Every process they start dies with the test (a parent-death signal), even when the test is killed. They need `pipewire`,
 `dbus-daemon`, the compositor's debug build (or `YGGDRASIL_COMPOSITOR`) and the portal's (or `YGGDRASIL_PORTAL`); without them
