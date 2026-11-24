@@ -2122,6 +2122,7 @@ mod tests {
                 actions: vec![],
                 link: String::new(),
                 image: String::new(),
+                sound: String::new(),
             });
         }
         let s = 1.0;

@@ -74,6 +74,7 @@ fn announce(tx: &calloop::channel::Sender<NMsg>, d: &Drive, arrived: bool) {
         actions: vec![],
         link: if arrived { format!("mount:{}", d.device) } else { String::new() },
         image: String::new(),
+        sound: String::new(),
     };
     let _ = tx.send(NMsg::New(Box::new(n)));
 }

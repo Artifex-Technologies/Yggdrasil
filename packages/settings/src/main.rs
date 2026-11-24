@@ -2842,6 +2842,11 @@ impl App {
                     conf_changed = true;
                 }
             });
+                ui::row(ui, pal, false, "Sound", Some("A short sound with each pop-up. None while Do not disturb or quiet hours keep it from popping up, and none for an app that asks for quiet"), |ui| {
+                if ui::switch(ui, pal, &mut conf.notify_sound).changed() {
+                    conf_changed = true;
+                }
+            });
                 ui::row(ui, pal, false, "Notification Center pane", Some("Off: notifications are in Fylgja's Notifications section. On: a pane down the right edge, opened with the calendar (click the date)"), |ui| {
                 if ui::switch(ui, pal, &mut conf.notify_pane).changed() {
                     conf_changed = true;

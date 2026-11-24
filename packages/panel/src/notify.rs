@@ -57,6 +57,9 @@ pub struct Notif {
     /// The picture the app sent with it (a contact's face, an album cover): a PNG or SVG file, drawn in the pop-up in the
     /// icon's place. One sent inline (`image-data`) is saved in `images_dir()` and goes when the notification does.
     pub image: String,
+    /// The sound its pop-up plays: empty for the usual one, a file the app named (`sound-file`, `sound-name`), or "-" when
+    /// the app asked for none (`suppress-sound`). Only for the arrival: not kept.
+    pub sound: String,
 }
 
 impl Notif {
@@ -88,6 +91,7 @@ impl Notif {
             time: v.get("time").and_then(|x| x.as_u64()).unwrap_or(0),
             link: s("link"),
             image: s("image"),
+            sound: String::new(),
             actions: v
                 .get("actions")
                 .and_then(|a| a.as_array())
@@ -398,6 +402,51 @@ fn inline_png(v: &zbus::zvariant::OwnedValue) -> Option<Vec<u8>> {
     image_data_png(w, h, stride, alpha, bits, ch, &data)
 }
 
+/// The usual sound of a pop-up (the freedesktop sound theme's).
+const POP_SOUND: &str = "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga";
+
+/// The sound a notification asks for (see `Notif::sound`): `suppress-sound`, else `sound-file`, else `sound-name` from the
+/// freedesktop theme.
+fn sound_of(hints: &HashMap<String, zbus::zvariant::OwnedValue>) -> String {
+    if hints.get("suppress-sound").and_then(|v| bool::try_from(v).ok()) == Some(true) {
+        return "-".into();
+    }
+    if let Some(p) = hints.get("sound-file").and_then(|v| <&str>::try_from(v).ok()).and_then(file_path) {
+        return p;
+    }
+    let named = hints.get("sound-name").and_then(|v| <&str>::try_from(v).ok()).unwrap_or("");
+    if !named.is_empty() && named.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        for ext in ["oga", "ogg", "wav"] {
+            let p = format!("/usr/share/sounds/freedesktop/stereo/{named}.{ext}");
+            if std::path::Path::new(&p).is_file() {
+                return p;
+            }
+        }
+    }
+    String::new()
+}
+
+/// The command that plays a pop-up's sound, or None (the app asked for quiet, or the file is not there). `player` is the
+/// first of pw-play and paplay on PATH.
+pub fn sound_command(sound: &str, player: Option<&str>) -> Option<Vec<String>> {
+    let player = player?;
+    let file = match sound {
+        "-" => return None,
+        "" => POP_SOUND,
+        f => f,
+    };
+    std::path::Path::new(file).is_file().then(|| vec![player.to_string(), file.to_string()])
+}
+
+/// pw-play (PipeWire) or paplay (PulseAudio), whichever is installed.
+pub fn sound_player() -> Option<&'static str> {
+    static P: OnceLock<Option<&'static str>> = OnceLock::new();
+    *P.get_or_init(|| {
+        let path = std::env::var_os("PATH")?;
+        ["pw-play", "paplay"].into_iter().find(|p| std::env::split_paths(&path).any(|d| d.join(p).is_file()))
+    })
+}
+
 /// A `file://` address as a path (its %XX escapes undone); a plain path as it is.
 fn file_path(s: &str) -> Option<String> {
     let Some(rest) = s.strip_prefix("file://") else { return s.starts_with('/').then(|| s.to_string()) };
@@ -471,6 +520,7 @@ impl Server {
         let named = hints.get("image-path").and_then(|v| <&str>::try_from(v).ok()).filter(|p| !p.contains('/')).unwrap_or("");
         let icon = if app_icon.is_empty() { named.to_string() } else { app_icon };
         let image = image_of(&hints, id);
+        let sound = sound_of(&hints);
         let acts: Vec<(String, String)> = actions.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0].clone(), clean(&c[1]))).collect();
         let _ = self.tx.send(NMsg::New(Box::new(Notif {
             id,
@@ -484,6 +534,7 @@ impl Server {
             actions: acts,
             link: String::new(),
             image,
+            sound,
         })));
         id
     }
@@ -578,6 +629,7 @@ pub fn spawn_disk_watch(tx: calloop::channel::Sender<NMsg>) {
                         actions: vec![],
                         link: "about".into(),
                         image: String::new(),
+                        sound: String::new(),
                     })));
                 }
             }
@@ -611,6 +663,7 @@ pub fn hypr_errors_note(text: &str, id: u32) -> Option<Notif> {
         actions: vec![],
         link: String::new(),
         image: String::new(),
+        sound: String::new(),
     })
 }
 
@@ -718,6 +771,7 @@ pub fn from_alert(v: &serde_json::Value, min: &str, id: u32) -> Option<Notif> {
         actions: vec![],
         link,
         image: String::new(),
+        sound: String::new(),
     })
 }
 
@@ -1232,6 +1286,7 @@ mod tests {
             actions: vec![],
             link: String::new(),
             image: String::new(),
+            sound: String::new(),
         }
     }
 
@@ -1257,6 +1312,25 @@ mod tests {
         let big = vec![200u8; 1000 * 500 * 4];
         let pm = Pixmap::decode_png(&image_data_png(1000, 500, 4000, true, 8, 4, &big).unwrap()).unwrap();
         assert_eq!((pm.width(), pm.height()), (256, 128));
+    }
+
+    #[test]
+    fn a_pop_up_plays_its_sound_unless_asked_for_quiet() {
+        let file = std::env::temp_dir().join(format!("ygg-notify-sound-{}.oga", std::process::id()));
+        std::fs::write(&file, "x").unwrap();
+        let f = file.to_string_lossy().into_owned();
+        assert_eq!(sound_command(&f, Some("pw-play")), Some(vec!["pw-play".to_string(), f.clone()]));
+        assert_eq!(sound_command("-", Some("pw-play")), None, "suppress-sound");
+        assert_eq!(sound_command(&f, None), None, "no player");
+        assert_eq!(sound_command("/nowhere/x.oga", Some("pw-play")), None);
+        let _ = std::fs::remove_file(&file);
+        // the hints
+        let h = |k: &str, v: zbus::zvariant::Value| -> HashMap<String, zbus::zvariant::OwnedValue> {
+            [(k.to_string(), zbus::zvariant::OwnedValue::try_from(v).unwrap())].into()
+        };
+        assert_eq!(sound_of(&h("suppress-sound", true.into())), "-");
+        assert_eq!(sound_of(&h("sound-name", "../../etc/passwd".into())), "", "a name is only a name");
+        assert_eq!(sound_of(&HashMap::new()), "");
     }
 
     #[test]
@@ -1470,6 +1544,7 @@ mod render {
             actions: vec![],
             link: String::new(),
             image: String::new(),
+            sound: String::new(),
         };
         s.add(mk(1, "Mail", "Alice", "Are we still on for lunch?", 600, 1));
         s.add(mk(2, "Mail", "Bob", "Invoice attached for October", 120, 1));

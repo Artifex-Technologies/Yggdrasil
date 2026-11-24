@@ -2085,8 +2085,14 @@ impl State {
                 yggdrasil_conf::notifyrules::remember_app(&key, if n.app.is_empty() { &key } else { &n.app });
                 let rules = yggdrasil_conf::notifyrules::NotifyRules::load();
                 let pops = rules.pops_up(&key, urgency, self.model.conf.notify_dnd, yggdrasil_conf::notifyrules::minute_now());
+                let sound = n.sound.clone();
                 self.model.notifs.add(n);
                 if self.model.conf.notify_toasts && urgency > 0 && pops {
+                    if self.model.conf.notify_sound {
+                        if let Some(cmd) = notify::sound_command(&sound, notify::sound_player()) {
+                            run(&cmd.iter().map(String::as_str).collect::<Vec<_>>());
+                        }
+                    }
                     self.toasts.retain(|t| *t != id);
                     self.toasts.push(id);
                     while self.toasts.len() > 3 {

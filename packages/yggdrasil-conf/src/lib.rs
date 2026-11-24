@@ -158,6 +158,8 @@ pub struct PanelConf {
     pub notify_pane: bool,
     /// Do not disturb: no pop-ups (critical ones still show); everything is still kept in the list.
     pub notify_dnd: bool,
+    /// A short sound with each pop-up (none while Do not disturb or quiet hours keep it from popping up).
+    pub notify_sound: bool,
     /// Yggdrasil draws the wallpaper itself; the picture's path is in ~/.config/yggdrasil/wallpaper.
     pub own_wallpaper: bool,
     /// Size of text and controls in the desktop's own apps, in percent (100 to 250).
@@ -202,6 +204,7 @@ impl Default for PanelConf {
             notify_toasts: true,
             notify_pane: false,
             notify_dnd: false,
+            notify_sound: true,
             own_wallpaper: false,
             text_scale: 100,
             reduce_motion: false,
@@ -280,6 +283,7 @@ impl PanelConf {
                 "notify_toasts" => c.notify_toasts = !matches!(v, "no" | "false" | "off" | "0"),
                 "notify_pane" => c.notify_pane = matches!(v, "yes" | "true" | "on" | "1"),
                 "notify_dnd" => c.notify_dnd = matches!(v, "yes" | "true" | "on" | "1"),
+                "notify_sound" => c.notify_sound = matches!(v, "yes" | "true" | "on" | "1"),
                 "text_scale" => {
                     c.text_scale =
                         v.trim_end_matches('%').parse::<u16>().map(|n| n.clamp(TEXT_SCALE_MIN, TEXT_SCALE_MAX)).unwrap_or(c.text_scale)
@@ -312,7 +316,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nassistant_speaks = {}\nvoice_wave = {}\nsecurity_alerts = {}\nminos_first_window = {}\nminos_more_windows = {}\nminos_new_tab = {}\nminos_transparent = {}\nminos_opacity = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nnotify_sound = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nassistant_speaks = {}\nvoice_wave = {}\nsecurity_alerts = {}\nminos_first_window = {}\nminos_more_windows = {}\nminos_new_tab = {}\nminos_transparent = {}\nminos_opacity = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -334,6 +338,7 @@ impl PanelConf {
             if self.notify_toasts { "yes" } else { "no" },
             if self.notify_pane { "yes" } else { "no" },
             if self.notify_dnd { "yes" } else { "no" },
+            if self.notify_sound { "yes" } else { "no" },
             if self.own_wallpaper { "yes" } else { "no" },
             self.text_scale,
             if self.reduce_motion { "yes" } else { "no" },
@@ -422,6 +427,7 @@ mod tests {
             notify_toasts: false,
             notify_pane: true,
             notify_dnd: true,
+            notify_sound: false,
             own_wallpaper: true,
             text_scale: 150,
             reduce_motion: true,
