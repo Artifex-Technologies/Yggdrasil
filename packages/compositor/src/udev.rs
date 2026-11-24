@@ -519,6 +519,7 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     // the screens are let go before the session is closed, and the session before the console is given back
+    crate::xwayland::remove_display_files(&app);
     let _ = std::fs::remove_file(&ctl);
     let _ = std::fs::remove_file(runtime.join(&app.socket));
     let _ = std::fs::remove_file(runtime.join(format!("{}.lock", app.socket)));

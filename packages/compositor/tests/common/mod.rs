@@ -205,6 +205,8 @@ impl Compositor {
         let (mut wayland, mut ctl) = (None, None);
         while wayland.is_none() || ctl.is_none() {
             let line = lines.next().expect("the compositor ended before it was ready").unwrap();
+            // every line is kept, these too (DISPLAY=:n comes among them: XWayland's display is bound at the start)
+            log.lock().unwrap().push(line.clone());
             if let Some(v) = line.strip_prefix("WAYLAND_DISPLAY=") {
                 wayland = Some(dir.join("run").join(v));
             } else if let Some(v) = line.strip_prefix("YGGDRASIL_COMPOSITOR_CTL=") {

@@ -25,7 +25,7 @@ use smithay::wayland::selection::primary_selection::{
 use smithay::wayland::selection::SelectionTarget;
 use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState};
 use smithay::xwayland::xwm::{Reorder, ResizeEdge as X11Edge, WmWindowProperty, XwmId};
-use smithay::xwayland::{X11Surface, X11Wm, XWayland, XWaylandClientData, XWaylandEvent, XwmHandler};
+use smithay::xwayland::{X11Sockets, X11Surface, X11Wm, XWayland, XWaylandClientData, XWaylandEvent, XwmHandler};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, PropMode};
 use x11rb::wrapper::ConnectionExt as _;
@@ -33,17 +33,60 @@ use x11rb::wrapper::ConnectionExt as _;
 use crate::grabs::{MoveGrab, ResizeGrab};
 use crate::state::{self, App, KbFocus};
 
-/// Start XWayland. It answers a moment later; then its window manager starts, X11 programs can be started (DISPLAY is known)
-/// and `then` runs, also when XWayland failed (it starts the --run programs, so an X11 one finds its window manager waiting).
+/// Make X11 programs possible: XWayland starts when the first X11 program connects, not with the compositor (about 23 MB and
+/// its start-up saved while none runs). The display's sockets are bound now, so DISPLAY is known at once (printed as
+/// DISPLAY=:n, given to the programs started here) and `then` runs at once (the --run programs). When a program connects, a
+/// socket becomes readable: XWayland starts on the sockets, its window manager starts when it answers, and the program waiting
+/// is accepted then (XWayland accepts no X11 program before the window manager holds WM_S0, so its windows are managed from
+/// the first).
 pub fn start(app: &mut App, handle: LoopHandle<'static, App>, then: Box<dyn FnOnce(&mut App)>) -> Result<(), Box<dyn std::error::Error>> {
+    use smithay::reexports::calloop::generic::Generic;
+    use smithay::reexports::calloop::{Interest, Mode, PostAction};
+    let sockets = X11Sockets::bind(None, true)?;
+    let display_number = sockets.display_number();
+    let fds = sockets.poll_fds().into_iter().map(|f| f.try_clone_to_owned()).collect::<Result<Vec<OwnedFd>, _>>()?;
+    for fd in fds {
+        let h = handle.clone();
+        // the first connection on either socket (the file one or the abstract one) starts XWayland; each watch goes once it fires
+        handle
+            .insert_source(Generic::new(fd, Interest::READ, Mode::Level), move |_, _, app| {
+                if let Some(sockets) = app.x11_sockets.take() {
+                    if let Err(e) = spawn(app, h.clone(), sockets) {
+                        eprintln!("yggdrasil-compositor: XWayland could not start ({e}); X11 programs will not run");
+                    }
+                }
+                Ok(PostAction::Remove)
+            })
+            .map_err(|e| e.error)?;
+    }
+    app.x11_sockets = Some(sockets);
+    app.x11_display = Some(display_number);
+    println!("DISPLAY=:{display_number}");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    then(app);
+    Ok(())
+}
+
+/// The X11 display's lock and socket files (/tmp/.X11-unix/Xn, /tmp/.Xn-lock), removed when the compositor ends: Smithay
+/// removes them when its XWayland is dropped, which never happens to the event loop's sources.
+pub fn remove_display_files(app: &App) {
+    if let Some(n) = app.x11_display {
+        let _ = std::fs::remove_file(format!("/tmp/.X11-unix/X{n}"));
+        let _ = std::fs::remove_file(format!("/tmp/.X{n}-lock"));
+    }
+}
+
+/// Start XWayland on the display's sockets (an X11 program is waiting on them). It answers a moment later; then its window
+/// manager starts.
+fn spawn(app: &mut App, handle: LoopHandle<'static, App>, sockets: X11Sockets) -> Result<(), Box<dyn std::error::Error>> {
     // XWayland's own messages are rarely useful; YGGDRASIL_COMPOSITOR_DEBUG shows them
     let out = || if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() { Stdio::inherit() } else { Stdio::null() };
     let (xwayland, client) =
-        XWayland::spawn(&app.display_handle, None, std::iter::empty::<(String, String)>(), true, out(), out(), |_| ())?;
+        XWayland::spawn_with_sockets(&app.display_handle, sockets, std::iter::empty::<(String, String)>(), out(), out(), |_| ())?;
     // X11 programs at the screens' own resolution from the start (follow_scale), before XWayland reads the screens
     app.xwayland_client = Some(client.clone());
     app.follow_scale();
-    let mut then = Some(then);
     let wm_handle = handle.clone();
     handle
         .insert_source(xwayland, move |event, _, app| {
@@ -61,14 +104,10 @@ pub fn start(app: &mut App, handle: LoopHandle<'static, App>, then: Box<dyn FnOn
                         app.x11_display = Some(display_number);
                         app.x11_resources(true);
                         app.x11_reader = crate::x11asked::Reader::start(display_number, &wm_handle);
-                        println!("DISPLAY=:{display_number}");
                     }
                     Err(e) => eprintln!("yggdrasil-compositor: the X11 window manager could not start, X11 programs will not show: {e}"),
                 },
                 XWaylandEvent::Error => eprintln!("yggdrasil-compositor: XWayland stopped while starting; X11 programs will not run"),
-            }
-            if let Some(f) = then.take() {
-                f(app);
             }
         })
         .map_err(|e| e.error)?;
@@ -195,7 +234,8 @@ impl App {
     /// window) whole, grow back to the desktop's size). Set when the window manager starts, when the scale changes and when
     /// the pointer's theme does.
     pub fn x11_resources(&self, dpi: bool) {
-        let Some(d) = self.x11_display else { return };
+        // only once XWayland runs: a connection to the display before then would start it
+        let (Some(d), true) = (self.x11_display, self.xwm.is_some()) else { return };
         let scale = self.x11_client_scale();
         let (theme, size) = self.pointer_theme();
         let mut set = vec![("Xcursor.theme", theme), ("Xcursor.size", ((size as f64 * scale).round() as u32).to_string())];

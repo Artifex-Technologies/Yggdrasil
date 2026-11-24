@@ -284,6 +284,8 @@ pub struct App {
     /// menus and tooltips now shown (override-redirect windows: drawn where they ask, on top, never given the keyboard).
     pub xwm: Option<smithay::xwayland::X11Wm>,
     pub x11_display: Option<u32>,
+    /// The display's sockets while no X11 program has connected yet (XWayland starts on them then: xwayland.rs, start).
+    pub x11_sockets: Option<smithay::xwayland::X11Sockets>,
     /// Reads what an X11 window asked for before it was shown (x11asked.rs).
     pub x11_reader: Option<crate::x11asked::Reader>,
     /// the X11 window last marked active (_NET_ACTIVE_WINDOW), while one has the keyboard
@@ -645,6 +647,7 @@ impl App {
             clear_zones: vec![],
             xwm: None,
             x11_display: None,
+            x11_sockets: None,
             x11_reader: None,
             x11_active: None,
             xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(dh),

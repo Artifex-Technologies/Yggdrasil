@@ -365,9 +365,15 @@ X11 programs are told the desktop's pointer theme and size (Xcursor.theme and Xc
 X11's scale, set again when the theme changes; `tests/x11.rs`). X11 programs draw at the screens' resolution (since
 2026-11-22): XWayland is told the screens in pixels and Xft.dpi to match, so on a 1920x1200 screen at 125 % a game is offered
 1920x1200 and a GTK program keeps its size; `stretch = true` in `~/.config/yggdrasil/xwayland.conf` keeps the old way (the
-scaled-down 1536x960 stretched, Xft.dpi 96); `tests/x11.rs` checks both. Still missing for X11: XWayland always runs (about 20
-to 40 MB) instead of starting on the first X11 program; drag and drop between X11 and Wayland programs; X11 window icons for
-programs with no desktop entry (`_NET_WM_ICON`); and XSETTINGS.
+scaled-down 1536x960 stretched, Xft.dpi 96); `tests/x11.rs` checks both. XWayland starts when the first X11 program connects
+(since 2026-11-24): the X11 display is bound when the compositor starts, so DISPLAY is known at once (`DISPLAY=:n` is printed
+and given to the programs it starts), and nothing of XWayland runs until a program connects to it; then XWayland starts on
+those sockets and accepts the program once its window manager is ready, so even a window mapped at once is managed
+(`tests/x11.rs`). This needs a change to Smithay 0.7 (`X11Sockets` and `XWayland::spawn_with_sockets`: the sockets bound apart
+from starting XWayland), carried in our fork (github.com/Artifex-Technologies/smithay, branch yggdrasil/lazy-xwayland, pinned
+by commit in packages/compositor/Cargo.toml) and offered to Smithay. Still missing for X11: drag and drop between X11 and Wayland
+programs; X11 window icons for programs with no desktop entry (`_NET_WM_ICON`); XSETTINGS; and XWayland started again after
+it crashed (until then X11 programs need the compositor started again).
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton
@@ -402,7 +408,9 @@ and 5, the same set): idle 0.006 % of a core, 26.4-26.5 MB resident (before: 0.0
 6 and 7, the same set, five runs): idle 0.006 % of a core (560-621 µs in 10 s, before 547-572), 26.5-26.8 MB resident (before
 26.6-26.7); a window's picture for the dock costs 1.1-1.2 ms of CPU (800x600), and the pointer costs nothing while it rests. On the hardware (the test machine, 2026-11-15, 60 s with the panel): 0.012 % of a core with OpenGL ES (62-64 MB resident, 44
 MB of it the GPU driver's libraries), 0.0074 % with pixman (22.6 MB); its only wake-ups then are the 2-second look at the config
-files. Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB.
+files. XWayland on the first X11 program (2026-11-24, headless at 1920x1080, three runs each, debug builds): before, an idle
+compositor with XWayland on ran an Xwayland of 90 MB resident (23 MB proportional to what it shares) beside its own 38 MB; after,
+no Xwayland until an X11 program connects, and the compositor 35 MB. Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB.
 Measured 2026-11-24 headless (release builds, software drawing, this PC): the time from starting a program until the compositor
 has its first picture, on a fresh compositor each time (the median of three; the first start after a build is up to 80 ms
 slower): Calculator 91 ms, 2048 92 ms, Player 93 ms, Settings 105 ms, Sudoku 106 ms, Saga MD 108 ms, Task Manager 111 ms, Agora

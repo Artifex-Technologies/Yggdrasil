@@ -202,3 +202,64 @@ fn an_x11_windows_picture_is_copied_for_the_docks_preview() {
         bytes.chunks(4).take(4).map(|p| p[3]).collect::<Vec<_>>()
     );
 }
+
+/// The compositor's Xwayland process, if one runs.
+fn xwayland_of(comp: &Compositor) -> Option<u32> {
+    let parent = comp.child.id().to_string();
+    std::fs::read_dir("/proc").ok()?.filter_map(Result::ok).find_map(|e| {
+        let stat = std::fs::read_to_string(e.path().join("stat")).ok()?;
+        // pid (comm) state ppid ...
+        let (head, rest) = stat.rsplit_once(')')?;
+        let comm = head.split_once('(')?.1;
+        let ppid = rest.split_whitespace().nth(1)?;
+        (comm == "Xwayland" && ppid == parent && !rest.trim_start().starts_with('Z'))
+            .then(|| e.file_name().to_string_lossy().parse().ok())?
+    })
+}
+
+#[test]
+fn xwayland_starts_when_the_first_x11_program_connects() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "XWayland on the first X11 program");
+    // DISPLAY is known at once, and nothing of XWayland runs while no X11 program does
+    let (comp, display) = with_xwayland_on(&["--size", "800x600"], |_| {});
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(xwayland_of(&comp), None, "no Xwayland before an X11 program connects");
+    // the first X11 program: XWayland starts, and the window it maps at once is managed (shown, in the window list)
+    let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    assert!(xwayland_of(&comp).is_some(), "Xwayland runs once a program has connected");
+    let root = conn.setup().roots[screen].root;
+    let win = conn.generate_id().unwrap();
+    let aux = CreateWindowAux::new().background_pixel(0x00ff00);
+    conn.create_window(0, win, root, 0, 0, 200, 150, 0, WindowClass::INPUT_OUTPUT, 0, &aux).unwrap();
+    conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"first\0First\0").unwrap();
+    conn.map_window(win).unwrap();
+    conn.flush().unwrap();
+    let start = Instant::now();
+    while comp.window("First").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(10), "the first X11 program's window is managed: {:?}", comp.must("windows"));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // a second program connects to the same XWayland
+    let (second, _) = x11rb::connect(Some(&display)).expect("a second X11 program");
+    drop(second);
+    let pid = xwayland_of(&comp);
+    assert!(pid.is_some());
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(xwayland_of(&comp), pid, "one XWayland for every X11 program");
+    // when the compositor ends, the display's files go with it (XWayland started, and not)
+    let files = |d: &str| {
+        let n = d.trim_start_matches(':');
+        [format!("/tmp/.X11-unix/X{n}"), format!("/tmp/.X{n}-lock")]
+    };
+    assert!(files(&display).iter().all(|f| std::path::Path::new(f).exists()));
+    drop(conn);
+    drop(comp);
+    assert!(files(&display).iter().all(|f| !std::path::Path::new(f).exists()), "{display}'s files removed");
+    let (idle, d2) = with_xwayland_on(&["--size", "800x600"], |_| {});
+    drop(idle);
+    assert!(files(&d2).iter().all(|f| !std::path::Path::new(f).exists()), "{d2}'s files removed, XWayland never started");
+}

@@ -13,7 +13,7 @@
 //!   yggdrasil-compositor ctl COMMAND...
 //!       sends one command to a headless or hardware compositor's control socket (control.rs, headless.rs)
 //!
-//! X11 programs run through XWayland, started with the compositor (its display is printed as DISPLAY=...);
+//! X11 programs run through XWayland, started when the first one connects (the display is printed as DISPLAY=... at once);
 //! YGGDRASIL_COMPOSITOR_XWAYLAND=0 leaves it out (headless leaves it out unless it is 1).
 //!
 //! See docs/COMPOSITOR.md for what is built and what is not.
@@ -234,8 +234,8 @@ fn serve(
     event_loop.handle().insert_source(socket, |stream, _, app| {
         let _ = app.display_handle.insert_client(stream, Arc::new(ClientState::default()));
     })?;
-    // X11 programs (XWayland). The --run programs wait until it has answered (a fraction of a second), so an X11 program among
-    // them finds its window manager there; without XWayland they start at once.
+    // X11 programs (XWayland, started when the first one connects). DISPLAY is known at once, so the --run programs start at
+    // once either way.
     let xwayland = std::env::var("YGGDRASIL_COMPOSITOR_XWAYLAND").map(|v| v != "0" && v != "off").unwrap_or(xwayland_default);
     let start_run = {
         let name = name.clone();
@@ -424,6 +424,7 @@ fn run_nested(
     event_loop.run(None, &mut app, |app| {
         let _ = app.display_handle.flush_clients();
     })?;
+    xwayland::remove_display_files(&app);
     Ok(())
 }
 

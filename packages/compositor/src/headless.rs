@@ -631,6 +631,8 @@ pub fn run(
         h.borrow_mut().control.tell_watchers(app);
     })?;
     // the loop's sources hold handles to the loop itself, so they are never dropped and the Wayland socket would stay behind
+    // (and the X11 display's files)
+    crate::xwayland::remove_display_files(&app);
     let _ = std::fs::remove_file(&ctl);
     let _ = std::fs::remove_file(runtime.join(&app.socket));
     let _ = std::fs::remove_file(runtime.join(format!("{}.lock", app.socket)));
