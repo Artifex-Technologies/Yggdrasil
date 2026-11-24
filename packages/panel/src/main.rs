@@ -810,6 +810,26 @@ fn hand_main_display_to_login_screen(choice: Option<&yggdrasil_conf::display::Ma
     });
 }
 
+/// A dock app's right-click menu: open it (a new window while it runs), close it, its page in Settings, keep it in the dock or
+/// remove it.
+fn dock_menu_items(running: bool, pinned: bool) -> Vec<tray::MenuItem> {
+    let mk =
+        |id: i32, label: &str| tray::MenuItem { id, label: label.into(), enabled: true, separator: false, checked: None, children: vec![] };
+    let mut menu = vec![mk(1, if running { "New window" } else { "Open" })];
+    if running {
+        menu.push(mk(2, "Close"));
+    }
+    menu.push(tray::MenuItem { id: 0, label: String::new(), enabled: false, separator: true, checked: None, children: vec![] });
+    menu.push(mk(4, "App settings"));
+    menu.push(mk(3, if pinned { "Remove from dock" } else { "Keep in dock" }));
+    menu
+}
+
+/// What "App settings" runs: Settings on the app's own page (Settings > Apps; an id it does not know shows the list).
+fn app_settings_command(app_id: &str) -> Vec<String> {
+    ["setsid", "-f", "yggdrasil-settings"].iter().map(|s| s.to_string()).chain([format!("apps:{app_id}")]).collect()
+}
+
 fn run(cmd: &[&str]) {
     let Some((p, a)) = cmd.split_first() else { return };
     let _ = std::process::Command::new(p)
@@ -2462,20 +2482,7 @@ impl State {
         let items = shell::dock_items(&self.model);
         let running = items.iter().find(|i| i.app_id == app_id).map(|i| !i.wins.is_empty()).unwrap_or(false);
         let pinned = self.model.pinned.iter().any(|p| p == app_id);
-        let mk = |id: i32, label: &str| tray::MenuItem {
-            id,
-            label: label.into(),
-            enabled: true,
-            separator: false,
-            checked: None,
-            children: vec![],
-        };
-        let mut menu = vec![mk(1, if running { "New window" } else { "Open" })];
-        if running {
-            menu.push(mk(2, "Close"));
-        }
-        menu.push(tray::MenuItem { id: 0, label: String::new(), enabled: false, separator: true, checked: None, children: vec![] });
-        menu.push(mk(3, if pinned { "Remove from dock" } else { "Keep in dock" }));
+        let menu = dock_menu_items(running, pinned);
         self.click_output = Some(output);
         self.toggle_popup(PopupKind::Tray(trayui::TrayPop {
             anchor_x: x,
@@ -2521,6 +2528,10 @@ impl State {
                         self.model.wins[i].proxy.close();
                     }
                 }
+            }
+            4 => {
+                let cmd = app_settings_command(app_id);
+                run(&cmd.iter().map(String::as_str).collect::<Vec<_>>());
             }
             3 => {
                 if let Some(pos) = self.model.pinned.iter().position(|p| p == app_id) {
@@ -5669,6 +5680,18 @@ fn gone_compositor(err: &str) -> bool {
 
 #[cfg(test)]
 mod layout_tests {
+    #[test]
+    fn a_dock_apps_menu_opens_its_page_in_settings() {
+        let labels = |m: Vec<super::tray::MenuItem>| m.iter().filter(|i| !i.separator).map(|i| (i.id, i.label.clone())).collect::<Vec<_>>();
+        let running = labels(super::dock_menu_items(true, true));
+        assert_eq!(
+            running,
+            [(1, "New window".to_string()), (2, "Close".into()), (4, "App settings".into()), (3, "Remove from dock".into())]
+        );
+        assert!(labels(super::dock_menu_items(false, false)).contains(&(4, "App settings".into())));
+        assert_eq!(super::app_settings_command("org.example.Mail"), ["setsid", "-f", "yggdrasil-settings", "apps:org.example.Mail"]);
+    }
+
     #[test]
     fn hyprland_screens_become_the_layout() {
         let j = r#"[{"name":"DP-3","width":2560,"height":2880,"x":3440,"y":0,"scale":1.0,"transform":0,"disabled":false},{"name":"DP-1","width":3440,"height":1440,"x":0,"y":0,"scale":1.0,"transform":0,"disabled":false},{"name":"HDMI-A-1","width":1920,"height":1080,"x":-1920,"y":0,"disabled":true}]"#;
