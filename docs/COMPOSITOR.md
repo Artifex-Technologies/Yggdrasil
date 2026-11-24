@@ -397,8 +397,14 @@ and 5, the same set): idle 0.006 % of a core, 26.4-26.5 MB resident (before: 0.0
 6 and 7, the same set, five runs): idle 0.006 % of a core (560-621 µs in 10 s, before 547-572), 26.5-26.8 MB resident (before
 26.6-26.7); a window's picture for the dock costs 1.1-1.2 ms of CPU (800x600), and the pointer costs nothing while it rests. On the hardware (the test machine, 2026-11-15, 60 s with the panel): 0.012 % of a core with OpenGL ES (62-64 MB resident, 44
 MB of it the GPU driver's libraries), 0.0074 % with pixman (22.6 MB); its only wake-ups then are the 2-second look at the config
-files. Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Not measured yet: the start-up time of each program,
-and the compositor's cost with several large windows. The window switcher (2026-11-19): nothing while closed; open, one frame
+files. Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB.
+Measured 2026-11-24 headless (release builds, software drawing, this PC): the time from starting a program until the compositor
+has its first picture, on a fresh compositor each time (the median of three; the first start after a build is up to 80 ms
+slower): Calculator 91 ms, 2048 92 ms, Player 93 ms, Settings 105 ms, Sudoku 106 ms, Saga MD 108 ms, Task Manager 111 ms, Agora
+124 ms (without network), Minos 170 ms. With four 1270x710 windows on a 2560x1440 screen (Minos, Settings, Saga MD, Calculator)
+the compositor drew nothing and used no CPU in 30 s idle, at 53 MB resident; dragging one of them over the other three cost
+about 1 ms of CPU a frame (300 ms for 302 frames in 6.8 s). The egui apps themselves draw nothing while idle since YGG-17:
+0 frames in 60 s for Minos and the Calculator (before: Minos about 28 a second, the Calculator 6). The window switcher (2026-11-19): nothing while closed; open, one frame
 and then only what changes (numbers in "Window switching" above).
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
 their own, plus about 26 MB while libnvidia-ml is initialised (the NVIDIA driver's own cost, the same in any language), and tune
