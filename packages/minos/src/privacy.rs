@@ -449,6 +449,17 @@ impl Stripping {
 
 #[cfg(test)]
 mod tests {
+    /// Writes an executable script with `install -m 755`, a program of its own, so that no thread of this test process ever holds
+    /// it open for writing: another test's program started meanwhile would inherit that handle until its exec, and running the
+    /// script then fails with "Text file busy" (ETXTBSY).
+    fn write_script(path: &std::path::Path, text: &str) {
+        let src = path.with_extension("script-text");
+        std::fs::write(&src, text).unwrap();
+        let ok = std::process::Command::new("install").args(["-m", "755"]).arg(&src).arg(path).status().is_ok_and(|s| s.success());
+        let _ = std::fs::remove_file(&src);
+        assert!(ok, "install could not write {}", path.display());
+    }
+
     use super::*;
 
     #[test]
@@ -577,19 +588,16 @@ mod tests {
     /// The strip runner and the --can question against a stand-in heimdall-strip (a shell script, run by its full path).
     #[test]
     fn the_strip_runner_reads_the_tool() {
-        use std::os::unix::fs::PermissionsExt;
         let d = std::env::temp_dir().join(format!("minos-strip-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         let tool = d.join("heimdall-strip");
-        std::fs::write(
+        write_script(
             &tool,
             "#!/bin/sh\nif [ \"$1\" = --can ]; then case \"$2\" in *.jpg) echo jpeg; exit 0;; *) exit 1;; esac; fi\n\
              [ \"$1\" = --json ] || exit 2\n\
              case \"$2\" in *bad*) echo 'heimdall-strip: the file is damaged' >&2; exit 1;; *plain*) echo '{\"wrote\":null,\"removed\":[]}'; exit 0;; esac\n\
              : > \"$3\"; printf '{\"wrote\":\"%s\",\"removed\":[\"GPS position (EXIF)\"]}\\n' \"$3\"\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let photo = d.join("a.jpg");
         std::fs::write(&photo, b"x").unwrap();
         assert!(can_strip_with(&tool, &photo, Duration::from_secs(5)));
@@ -609,17 +617,14 @@ mod tests {
     /// The runner against a stand-in heimdall-scrub (a shell script on PATH): progress, the path, a failure's message.
     #[test]
     fn the_runner_reads_the_tool() {
-        use std::os::unix::fs::PermissionsExt;
         let d = std::env::temp_dir().join(format!("minos-scrub-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         let tool = d.join("heimdall-scrub");
-        std::fs::write(
+        write_script(
             &tool,
             "#!/bin/sh\n[ \"$1\" = --progress ] || exit 2\ncase \"$2\" in *bad*) echo 'heimdall-scrub: no sound in it' >&2; exit 1;; esac\n\
              echo 'progress 0.5'; echo 'progress 1'; : > \"$3\"; echo \"wrote $3\"\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         // run the stand-in by its full path: the test does not change PATH for the other tests
         let run = |input: &str, output: &Path| {
             let child = spawn(

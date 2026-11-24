@@ -75,8 +75,7 @@ impl World {
         fs::write(home.join(".config/systemd/user/proton-drive.service"), "[Service]\n").unwrap();
         for (prog, body) in [("rclone", RCLONE), ("systemctl", OTHER), ("mountpoint", OTHER)] {
             let p = bin.join(prog);
-            fs::write(&p, body).unwrap();
-            fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+            write_script(&p, body);
         }
         let conf = home.join(".config/rclone/rclone.conf");
         // edition 2021: set_var is safe; the lock above keeps the tests from changing it under each other
@@ -187,4 +186,15 @@ fn an_encrypted_config_is_left_alone() {
     assert_eq!(fs::read_to_string(&w.conf).unwrap(), enc);
     // the password was never handed to rclone at all
     assert_eq!(w.log("stdin"), "");
+}
+
+/// Writes an executable script with `install -m 755`, a program of its own, so that no thread of this test process ever holds
+/// it open for writing: another test's program started meanwhile would inherit that handle until its exec, and running the
+/// script then fails with "Text file busy" (ETXTBSY).
+fn write_script(path: &std::path::Path, text: &str) {
+    let src = path.with_extension("script-text");
+    std::fs::write(&src, text).unwrap();
+    let ok = std::process::Command::new("install").args(["-m", "755"]).arg(&src).arg(path).status().is_ok_and(|s| s.success());
+    let _ = std::fs::remove_file(&src);
+    assert!(ok, "install could not write {}", path.display());
 }
