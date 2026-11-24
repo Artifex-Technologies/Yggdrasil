@@ -6,10 +6,6 @@
 //! server (XWayland is also a client of the compositor: a blocking read here could wait on a server that waits on us). The
 //! answer comes back to the event loop through a channel and is acted on then, a moment after the window is shown.
 //!
-//! The same thread closes X11 windows: a program that takes part in WM_DELETE_WINDOW is asked to close, as Smithay would ask;
-//! one that does not (glxgears, some old programs and games) has its connection ended (XKillClient), as KWin and Hyprland do.
-//! Smithay destroys such a window instead, which leaves the program running with no window (found 2026-11-05 with glxgears).
-//!
 //! It also says which X11 window is active, as EWMH window managers do: `_NET_ACTIVE_WINDOW` on the root, and the X input
 //! focus on the window. Smithay sets the property only when the focus has moved, and for a "globally active" window (input
 //! hint False with WM_TAKE_FOCUS: every Wine window) it only sends WM_TAKE_FOCUS and waits for the program to take the focus.
@@ -68,7 +64,6 @@ enum Job {
     Icon(u32, String),
     /// the XSETTINGS to publish now (the `_XSETTINGS_SETTINGS` property's bytes)
     Settings(Vec<u8>),
-    Close(u32),
     /// this X11 window has the keyboard now (0: none has: a Wayland window or nothing has it)
     Activate(u32),
     /// WM_STATE: Iconic (minimized) or Normal
@@ -132,11 +127,6 @@ pub struct Reader {
     wake: std::os::unix::net::UnixStream,
 }
 
-/// Whether a WM_PROTOCOLS list takes part in WM_DELETE_WINDOW.
-pub fn takes_delete(protocols: &[u32], delete: u32) -> bool {
-    protocols.contains(&delete)
-}
-
 impl Reader {
     /// Connects to XWayland's display `:n` on a new thread. None when the event loop refused the channel.
     pub fn start(display: u32, handle: &LoopHandle<'static, App>) -> Option<Reader> {
@@ -165,26 +155,14 @@ impl Reader {
                 };
                 let root = conn.setup().roots.get(screen).map(|r| r.root).unwrap_or(0);
                 let atom = |name: &str| conn.intern_atom(false, name.as_bytes()).ok().and_then(|c| c.reply().ok()).map(|r| r.atom);
-                let (
-                    Some(state),
-                    Some(fullscreen),
-                    Some(max_vert),
-                    Some(max_horz),
-                    Some(protocols),
-                    Some(delete),
-                    Some(wm_state_atom),
-                    Some(active),
-                ) = (
+                let (Some(state), Some(fullscreen), Some(max_vert), Some(max_horz), Some(wm_state_atom), Some(active)) = (
                     atom("_NET_WM_STATE"),
                     atom("_NET_WM_STATE_FULLSCREEN"),
                     atom("_NET_WM_STATE_MAXIMIZED_VERT"),
                     atom("_NET_WM_STATE_MAXIMIZED_HORZ"),
-                    atom("WM_PROTOCOLS"),
-                    atom("WM_DELETE_WINDOW"),
                     atom("WM_STATE"),
                     atom("_NET_ACTIVE_WINDOW"),
-                )
-                else {
+                ) else {
                     return;
                 };
                 let atoms = Atoms { fullscreen, max_vert, max_horz };
@@ -297,22 +275,6 @@ impl Reader {
                                 let _ = conn.flush();
                                 continue;
                             }
-                            Job::Close(w) => {
-                                let listed: Vec<u32> = conn
-                                    .get_property(false, w, protocols, AtomEnum::ATOM, 0, 32)
-                                    .ok()
-                                    .and_then(|c| c.reply().ok())
-                                    .and_then(|r| r.value32().map(|v| v.collect()))
-                                    .unwrap_or_default();
-                                if takes_delete(&listed, delete) {
-                                    let event = ClientMessageEvent::new(32, w, protocols, [delete, 0, 0, 0, 0]);
-                                    let _ = conn.send_event(false, w, EventMask::NO_EVENT, event);
-                                } else {
-                                    let _ = conn.kill_client(w);
-                                }
-                                let _ = conn.flush();
-                                continue;
-                            }
                         };
                         let Ok(cookie) = conn.get_property(false, window, state, AtomEnum::ATOM, 0, 32) else { return };
                         let states: Vec<u32> = match cookie.reply() {
@@ -377,11 +339,6 @@ impl Reader {
     pub fn activate(&self, window: u32) {
         self.send(Job::Activate(window));
     }
-
-    /// Close this window: asked politely when the program takes part in WM_DELETE_WINDOW, its connection ended otherwise.
-    pub fn close(&self, window: u32) {
-        self.send(Job::Close(window));
-    }
 }
 
 #[cfg(test)]
@@ -422,12 +379,5 @@ mod tests {
     fn wm_state_says_minimized_or_not() {
         assert_eq!(wm_state(true), [3, 0], "IconicState, no icon window");
         assert_eq!(wm_state(false), [1, 0], "NormalState");
-    }
-
-    #[test]
-    fn closing_asks_only_programs_that_take_part() {
-        assert!(takes_delete(&[3, 7], 7));
-        assert!(!takes_delete(&[3], 7), "no WM_DELETE_WINDOW: the connection is ended instead");
-        assert!(!takes_delete(&[], 7));
     }
 }

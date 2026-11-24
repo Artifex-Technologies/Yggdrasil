@@ -104,10 +104,6 @@ fn spawn(app: &mut App, handle: LoopHandle<'static, App>, sockets: X11Sockets) -
                     Ok(mut wm) => {
                         // games ask for the primary monitor to know where to go full screen
                         let _ = wm.set_randr_primary_output(Some(&app.output));
-                        // Smithay 0.7 marks that request's number to be ignored, and every X11 event carries the number of the
-                        // window manager's last request: until it makes another, every event (a program's MapRequest too) was
-                        // dropped and no X11 window ever showed. Any request with an answer moves the number on.
-                        let _ = wm.get_randr_primary_output();
                         app.xwm = Some(wm);
                         app.x11_display = Some(display_number);
                         // the reader first: it also keeps XSETTINGS, which x11_resources sends it
@@ -185,17 +181,6 @@ pub fn x11_scale(scales: impl Iterator<Item = f64>, stretch: bool) -> f64 {
         return 1.0;
     }
     scales.fold(1.0, f64::max)
-}
-
-/// A new X11 window's geometry as it should be: Smithay 0.7 converts the first one (CreateNotify) with the scale rounded down to
-/// a whole number (1.25 taken as 1), so a menu shown where it was made, without moving, would be drawn a quarter too far out.
-pub fn unrounded(g: Rectangle<i32, Logical>, scale: f64) -> Rectangle<i32, Logical> {
-    let k = (scale as i32).max(1) as f64 / scale;
-    if (k - 1.0).abs() < 1e-9 {
-        return g;
-    }
-    let f = |v: i32| (v as f64 * k).round() as i32;
-    Rectangle::new((f(g.loc.x), f(g.loc.y)).into(), (f(g.size.w), f(g.size.h)).into())
 }
 
 /// X resources with each of `set` (name, value) set, any earlier line of that name replaced.
@@ -415,25 +400,16 @@ impl App {
         self.x11_resources(true);
     }
 
-    /// Where an X11 menu or tooltip is: its geometry, set right while Smithay still has its rounded first one (`unrounded`).
-    pub fn overlay_geo(&self, x: &X11Surface) -> Rectangle<i32, Logical> {
-        if self.x11_rounded.contains(&x.window_id()) {
-            unrounded(x.geometry(), self.x11_client_scale())
-        } else {
-            x.geometry()
-        }
-    }
-
     /// Is the point over an X11 menu or tooltip? A click there is the menu's, not the window's behind it.
     pub fn over_overlay(&self, pos: Point<f64, Logical>) -> bool {
-        self.overlays.iter().any(|x| self.overlay_geo(x).to_f64().contains(pos))
+        self.overlays.iter().any(|x| x.geometry().to_f64().contains(pos))
     }
 
     /// The surface of an X11 menu or tooltip under the point, and where that surface's origin is on screen.
     pub fn overlay_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
         for x in self.overlays.iter().rev() {
             let Some(s) = x.wl_surface() else { continue };
-            let loc = self.overlay_geo(x).loc;
+            let loc = x.geometry().loc;
             if let Some((s, p)) =
                 smithay::desktop::utils::under_from_surface_tree(&s, pos - loc.to_f64(), (0, 0), smithay::desktop::WindowSurfaceType::ALL)
             {
@@ -474,20 +450,11 @@ impl XwmHandler for App {
         self.xwm.as_mut().expect("an X11 window manager event without the window manager")
     }
 
-    /// A new X11 window: its first geometry set right (`unrounded`), which tells the X server the same place in its pixels.
-    fn new_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        let s = self.x11_client_scale();
-        if s.fract() != 0.0 {
-            let _ = window.configure(unrounded(window.geometry(), s));
-        }
-    }
+    // a new window or menu is placed when it is shown (map_window_request, mapped_override_redirect_window); Smithay converts
+    // its first geometry at the client scale as it is (our fork; 0.7.0 rounded 1.25 down to 1)
+    fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
-    /// A new menu or tooltip: it cannot be configured, so its first geometry is set right where it is used, until it moves.
-    fn new_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        if self.x11_client_scale().fract() != 0.0 {
-            self.x11_rounded.push(window.window_id());
-        }
-    }
+    fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
     /// A program shows a window: it is placed like a Wayland window (one after another, a little offset; tiled on a tiling
     /// workspace once its surface exists).
@@ -558,7 +525,6 @@ impl XwmHandler for App {
         self.wake();
         // normally it was unmapped first and is already forgotten
         self.overlays.retain(|x| !same(x, &window));
-        self.x11_rounded.retain(|id| *id != window.window_id());
         if self.x11_window(&window).is_some() {
             self.window_gone(None, |w| w.x11_surface().is_some_and(|x| same(x, &window)));
         }
@@ -606,10 +572,9 @@ impl XwmHandler for App {
     }
 
     /// Something moved or changed size in the X server. Managed windows are placed by the compositor and already known; menus
-    /// and tooltips are drawn from their own geometry (Smithay's, exact from now on), so only a new frame is needed.
-    fn configure_notify(&mut self, _xwm: XwmId, window: X11Surface, _geometry: Rectangle<i32, Logical>, _above: Option<u32>) {
+    /// and tooltips are drawn from their own geometry (Smithay's), so only a new frame is needed.
+    fn configure_notify(&mut self, _xwm: XwmId, _window: X11Surface, _geometry: Rectangle<i32, Logical>, _above: Option<u32>) {
         self.wake();
-        self.x11_rounded.retain(|id| *id != window.window_id());
     }
 
     fn property_notify(&mut self, _xwm: XwmId, window: X11Surface, property: WmWindowProperty) {
@@ -870,8 +835,7 @@ impl RenderElement<GlesRenderer> for OpaqueElement {
 mod tests {
     #[test]
     fn x11_programs_draw_at_the_screens_resolution() {
-        use super::{parse_stretch, unrounded, with_resources, x11_scale};
-        use smithay::utils::Rectangle;
+        use super::{parse_stretch, with_resources, x11_scale};
         // the largest scale of the screens that are on; never below 1; 1 when xwayland.conf says stretch
         assert_eq!(x11_scale([1.25].into_iter(), false), 1.25);
         assert_eq!(x11_scale([1.0, 2.0].into_iter(), false), 2.0);
@@ -881,16 +845,6 @@ mod tests {
         assert!(parse_stretch("# old way\nstretch = true\n"));
         assert!(!parse_stretch("stretch = false\n# stretch = true\n"));
         assert!(!parse_stretch(""));
-        // Smithay took a new window's 1000,500 1920x1200 (X11 pixels) at 1.25 as if the scale were 1
-        let g = Rectangle::new((1000, 500).into(), (1920, 1200).into());
-        assert_eq!(unrounded(g, 1.25), Rectangle::new((800, 400).into(), (1536, 960).into()));
-        assert_eq!(unrounded(g, 2.0), g, "a whole scale was converted right");
-        assert_eq!(unrounded(g, 1.0), g);
-        // at 2.5 it divided by 2: the rest of the way
-        assert_eq!(
-            unrounded(Rectangle::new((400, 200).into(), (800, 600).into()), 2.5),
-            Rectangle::new((320, 160).into(), (640, 480).into())
-        );
         // the programs' DPI, the other resources kept
         let dpi = |d: u32| [("Xft.dpi", d.to_string())];
         assert_eq!(with_resources("Xcursor.size:\t24\nXft.dpi:\t96\n", &dpi(120)), "Xcursor.size:\t24\nXft.dpi:\t120\n");

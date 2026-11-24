@@ -300,8 +300,6 @@ pub struct App {
     pub overlays: Vec<X11Surface>,
     /// XWayland as a Wayland client: its client scale is the scale X11 programs draw at (xwayland.rs, follow_scale).
     pub xwayland_client: Option<smithay::reexports::wayland_server::Client>,
-    /// Menus and tooltips whose geometry is still Smithay's rounded first one (xwayland.rs, unrounded), by X11 window id.
-    pub x11_rounded: Vec<u32>,
     /// When xwayland.conf last changed, as `reload_config` last saw it.
     pub xwayland_conf_time: Option<std::time::SystemTime>,
     pub loop_handle: LoopHandle<'static, App>,
@@ -662,7 +660,6 @@ impl App {
             xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(dh),
             overlays: vec![],
             xwayland_client: None,
-            x11_rounded: vec![],
             xwayland_conf_time: None,
             loop_handle,
             opaque_shader: None,
@@ -1354,13 +1351,8 @@ impl App {
         if let Some(t) = w.toplevel() {
             t.send_close();
         } else if let Some(x) = w.x11_surface() {
-            // through x11asked's connection, which ends a program that cannot be asked (Smithay would leave it windowless)
-            match &self.x11_reader {
-                Some(r) => r.close(x.window_id()),
-                None => {
-                    let _ = x.close();
-                }
-            }
+            // asked through WM_DELETE_WINDOW, or a program that cannot be asked ended (XKillClient: our Smithay fork)
+            let _ = x.close();
         }
         self.close_frames.retain(|(s, _)| s != surface);
         self.close_frames.push((surface.clone(), std::time::Instant::now()));
@@ -2307,7 +2299,7 @@ impl App {
         }
         // X11 menus and tooltips, last shown in front, over everything but the switcher and the profile question
         for x in self.overlays.iter().rev() {
-            let loc = cam.point(self.overlay_geo(x).loc.to_f64()).to_i32_round();
+            let loc = cam.point(x.geometry().loc.to_f64()).to_i32_round();
             out.extend(lift(x.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, loc, scale, 1.0), loc));
         }
         // A full screen window in front (a game, a video) covers the top bar and the dock: the Top layer then goes behind the

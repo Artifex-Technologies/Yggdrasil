@@ -1751,7 +1751,7 @@ checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 [[package]]
 name = "smithay"
 version = "0.7.0"
-source = "git+https://github.com/Artifex-Technologies/smithay-yggdrasil?rev=e300460307ccc08bc397ff65fff5893fb5d0511f#e300460307ccc08bc397ff65fff5893fb5d0511f"
+source = "git+https://github.com/Artifex-Technologies/smithay-yggdrasil?rev=6ce290dd0405412e338e2d28a0c2d2b65c6875a1#6ce290dd0405412e338e2d28a0c2d2b65c6875a1"
 dependencies = [
  "appendlist",
  "atomic_float",

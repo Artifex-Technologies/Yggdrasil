@@ -335,8 +335,12 @@ shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
 - `xterm -fullscreen` (it sets `_NET_WM_STATE_FULLSCREEN` before its window shows, as games do) opened full screen.
 - glxgears (OpenGL through XWayland) ran at about 90 frames a second, drawn and moved like any window.
 - Close on glxgears, which does not take part in WM_DELETE_WINDOW: Smithay destroyed its window and left it running with no
-  window. **Fixed:** closing goes through x11asked's connection, which asks politely when the program takes part and otherwise
-  ends its connection (XKillClient, as KWin and Hyprland do). glxgears then ended with "fatal IO error", as under KWin.
+  window. **Fixed:** a program that takes part is asked politely and one that does not has its connection ended (XKillClient,
+  as KWin and Hyprland do); glxgears then ended with "fatal IO error", as under KWin. Since 2026-11-24 this is fixed in our
+  Smithay fork itself (X11Surface::close), with two more of its X11 bugs: every X11 event was dropped after the window manager
+  set the primary screen until it made another request (it ignored that request's sequence number, which every following
+  event carries), and a new window's first place and size were converted with 1.25 taken as 1. The compositor's workarounds
+  for all three are gone (`tests/x11.rs` fails without the fixes and passes with them).
 - Minimize: the window went away and showed `_NET_WM_STATE_HIDDEN`, but kept `_NET_WM_STATE_FOCUSED`. **Fixed:** a minimized
   window is marked inactive and the window now on top becomes the active one.
 - The panel inside the compositor: the minimized xterm was in the dock; a click brought it back with the keyboard, and the top

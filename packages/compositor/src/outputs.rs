@@ -462,8 +462,6 @@ impl App {
         self.output = main;
         if let Some(wm) = self.xwm.as_mut() {
             let _ = wm.set_randr_primary_output(Some(&self.output));
-            // a request with an answer after it, as at the start (xwayland.rs): Smithay ignores the number of the one before
-            let _ = wm.get_randr_primary_output();
         }
     }
 

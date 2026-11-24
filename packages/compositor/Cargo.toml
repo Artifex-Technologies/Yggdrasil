@@ -45,8 +45,9 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 opt-level = 2
 lto = "thin"
 
-# Smithay 0.7.0 with one change of ours: the X11 sockets bound apart from starting XWayland (X11Sockets,
-# XWayland::spawn_with_sockets), so XWayland starts on the first X11 program (xwayland.rs). Our fork, pinned by commit (branch
-# yggdrasil/lazy-xwayland on the 0.7.0 tag); offered to Smithay upstream, and dropped once a Smithay release has it.
+# Smithay 0.7.0 with changes of ours: the X11 sockets bound apart from starting XWayland (X11Sockets,
+# XWayland::spawn_with_sockets), so XWayland starts on the first X11 program (xwayland.rs); and three X11 window manager fixes
+# (no events dropped after set_randr_primary_output, a new window's first geometry at fractional scales, close ending a
+# client that cannot be asked). Our fork, pinned by commit (branch yggdrasil/lazy-xwayland on the 0.7.0 tag).
 [patch.crates-io]
-smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "e300460307ccc08bc397ff65fff5893fb5d0511f" }
+smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "6ce290dd0405412e338e2d28a0c2d2b65c6875a1" }

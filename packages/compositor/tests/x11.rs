@@ -453,3 +453,101 @@ fn x11_programs_get_xsettings_and_their_changes() {
     ini(&comp.dir, "Other-Theme");
     until("the new theme", &|s| s.get("Net/ThemeName").map(String::as_str) == Some("Other-Theme"));
 }
+
+/// The control socket's number for a window (its `clients` line).
+fn client_of(comp: &Compositor, class: &str) -> String {
+    let lines = comp.must("clients");
+    let line = lines.iter().find(|l| l.split('\t').nth(1) == Some(class)).unwrap_or_else(|| panic!("{class} in {lines:?}"));
+    line.split('\t').next().unwrap().to_string()
+}
+
+#[test]
+fn closing_asks_a_program_that_takes_part_and_ends_one_that_does_not() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "closing X11 windows");
+    let (comp, display) = with_xwayland_on(&["--size", "800x600"], |_| {});
+    let open = |class: &[u8], polite: bool| {
+        let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+        let root = conn.setup().roots[screen].root;
+        let atom = |n: &[u8]| conn.intern_atom(false, n).unwrap().reply().unwrap().atom;
+        let (protocols, delete) = (atom(b"WM_PROTOCOLS"), atom(b"WM_DELETE_WINDOW"));
+        let win = conn.generate_id().unwrap();
+        conn.create_window(0, win, root, 0, 0, 200, 150, 0, WindowClass::INPUT_OUTPUT, 0, &CreateWindowAux::new()).unwrap();
+        conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, class).unwrap();
+        if polite {
+            conn.change_property32(PropMode::REPLACE, win, protocols, AtomEnum::ATOM, &[delete]).unwrap();
+        }
+        conn.map_window(win).unwrap();
+        conn.flush().unwrap();
+        (conn, delete)
+    };
+    let wait = |what: &str, done: &dyn Fn() -> bool| {
+        let start = Instant::now();
+        while !done() {
+            assert!(start.elapsed() < Duration::from_secs(10), "{what}: {:?}", comp.must("windows"));
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    // a program that takes part in WM_DELETE_WINDOW is asked, and stays connected to decide
+    let (polite, delete) = open(b"polite\0Polite\0", true);
+    wait("the polite window", &|| comp.window("Polite").is_some());
+    comp.must(&format!("close {}", client_of(&comp, "Polite")));
+    let start = Instant::now();
+    let asked = loop {
+        match polite.poll_for_event() {
+            Ok(Some(x11rb::protocol::Event::ClientMessage(m))) if m.data.as_data32()[0] == delete => break true,
+            Ok(_) => {}
+            Err(e) => panic!("the polite program was cut off: {e}"),
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "no WM_DELETE_WINDOW came");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(asked);
+    assert!(polite.get_input_focus().unwrap().reply().is_ok(), "still connected: it decides itself");
+    // one that does not take part is ended (XKillClient), not left running without a window
+    let (rude, _) = open(b"rude\0Rude\0", false);
+    wait("the rude window", &|| comp.window("Rude").is_some());
+    comp.must(&format!("close {}", client_of(&comp, "Rude")));
+    wait("the rude window gone", &|| comp.window("Rude").is_none());
+    let start = Instant::now();
+    loop {
+        if rude.get_input_focus().map(|c| c.reply().is_err()).unwrap_or(true) {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "the program that cannot be asked is still connected");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn an_x11_menu_is_drawn_where_it_was_made_at_a_fractional_scale() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "an X11 menu at 125 %");
+    // at 125 % X11 programs draw in the screen's pixels: a menu made at (500, 250), 125 x 125, is there on the screen
+    let (comp, display) = with_xwayland_on(&["--output", "1600x900@1.25"], |_| {});
+    let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = conn.setup().roots[screen].root;
+    let menu = conn.generate_id().unwrap();
+    let aux = CreateWindowAux::new().background_pixel(0xff0000).override_redirect(1);
+    conn.create_window(0, menu, root, 500, 250, 125, 125, 0, WindowClass::INPUT_OUTPUT, 0, &aux).unwrap();
+    conn.map_window(menu).unwrap();
+    conn.flush().unwrap();
+    let start = Instant::now();
+    loop {
+        let shot = comp.screenshot("HEADLESS-1");
+        let inside = shot.count((505, 255, 115, 115), (255, 0, 0));
+        if inside == 115 * 115 {
+            // and nothing of it a quarter further out, where a rounded scale would put it
+            assert_eq!(shot.count((640, 320, 40, 40), (255, 0, 0)), 0, "drawn only where it was made");
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "the menu where it was made: {inside} red pixels of {}", 115 * 115);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
