@@ -4646,6 +4646,7 @@ impl App {
                 if let Some(p) = self.data.privacy_pack.as_mut() {
                     match key {
                         yggdrasil_ui::privacy_prefs::DOWNLOADS_GUARD => p.guard_on = on,
+                        yggdrasil_ui::privacy_prefs::FOLDERS_GUARD => p.folders_on = on,
                         yggdrasil_ui::privacy_prefs::REMOVE_HIDDEN_INFO => p.strip_on = on,
                         _ => p.lookalike_on = on,
                     }
@@ -4700,8 +4701,15 @@ impl App {
             return None;
         };
         let mut out = None;
-        let rows: [PackRow; 4] = [
+        let rows: [PackRow; 5] = [
             (privpack::GUARD_TITLE, privpack::GUARD_ABOUT, privpack::note(p.guard_installed), p.guard_on, Some(prefs::DOWNLOADS_GUARD)),
+            (
+                privpack::FOLDERS_TITLE,
+                privpack::FOLDERS_ABOUT,
+                privpack::folders_note(p.guard_installed, p.guard_on),
+                p.folders_on,
+                Some(prefs::FOLDERS_GUARD),
+            ),
             (privpack::STRIP_TITLE, privpack::STRIP_ABOUT, privpack::note(p.strip_installed), p.strip_on, Some(prefs::REMOVE_HIDDEN_INFO)),
             (privpack::VIEWERS_TITLE, privpack::VIEWERS_ABOUT, privpack::viewers_note(p.viewers), p.viewers.is_some_and(|v| v.on), None),
             (privpack::LOOKALIKE_TITLE, privpack::LOOKALIKE_ABOUT, None, p.lookalike_on, Some(prefs::LOOKALIKE_WARNINGS)),

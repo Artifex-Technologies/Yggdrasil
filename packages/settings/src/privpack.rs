@@ -2,6 +2,8 @@
 //!
 //! - **Check downloads**: Heimdall's downloads guard (`heimdall-fileguard`, a user service) tells you when a finished
 //!   download would contact a server as soon as it is opened. Pref `downloads_guard`; the running guard follows the file.
+//! - **Check new files in my folders**: the same guard on Desktop, Documents, Pictures, Music and Videos, and a scan offered
+//!   when a drive is connected. Pref `folders_guard`; it needs Check downloads on (that switch turns the whole guard off).
 //! - **Remove hidden info in Minos**: Minos' right-click entry that writes a copy without the hidden information
 //!   (`heimdall-strip`). Pref `remove_hidden_info`.
 //! - **Viewer apps ask before going online**: the operating system's per-app network rules start PDF viewers, office suites,
@@ -33,6 +35,7 @@ pub struct Viewers {
 pub struct Pack {
     pub guard_installed: bool,
     pub guard_on: bool,
+    pub folders_on: bool,
     pub strip_installed: bool,
     pub strip_on: bool,
     /// None: this system's app rules have no viewers' rule (or it could not be read).
@@ -84,6 +87,7 @@ pub fn load() -> Pack {
     Pack {
         guard_installed: installed(GUARD_TOOL),
         guard_on: pref(prefs::DOWNLOADS_GUARD),
+        folders_on: pref(prefs::FOLDERS_GUARD),
         strip_installed: installed(STRIP_TOOL),
         strip_on: pref(prefs::REMOVE_HIDDEN_INFO),
         viewers,
@@ -101,6 +105,9 @@ pub fn set_viewers(on: bool) -> Result<(), String> {
 pub const GUARD_TITLE: &str = "Check downloads";
 pub const GUARD_ABOUT: &str = "Tells you when a finished download would contact a server as soon as it is opened (remote templates, \
      PDF actions, playlists and shortcuts that point online). The file itself is never changed";
+pub const FOLDERS_TITLE: &str = "Check new files in my folders";
+pub const FOLDERS_ABOUT: &str = "Also checks files that appear in Desktop, Documents, Pictures, Music and Videos, and offers a scan \
+     when a drive is connected";
 pub const STRIP_TITLE: &str = "Remove hidden info in Minos";
 pub const STRIP_ABOUT: &str = "Right-click a photo, video, song or document to save a copy without where it was made, the device, \
      the author and other hidden details";
@@ -117,6 +124,17 @@ pub fn note(installed: bool) -> Option<&'static str> {
 }
 
 /// The viewers' row note: None when it can be switched.
+/// The folders' row note: None when it can be switched (the guard installed and Check downloads on).
+pub fn folders_note(installed: bool, guard_on: bool) -> Option<&'static str> {
+    if !installed {
+        Some("Not installed")
+    } else if !guard_on {
+        Some("Needs Check downloads")
+    } else {
+        None
+    }
+}
+
 pub fn viewers_note(v: Option<Viewers>) -> Option<&'static str> {
     v.is_none().then_some("Not available")
 }
@@ -221,6 +239,13 @@ mod tests {
     }
 
     /// The desktop fixture (screenshots): both tools installed, the viewers' rule on, every switch on.
+    #[test]
+    fn the_folders_switch_needs_the_guard() {
+        assert_eq!(folders_note(true, true), None);
+        assert_eq!(folders_note(true, false), Some("Needs Check downloads"));
+        assert_eq!(folders_note(false, true), Some("Not installed"));
+    }
+
     #[test]
     fn the_desktop_fixture_answers_the_rows() {
         let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/system.json")).unwrap();

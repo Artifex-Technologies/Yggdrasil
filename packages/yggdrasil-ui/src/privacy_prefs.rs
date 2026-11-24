@@ -2,7 +2,7 @@
 //! (`~/.config/heimdall/privacy.json`), shared with Heimdall's downloads guard, which follows the file by itself:
 //!
 //! ```json
-//! {"downloads_guard": true, "remove_hidden_info": true, "lookalike_warnings": true}
+//! {"downloads_guard": true, "folders_guard": true, "remove_hidden_info": true, "lookalike_warnings": true}
 //! ```
 //!
 //! Every switch is on unless the file says `false`: a missing file, a missing key or a value that is not a boolean is on.
@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 
 /// Heimdall's downloads guard: a file that contacts a server when opened is reported.
 pub const DOWNLOADS_GUARD: &str = "downloads_guard";
+/// The same guard on the person's own folders (Desktop, Documents, Pictures, Music, Videos) and the notice when a drive is
+/// connected; it does nothing while `downloads_guard` is off.
+pub const FOLDERS_GUARD: &str = "folders_guard";
 /// Minos' right-click > Remove hidden info.
 pub const REMOVE_HIDDEN_INFO: &str = "remove_hidden_info";
 /// The warning beside names that imitate others (letters of another alphabet, hidden characters).
@@ -80,6 +83,8 @@ mod tests {
     #[test]
     fn everything_is_on_unless_the_file_says_false() {
         assert!(read_in("", DOWNLOADS_GUARD), "no file");
+        assert!(read_in(r#"{"downloads_guard": false}"#, FOLDERS_GUARD), "folders_guard missing: on");
+        assert!(!read_in(r#"{"folders_guard": false}"#, FOLDERS_GUARD));
         assert!(read_in("not json", DOWNLOADS_GUARD));
         assert!(read_in("{}", REMOVE_HIDDEN_INFO), "no key");
         assert!(read_in(r#"{"remove_hidden_info": "no"}"#, REMOVE_HIDDEN_INFO), "not a boolean");
