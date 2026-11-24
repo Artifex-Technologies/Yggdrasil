@@ -371,7 +371,7 @@ scaled-down 1536x960 stretched, Xft.dpi 96); `tests/x11.rs` checks both. XWaylan
 and given to the programs it starts), and nothing of XWayland runs until a program connects to it; then XWayland starts on
 those sockets and accepts the program once its window manager is ready, so even a window mapped at once is managed
 (`tests/x11.rs`). This needs a change to Smithay 0.7 (`X11Sockets` and `XWayland::spawn_with_sockets`: the sockets bound apart
-from starting XWayland), carried in our fork (github.com/Artifex-Technologies/smithay, branch yggdrasil/lazy-xwayland, pinned
+from starting XWayland), carried in our fork (github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/lazy-xwayland, pinned
 by commit in packages/compositor/Cargo.toml) and offered to Smithay. An X11 program's own icon (`_NET_WM_ICON`) shows in the
 dock when no desktop entry matches its window (a Windows program through Wine, say; since 2026-11-24): the compositor keeps the
 best size of it as a PNG for each window class in the runtime folder's `yggdrasil-window-icons` (read on a thread of its own
