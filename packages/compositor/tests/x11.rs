@@ -547,7 +547,22 @@ fn an_x11_menu_is_drawn_where_it_was_made_at_a_fractional_scale() {
             assert_eq!(shot.count((640, 320, 40, 40), (255, 0, 0)), 0, "drawn only where it was made");
             break;
         }
-        assert!(start.elapsed() < Duration::from_secs(10), "the menu where it was made: {inside} red pixels of {}", 115 * 115);
+        if start.elapsed() >= Duration::from_secs(10) {
+            // where the red is, if anywhere: a quarter further out means its place was taken at scale 1, none means not drawn
+            let (mut x0, mut y0, mut x1, mut y1, mut n) = (usize::MAX, usize::MAX, 0, 0, 0);
+            for y in 0..shot.h {
+                for x in 0..shot.w {
+                    if shot.at(x, y) == (255, 0, 0) {
+                        (x0, y0, x1, y1, n) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y), n + 1);
+                    }
+                }
+            }
+            panic!(
+                "the menu where it was made: {inside} red pixels of {}; red on the screen: {n} pixels in {x0},{y0} to {x1},{y1}\n{}",
+                115 * 115,
+                comp.log_tail(20)
+            );
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
