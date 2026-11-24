@@ -23,6 +23,17 @@ impl World {
         let log = self.dir.join("calls.log");
         std::fs::write(&p, format!("#!/bin/sh\necho \"{name} $*\" >> '{}'\n{body}\n", log.display())).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Another test's program started while the script was open for writing holds that handle until its own exec, and
+        // running the script meanwhile fails with "Text file busy" (ETXTBSY): the stand-in then never ran, which made
+        // mediakey_volume_and_mute fail once in CI. Run it once until that passes (later runs cannot hit it), and forget
+        // the call that made.
+        for _ in 0..200 {
+            match Command::new(&p).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).status() {
+                Err(e) if e.raw_os_error() == Some(26) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                _ => break,
+            }
+        }
+        let _ = std::fs::remove_file(&log);
         self
     }
 

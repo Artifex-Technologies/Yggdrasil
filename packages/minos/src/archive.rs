@@ -477,6 +477,15 @@ mod tests {
         .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // another test's 7-Zip, started while the script was open for writing, holds that handle until its exec, and
+        // running the script meanwhile fails with "Text file busy": run it once until that passes, and forget that call
+        for _ in 0..200 {
+            match Command::new(&p).arg("settle").output() {
+                Err(e) if e.raw_os_error() == Some(26) => std::thread::sleep(Duration::from_millis(10)),
+                _ => break,
+            }
+        }
+        let _ = std::fs::remove_file(dir.join("calls"));
         p
     }
 
