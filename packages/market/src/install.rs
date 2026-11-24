@@ -75,6 +75,11 @@ pub struct Job {
     pub dl_files: usize,
     pub dl_done: usize,
     pub dl_current: String,
+    /// An AUR build through yay: how many packages it builds (its "(n/m) Parsing SRCINFO" lines), how many it has started, and
+    /// the one it is on. While it is known, the bar follows the builds, not pacman's installs between them.
+    pub aur_total: usize,
+    pub aur_started: usize,
+    pub aur_current: String,
     pub started: Instant,
     /// When the progress last moved (the bar creeps on slowly while a build gives no numbers).
     pub moved: Instant,
@@ -163,10 +168,102 @@ fn set_progress(job: &mut Job) {
     }
 }
 
+/// The line without terminal colour codes (ESC [ ... letter).
+fn plain(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            if chars.next() == Some('[') {
+                for x in chars.by_ref() {
+                    if x.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// "(n/m)" somewhere in a line: (n, m).
+fn count_in(line: &str) -> Option<(usize, usize)> {
+    let (_, rest) = line.split_once('(')?;
+    let (inner, _) = rest.split_once(')')?;
+    let (n, m) = inner.split_once('/')?;
+    Some((n.trim().parse().ok()?, m.trim().parse().ok()?))
+}
+
+/// The bar during an AUR build: the packages built so far plus how far the current one is (`stage`, 0 to 1), never backwards.
+fn aur_progress(job: &mut Job, stage: f32) {
+    let total = job.aur_total.max(job.aur_started).max(1) as f32;
+    let v = ((job.aur_started.saturating_sub(1) as f32 + stage) / total * 0.97).clamp(0.0, 1.0);
+    if job.frac.map(|f| v > f).unwrap_or(true) {
+        job.frac = Some(v);
+        job.moved = Instant::now();
+    }
+}
+
+/// What yay and makepkg say about an AUR build; true when the line was one of theirs.
+fn read_aur(job: &mut Job, line: &str) -> bool {
+    // yay: "(1/2) Parsing SRCINFO: name", "(1/2) Downloaded PKGBUILD: name" (with or without ":: " in front)
+    if line.contains("Parsing SRCINFO") || line.contains("Downloaded PKGBUILD") || line.contains("Failed to download PKGBUILD") {
+        if let Some((_, m)) = count_in(line) {
+            job.aur_total = job.aur_total.max(m);
+        }
+        job.phase = "Downloading the build files".into();
+        return true;
+    }
+    let named = |prefix: &str| {
+        line.strip_prefix("==> ").and_then(|l| l.strip_prefix(prefix)).map(|r| r.split_whitespace().next().unwrap_or("").to_string())
+    };
+    let which = |job: &Job| {
+        if job.aur_total > 1 {
+            format!("{} ({} of {})", job.aur_current, job.aur_started.min(job.aur_total), job.aur_total)
+        } else {
+            job.aur_current.clone()
+        }
+    };
+    if let Some(name) = named("Making package: ") {
+        job.aur_started += 1;
+        job.aur_current = name;
+        job.phase = format!("Building {}", which(job));
+        aur_progress(job, 0.02);
+        return true;
+    }
+    if job.aur_current.is_empty() {
+        return false;
+    }
+    for (needle, word, stage) in [
+        ("==> Starting build()", "Building", 0.1),
+        ("==> Starting package()", "Packaging", 0.7),
+        ("==> Finished making:", "Installing", 0.85),
+    ] {
+        if line.starts_with(needle) {
+            job.phase = format!("{word} {}", which(job));
+            aur_progress(job, stage);
+            return true;
+        }
+    }
+    // makepkg's other steps ("==> Retrieving sources...", "  -> Removing libtool files...") keep the build's words, and a
+    // source download's percentages are not the whole job's
+    line.starts_with("==> ")
+        || line.starts_with("-> ")
+        || line.starts_with("% Total")
+        || line.split_whitespace().next().is_some_and(|w| w.parse::<u32>().is_ok() && line.contains("--:--"))
+}
+
 /// Fold one line of output into the job: its phase, and its progress when the line says one.
 pub fn read_line(job: &mut Job, raw: &str) {
-    let line = raw.trim();
+    let line = plain(raw);
+    let line = line.trim();
     if line.is_empty() {
+        return;
+    }
+    if read_aur(job, line) {
+        push_log(job, line);
         return;
     }
     let percent = line
@@ -196,7 +293,9 @@ pub fn read_line(job: &mut Job, raw: &str) {
             job.dl = Some(((job.dl_done as f32 + p / 100.0) / files).clamp(0.0, 1.0));
         }
         job.phase = "Downloading".into();
-        set_progress(job);
+        if job.aur_total == 0 {
+            set_progress(job);
+        }
     } else if let Some(rest) = line.strip_prefix('(') {
         // pacman: "(2/5) installing foo" -- the download part is over by now
         if let Some((counts, text)) = rest.split_once(") ") {
@@ -209,7 +308,12 @@ pub fn read_line(job: &mut Job, raw: &str) {
                         let within = percent.map(|p| p / 100.0).unwrap_or(0.0);
                         job.inst = Some(((n - 1.0 + within) / m).clamp(0.0, 1.0));
                         job.phase = text.split(" [").next().unwrap_or(text).trim().to_string();
-                        set_progress(job);
+                        if job.aur_total == 0 {
+                            set_progress(job);
+                        } else if !job.aur_current.is_empty() {
+                            // a built package going in; the bar stays with the builds
+                            aur_progress(job, 0.95);
+                        }
                     }
                 }
             }
@@ -247,6 +351,10 @@ pub fn read_line(job: &mut Job, raw: &str) {
             }
         }
     }
+    push_log(job, line);
+}
+
+fn push_log(job: &mut Job, line: &str) {
     if job.log.last().map(|l| l.as_str()) != Some(line) {
         job.log.push(line.chars().take(300).collect());
         if job.log.len() > 400 {
@@ -313,6 +421,9 @@ pub fn queued(id: &str, title: &str, op: Op) -> Shared {
         dl_files: 1,
         dl_done: 0,
         dl_current: String::new(),
+        aur_total: 0,
+        aur_started: 0,
+        aur_current: String::new(),
         started: now,
         moved: now,
         cancel_requested: false,
@@ -514,12 +625,61 @@ mod tests {
             dl_files: 1,
             dl_done: 0,
             dl_current: String::new(),
+            aur_total: 0,
+            aur_started: 0,
+            aur_current: String::new(),
             started: now,
             moved: now,
             cancel_requested: false,
             cancel_file: PathBuf::new(),
             pid: None,
         }
+    }
+
+    /// A recorded AUR install (an AUR dependency built first): the bar says which package is being built, and follows the builds
+    /// instead of jumping to full at the first pacman install.
+    #[test]
+    fn an_aur_build_says_which_package_it_is_on() {
+        let mut j = job();
+        let mut phases: Vec<String> = vec![];
+        let mut fracs: Vec<f32> = vec![];
+        for line in include_str!("../tests/fixtures/yay-aur-build.txt").lines().filter(|l| !l.starts_with('#')) {
+            read_line(&mut j, line);
+            if phases.last() != Some(&j.phase) {
+                phases.push(j.phase.clone());
+            }
+            if let Some(f) = j.frac {
+                if line.starts_with("(1/1) installing cmake") {
+                    assert!(f < 0.05, "the make dependency's install is not the job: {f}");
+                }
+                if line.starts_with("==> Finished making: libexample") {
+                    assert!((0.3..0.5).contains(&f), "one of two built: {f}");
+                }
+                fracs.push(f);
+            }
+        }
+        assert_eq!(j.aur_total, 2);
+        for want in [
+            "Building libexample (1 of 2)",
+            "Packaging libexample (1 of 2)",
+            "Installing libexample (1 of 2)",
+            "Building example-app (2 of 2)",
+            "Packaging example-app (2 of 2)",
+        ] {
+            assert!(phases.iter().any(|p| p == want), "{want:?} not in {phases:?}");
+        }
+        // from the first build on, makepkg's own steps ("-> Removing libtool files", its source download) keep the build's words
+        let builds = phases.iter().skip_while(|p| !p.starts_with("Building"));
+        assert!(!builds.clone().any(|p| p == "Removing" || p == "Downloading"), "makepkg's own steps leaked: {phases:?}");
+        assert!(fracs.windows(2).all(|w| w[1] >= w[0]), "{fracs:?}");
+        assert!((0.9..=1.0).contains(fracs.last().unwrap()), "{fracs:?}");
+        // a single AUR package is named without a count
+        let mut one = job();
+        for l in [":: (1/1) Parsing SRCINFO: tool", "==> Making package: tool 2.0-1 (date)", "\u{1b}[1;32m==>\u{1b}[0m Starting build()..."]
+        {
+            read_line(&mut one, l);
+        }
+        assert_eq!(one.phase, "Building tool");
     }
 
     #[test]
@@ -566,7 +726,9 @@ mod tests {
     fn build_stages_set_the_phase() {
         let mut j = job();
         read_line(&mut j, "==> Making package: pdfcraft-bin 0.8.0-1 (Sat Oct 17)");
-        assert_eq!(j.phase, "Building");
+        assert_eq!(j.phase, "Building pdfcraft-bin");
+        read_line(&mut j, "==> Starting package()...");
+        assert_eq!(j.phase, "Packaging pdfcraft-bin");
     }
 
     fn wait(job: &Shared) -> Job {
