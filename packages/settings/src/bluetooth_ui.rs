@@ -288,6 +288,9 @@ impl App {
                     ui.label(RichText::new(format!("{p}%")).color(pal.dim));
                 });
             }
+            ui::row(ui, pal, false, "Maker", None, |ui| {
+                ui.label(RichText::new(maker_text(heimdall_macvendor::global(), &d.mac, d.random)).color(pal.dim));
+            });
             ui::row(ui, pal, false, "Address", None, |ui| {
                 ui.add(egui::Label::new(RichText::new(&d.mac).color(pal.dim)).selectable(true));
             });
@@ -588,6 +591,18 @@ impl App {
     }
 }
 
+/// The Maker row: who made a device with a public address, from the IEEE's lists (Heimdall's maker lookup, as on the Wi-Fi
+/// pages). A random address (Bluetooth LE privacy) is made up by the device and changes, so it names no maker.
+fn maker_text(table: &heimdall_macvendor::Table, mac: &str, random: bool) -> String {
+    if random {
+        return "Private address (it changes; it names no maker)".into();
+    }
+    match table.lookup_str(mac) {
+        heimdall_macvendor::Answer::Vendor(v) => v.short.to_string(),
+        _ => "Maker not in the list".into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -608,6 +623,33 @@ mod tests {
         ]);
         let names: Vec<&str> = list.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, ["Example Phone", "Example Speaker", "Another Example"]);
+    }
+
+    /// The desktop fixture's paired devices: a public address is looked up, a random one is a private address.
+    #[test]
+    fn the_maker_row_names_the_maker_of_a_public_address_only() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/system.json")).unwrap();
+        let f: crate::fixture::Fixture = serde_json::from_str(&text).unwrap();
+        let mut b = heimdall_macvendor::Builder::new();
+        b.add(24, 0x00_1b_66, heimdall_macvendor::Registry::MaL, b"Example Audio Co.,Ltd");
+        let table = b.finish();
+        let paired = sys::bt_list(&f.answer("bluetoothctl", &["devices", "Paired"]).unwrap());
+        let makers: Vec<(String, String)> = paired
+            .iter()
+            .map(|(mac, name)| {
+                let random = sys::bt_random(&f.answer("bluetoothctl", &["info", mac]).unwrap());
+                (name.clone(), maker_text(&table, mac, random))
+            })
+            .collect();
+        let of = |n: &str| makers.iter().find(|(name, _)| name == n).map(|(_, m)| m.as_str()).unwrap();
+        // the fixture's addresses are made up (no maker's block); the keyboard's is a random one
+        assert_eq!(of("Example Headphones"), "Maker not in the list");
+        assert!(of("Example Keyboard").starts_with("Private address"), "{makers:?}");
+        // a public address in a maker's block, in any spelling bluetoothctl or a person uses
+        assert_eq!(maker_text(&table, "00:1B:66:12:34:56", false), "Example Audio");
+        assert_eq!(maker_text(&table, "00-1b-66-12-34-56", false), "Example Audio");
+        assert!(maker_text(&table, "00:1B:66:12:34:56", true).starts_with("Private address"));
+        assert_eq!(maker_text(&table, "not an address", false), "Maker not in the list");
     }
 
     #[test]

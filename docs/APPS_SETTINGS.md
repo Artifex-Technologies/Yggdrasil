@@ -117,8 +117,9 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   shown and cannot be changed. Nothing is polled for either: both are read when their page opens and after a change.
 
 - **Bluetooth** (`src/bluetooth_ui.rs`), laid out like Wi-Fi: the switch; My Devices (paired, each Connected or Not
-  Connected; a tap connects, the (i) opens its page with its kind, battery, address, Connect/Disconnect and Forget This
-  Device, asked twice); Other Devices, found while the page is open (a tap pairs, trusts and connects; a code to compare or
+  Connected; a tap connects, the (i) opens its page with its kind, battery, maker, address, Connect/Disconnect and Forget
+  This Device, asked twice; the maker comes from Heimdall's lookup in the IEEE's lists, as on the Wi-Fi pages, for a public
+  address, and a random one, which the device makes up and changes, says "Private address"); Other Devices, found while the page is open (a tap pairs, trusts and connects; a code to compare or
   type comes up in yggdrasil-polkit, BlueZ's agent); then the game controllers as before. The search is a BlueZ discovery
   session on a D-Bus connection of the page's own, read every two seconds and dropped when the page is left (BlueZ ends a
   client's discovery when its connection closes, so it stops even if Settings is killed). The "Searching" mark stands still:

@@ -446,6 +446,8 @@ pub struct BtDevice {
     pub connected: bool,
     pub kind: String,
     pub battery: Option<u8>,
+    /// A random address (Bluetooth LE privacy, BlueZ's AddressType "random"): it changes and names no maker.
+    pub random: bool,
 }
 
 /// `bluetoothctl devices [Paired]`: "Device AA:BB:.. Name".
@@ -549,6 +551,11 @@ pub fn bt_info(text: &str) -> (bool, String, Option<u8>) {
     (connected, kind, battery)
 }
 
+/// `bluetoothctl info MAC`'s first line, "Device AA:BB:.. (random)": the address is a random one, not the maker's.
+pub fn bt_random(text: &str) -> bool {
+    text.lines().next().is_some_and(|l| l.trim_end().ends_with("(random)"))
+}
+
 pub fn bt_powered(show: &str) -> Option<bool> {
     show.lines().map(str::trim).find_map(|l| l.strip_prefix("Powered:")).map(|v| v.trim() == "yes")
 }
@@ -572,8 +579,9 @@ pub fn bluetooth() -> Bluetooth {
     let (paired_pads, devices): (Vec<BtDevice>, Vec<BtDevice>) = bt_list(&run("bluetoothctl", &["devices", "Paired"]).unwrap_or_default())
         .into_iter()
         .map(|(mac, name)| {
-            let (connected, kind, battery) = bt_info(&run("bluetoothctl", &["info", &mac]).unwrap_or_default());
-            BtDevice { mac, name, connected, kind, battery }
+            let info = run("bluetoothctl", &["info", &mac]).unwrap_or_default();
+            let (connected, kind, battery) = bt_info(&info);
+            BtDevice { mac, name, connected, kind, battery, random: bt_random(&info) }
         })
         .partition(|d| d.kind == "input-gaming");
     Bluetooth {
@@ -1861,6 +1869,8 @@ mod tests {
         assert!(c);
         assert_eq!(k, "input-keyboard");
         assert_eq!(b, Some(90));
+        assert!(bt_random("Device 11:22:33:44:55:66 (random)\n\tName: Earbuds\n"));
+        assert!(!bt_random("Device 11:22:33:44:55:66 (public)\n\tName: (random)\n") && !bt_random(""));
         assert_eq!(bt_powered("Controller ..\n\tPowered: yes\n"), Some(true));
         assert_eq!(bt_powered(""), None);
     }
