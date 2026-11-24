@@ -40,18 +40,27 @@ pub struct Apps {
     by_key: HashMap<String, AppInfo>,
 }
 
-fn entry_keys(id: &str, m: &HashMap<String, String>) -> Vec<String> {
-    let mut keys = vec![id.to_lowercase()];
+/// The names a menu entry is known by, each with whether it is sure: the file's name and its window class are; so is a Steam
+/// game's window class (`steam_app_N`, from its shortcut's `steam://rungameid/N`). The program's name only fills a gap: every
+/// Steam game's shortcut runs `steam`, and must not take Steam's own entry's place.
+fn entry_keys(id: &str, m: &HashMap<String, String>) -> Vec<(String, bool)> {
+    let mut keys = vec![(id.to_lowercase(), true)];
     if let Some(w) = m.get("StartupWMClass") {
-        keys.push(w.to_lowercase());
+        keys.push((w.to_lowercase(), true));
     }
     if let Some(exec) = m.get("Exec") {
-        if let Some(prog) = exec.split_whitespace().find(|w| !w.contains('=') && *w != "env") {
-            keys.push(prog.rsplit('/').next().unwrap_or(prog).to_lowercase());
+        let game = exec.split_whitespace().find_map(|w| w.trim_matches('"').strip_prefix("steam://rungameid/").map(str::to_string));
+        match game {
+            Some(n) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => keys.push((format!("steam_app_{n}"), true)),
+            _ => {
+                if let Some(prog) = exec.split_whitespace().find(|w| !w.contains('=') && *w != "env") {
+                    keys.push((prog.rsplit('/').next().unwrap_or(prog).to_lowercase(), false));
+                }
+            }
         }
     }
     if let Some(last) = id.rsplit('.').next() {
-        keys.push(last.to_lowercase());
+        keys.push((last.to_lowercase(), false));
     }
     keys
 }
@@ -88,10 +97,8 @@ impl Apps {
         }
         let Some(name) = m.get("Name").cloned() else { return };
         let info = AppInfo { name, icon: m.get("Icon").cloned().unwrap_or_default() };
-        let keys = entry_keys(id, &m);
-        // the file's own name and its window class are sure; the program's name only fills gaps
-        for (i, k) in keys.into_iter().enumerate() {
-            if i <= 1 || !self.by_key.contains_key(&k) {
+        for (k, sure) in entry_keys(id, &m) {
+            if sure || !self.by_key.contains_key(&k) {
                 self.by_key.insert(k, info.clone());
             }
         }
@@ -130,6 +137,25 @@ impl Apps {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_steam_games_shortcut_names_its_game_and_leaves_steam_alone() {
+        let mut a = Apps::default();
+        a.add("steam", "[Desktop Entry]\nType=Application\nName=Steam\nExec=/usr/bin/steam %U\nIcon=steam\n");
+        // yours, read after the system's: each runs the steam program
+        a.add(
+            "Plague Inc Evolved",
+            "[Desktop Entry]\nType=Application\nName=Plague Inc: Evolved\nExec=steam steam://rungameid/246620\nIcon=steam_icon_246620\n",
+        );
+        a.add(
+            "Fallout 4",
+            "[Desktop Entry]\nType=Application\nName=Fallout 4\nExec=steam steam://rungameid/377160\nIcon=steam_icon_377160\n",
+        );
+        assert_eq!(a.name("steam", "Steam", "/usr/lib/steam/steam"), "Steam");
+        assert_eq!(a.name("steam_app_377160", "Fallout4", "/x/Fallout4.exe"), "Fallout 4");
+        assert_eq!(a.find("steam_app_377160").map(|i| i.icon.as_str()), Some("steam_icon_377160"));
+        assert_eq!(a.name("steam_app_246620", "", ""), "Plague Inc: Evolved");
+    }
 
     #[test]
     fn clients() {
