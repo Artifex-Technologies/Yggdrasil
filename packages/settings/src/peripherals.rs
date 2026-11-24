@@ -78,8 +78,9 @@ pub struct DeviceOffer {
     pub never: bool,
 }
 
-/// The device-offers program (packages/device-offers): what it offers, installing one, undoing "Don't ask again".
-const OFFERS: &str = "yggdrasil-device-offers";
+/// The device-offers program (packages/device-offers, installed by Agora's package off the PATH): what it offers, installing
+/// one, undoing "Don't ask again".
+const OFFERS: &str = "/usr/lib/yggdrasil/device-offers";
 
 /// `yggdrasil-device-offers --json`'s list; nothing for anything else.
 pub fn parse_offers(json: &str) -> Vec<DeviceOffer> {
