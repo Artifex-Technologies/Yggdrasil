@@ -107,7 +107,7 @@ fn the_tools_read_the_windows_screens_and_desktops() {
 
     // the desktops: the one shown, and those holding a window
     assert_eq!(d.desktops(), Desktops { ids: vec![1], at: 0 });
-    assert_eq!(d.max_desktops(), Some(4));
+    assert_eq!(d.max_desktops(), Some(9));
     d.show_desktop("2");
     assert_eq!(comp.must("workspace"), ["2"]);
     assert_eq!(d.desktops(), Desktops { ids: vec![1, 2], at: 1 }, "an empty desktop exists while it is shown");
@@ -117,8 +117,13 @@ fn the_tools_read_the_windows_screens_and_desktops() {
     comp.wait(10, "A on desktop 3", |c| c.window("test.a").is_some_and(|w| w.workspace == 3));
     assert_eq!(d.desktops(), Desktops { ids: vec![1, 3], at: 0 });
     d.show_desktop("5");
+    assert_eq!(comp.must("workspace"), ["5"], "a fifth desktop is made when it is shown");
+    d.show_desktop("10");
     d.show_desktop("special:minimized");
-    assert_eq!(comp.must("workspace"), ["1"], "there are four desktops; nothing else is shown");
+    assert_eq!(comp.must("workspace"), ["5"], "nine desktops at most; nothing else is shown");
+    d.show_desktop("1");
+    assert_eq!(comp.must("workspace"), ["1"]);
+    assert_eq!(comp.must("workspaces").len(), 4, "the empty fifth went when it was left");
 
     // the dock's own minimize and restore are wlr-foreign-toplevel's here: the layer leaves them to it
     assert!(!d.minimize_app("test.b", "B window") && !d.restore_app("test.b", "B window"));

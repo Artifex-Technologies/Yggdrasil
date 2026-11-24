@@ -270,7 +270,8 @@ impl Desk {
     pub fn max_desktops(&self) -> Option<usize> {
         match self {
             Desk::Hyprland(_) => None,
-            Desk::Own(_) => Some(4),
+            // yggdrasil-compositor's `tiling::WORKSPACES`: 1 to 4 always, up to 9 made when shown
+            Desk::Own(_) => Some(9),
         }
     }
 

@@ -372,8 +372,8 @@ game full screen (no see-through patches, keys and mouse reach it). `YGGDRASIL_C
 
 Known limitations (2026-11-19): it does not run the real session; Hyprland does. Resize, maximize, full screen and minimize,
 X11 programs (xterm, Steam, a Proton game), a full screen window covering the top bar and dock, GPU clients (linux-dmabuf), idle
-inhibit, primary selection, cursor shapes and xdg-activation are built but not yet tried by hand. It has four workspaces (other
-programs see and switch them through `ext-workspace`; the panel follows them through yggdrasil-wm). On the hardware
+inhibit, primary selection, cursor shapes and xdg-activation are built but not yet tried by hand. It has four workspaces, and up to nine
+when more are used (other programs see, switch and add them through `ext-workspace`; the panel follows them through yggdrasil-wm). On the hardware
 backend, hotplug has not been tried on real hardware; explicit sync for NVIDIA is built and checked nested on an RTX 2080 Ti
 but not yet on the hardware backend, and a machine with two GPUs picks the one with the screens (not tried on two cards);
 VRR (while a full screen window covers the screen) and direct scanout of full screen games are built but not yet seen with a

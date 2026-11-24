@@ -246,7 +246,7 @@ pub fn defaults() -> Vec<Binding> {
         b("Super+Ctrl+Left", Action::WorkspacePrev, "Previous desktop"),
         b("Super+Ctrl+Right", Action::WorkspaceNext, "Next desktop"),
     ];
-    for n in 1..=4 {
+    for n in 1..=crate::tiling::WORKSPACES {
         v.push(b(&format!("Super+Ctrl+{n}"), Action::Workspace(n - 1), &format!("Desktop {n}")));
         v.push(b(&format!("Super+Ctrl+Shift+{n}"), Action::MoveToWorkspace(n - 1), &format!("Move the window to desktop {n}")));
     }
@@ -465,7 +465,7 @@ mod tests {
         let missing: Vec<_> = want.iter().filter(|w| !have.contains(w)).collect();
         let extra: Vec<_> = have.iter().filter(|h| !want.contains(h)).collect();
         assert!(missing.is_empty() && extra.is_empty(), "not in the compositor: {missing:?}\nnot in the session: {extra:?}");
-        assert_eq!(have.len(), 62, "{have:?}");
+        assert_eq!(have.len(), 72, "{have:?}");
 
         // repeating: the session's `repeating = true` binds (the magnifier) and the volume and brightness keys of its media table
         let mut repeating: Vec<(u32, String)> = lua

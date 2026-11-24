@@ -257,6 +257,8 @@ pub struct App {
     /// A mouse button pressed on the switcher: its release is not passed on either.
     switcher_button: Option<u32>,
     current_ws: usize,
+    /// How many workspaces there are now: `WORKSPACES_KEPT` and the ones made past them (at most `WORKSPACES`).
+    ws_count: usize,
     /// The workspace profiles from workspaces.conf, and what was chosen for the workspaces that ask.
     ws_conf: tiling::Conf,
     asked: [Option<Profile>; WORKSPACES],
@@ -352,6 +354,7 @@ pub struct App {
 
 /// How many workspaces there are.
 pub const WORKSPACES: usize = tiling::WORKSPACES;
+pub const WORKSPACES_KEPT: usize = tiling::WORKSPACES_KEPT;
 
 /// How long a hidden window asked to close has its frame requests answered (`App::frames_to_close_in`).
 const CLOSE_FRAMES: Duration = Duration::from_secs(5);
@@ -625,6 +628,7 @@ impl App {
             switcher_hold: Mods::default(),
             switcher_button: None,
             current_ws: 0,
+            ws_count: WORKSPACES_KEPT,
             ws_conf: tiling::parse(&std::fs::read_to_string(tiling::config_path()).unwrap_or_default()),
             asked: [None; WORKSPACES],
             floating: vec![],
@@ -1657,8 +1661,8 @@ impl App {
                 }
             }
             Action::Workspace(n) => self.switch_workspace(n),
-            Action::WorkspaceNext => self.switch_workspace((self.current_ws + 1) % WORKSPACES),
-            Action::WorkspacePrev => self.switch_workspace((self.current_ws + WORKSPACES - 1) % WORKSPACES),
+            Action::WorkspaceNext => self.switch_workspace((self.current_ws + 1) % self.ws_count),
+            Action::WorkspacePrev => self.switch_workspace((self.current_ws + self.ws_count - 1) % self.ws_count),
             Action::MoveToWorkspace(n) => {
                 if let Some(s) = current {
                     self.move_to_workspace(&s, n);
@@ -2021,10 +2025,39 @@ impl App {
             .collect()
     }
 
-    /// Show another workspace: the windows of this one are put aside, those of the other come back.
+    /// How many workspaces there are now (see `tiling::WORKSPACES`).
+    pub fn workspace_count(&self) -> usize {
+        self.ws_count
+    }
+
+    /// One more workspace, past the last (ext-workspace's create): its number, or None when there are `WORKSPACES` already.
+    /// It stays until it is left empty.
+    pub fn make_workspace(&mut self) -> Option<usize> {
+        (self.ws_count < WORKSPACES).then(|| {
+            self.ws_count += 1;
+            self.wake();
+            self.ws_count - 1
+        })
+    }
+
+    /// The workspaces past `WORKSPACES_KEPT` at the end that hold no window and are not shown go, the last first (the numbers
+    /// of the others stay as they are).
+    fn trim_workspaces(&mut self) {
+        while self.ws_count > WORKSPACES_KEPT {
+            let last = self.ws_count - 1;
+            if last == self.current_ws || self.parked.iter().any(|(_, ws, _)| *ws == last) {
+                break;
+            }
+            self.ws_count -= 1;
+        }
+    }
+
+    /// Show another workspace: the windows of this one are put aside, those of the other come back. A workspace past the last
+    /// one there is (up to `WORKSPACES`) is made.
     pub fn switch_workspace(&mut self, n: usize) {
         self.wake();
         let n = n.min(WORKSPACES - 1);
+        self.ws_count = self.ws_count.max(n + 1);
         if n == self.current_ws {
             return;
         }
@@ -2047,6 +2080,7 @@ impl App {
         }
         self.parked = still;
         self.current_ws = n;
+        self.trim_workspaces();
         // an empty workspace asks again (when its profile is "ask")
         if self.space.elements().next().is_none() {
             self.asked[n] = None;
@@ -2062,6 +2096,9 @@ impl App {
         let n = n.min(WORKSPACES - 1);
         if n == self.current_ws {
             return;
+        }
+        if self.shown_window(surface).is_some() {
+            self.ws_count = self.ws_count.max(n + 1);
         }
         let Some(window) = self.shown_window(surface) else { return };
         let loc = self.space.element_location(&window).unwrap_or_default();
@@ -2826,7 +2863,7 @@ impl App {
 
     /// What the panel's desktops show: the workspace shown, and how many windows each holds (cheap: asked after every pass of the
     /// loop while the panel watches).
-    pub fn desktops_key(&self) -> (usize, [usize; WORKSPACES]) {
+    pub fn desktops_key(&self) -> (usize, usize, [usize; WORKSPACES]) {
         let mut n = [0; WORKSPACES];
         n[self.current_ws.min(WORKSPACES - 1)] = self.space.elements().count() + self.minimized.len();
         for (_, ws, _) in &self.parked {
@@ -2834,7 +2871,7 @@ impl App {
                 *c += 1;
             }
         }
-        (self.current_ws, n)
+        (self.current_ws, self.ws_count, n)
     }
 
     /// Every window: those showing (bottom first), then minimized ones, then those on other workspaces.

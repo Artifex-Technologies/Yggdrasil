@@ -5,11 +5,14 @@
 //! `~/.config/yggdrasil/workspaces.conf` (written by Settings > Appearance > Workspaces):
 //!
 //!     default = standard        # standard, tiling or ask
-//!     2 = tiling                # workspace 2 is always tiling (1 to 4)
+//!     2 = tiling                # workspace 2 is always tiling (1 to 9)
 
 use smithay::utils::{Logical, Rectangle};
 
-pub const WORKSPACES: usize = 4;
+/// The most workspaces there can be (Super+Ctrl+1 to 9). Workspaces 1 to `WORKSPACES_KEPT` are always there; the ones past it
+/// are made when first shown or asked for (`App::switch_workspace`, ext-workspace's create) and go again when empty and left.
+pub const WORKSPACES: usize = 9;
+pub const WORKSPACES_KEPT: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Profile {

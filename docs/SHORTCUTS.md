@@ -29,8 +29,8 @@ Keyboard > Shortcuts and the cheat sheet (Win + /) show the live list, your own 
 | --- | --- |
 | Win + Ctrl + ← | Previous desktop |
 | Win + Ctrl + → | Next desktop |
-| Win + Ctrl + 1-4 | Desktop 1-4 |
-| Win + Ctrl + Shift + 1-4 | Move the window to desktop 1-4 |
+| Win + Ctrl + 1-9 | Desktop 1-9 |
+| Win + Ctrl + Shift + 1-9 | Move the window to desktop 1-9 |
 
 ## Apps
 

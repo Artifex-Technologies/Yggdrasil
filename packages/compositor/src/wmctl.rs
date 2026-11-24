@@ -83,7 +83,7 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
         }
         ["workspaces"] => {
             let infos = app.window_infos();
-            Ok((0..WORKSPACES)
+            Ok((0..app.workspace_count())
                 .map(|ws| {
                     let n = infos.iter().filter(|i| i.workspace == ws).count();
                     format!("{}\t{n}\t{}", ws + 1, if ws == app.workspace() { "shown" } else { "-" })
@@ -292,7 +292,7 @@ pub fn pid(app: &App, w: &Window) -> u32 {
         .unwrap_or(0)
 }
 
-/// "1" to "4": the 0-based workspace.
+/// "1" to "9": the 0-based workspace (one past the last there is is made when it is shown or a window is sent there).
 fn workspace_number(n: &str) -> Result<usize, String> {
     n.parse::<usize>()
         .ok()

@@ -32,7 +32,7 @@ pub type Extra<'a> = &'a mut dyn FnMut(&[&str], &mut App) -> Option<Result<Vec<S
 #[derive(Default)]
 pub struct Control {
     watchers: Vec<UnixStream>,
-    desktops_seen: Option<(usize, [usize; crate::state::WORKSPACES])>,
+    desktops_seen: Option<(usize, usize, [usize; crate::state::WORKSPACES])>,
 }
 
 impl Control {

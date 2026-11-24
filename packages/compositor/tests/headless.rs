@@ -184,7 +184,7 @@ fn other_programs_see_the_workspaces_and_switch_them() {
     assert_eq!(ws.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["1", "2", "3", "4"]);
     assert!(ws.iter().all(|w| w.can_activate && w.in_group && !w.id.is_empty() && w.coordinates.len() == 4), "{ws:?}");
     assert_eq!(active(&c.state), ["1"]);
-    assert_eq!(c.state.ws_group_caps, Some(0), "workspaces are not made or removed from outside");
+    assert_eq!(c.state.ws_group_caps, Some(1), "a program may ask for a new workspace (create_workspace)");
     assert_eq!(c.state.ws_group_outputs, 2, "one group on both screens");
     assert!(c.state.ws_done >= 1);
     // asked through the protocol: done at the commit, not before
@@ -198,4 +198,38 @@ fn other_programs_see_the_workspaces_and_switch_them() {
     // switched in the compositor (a shortcut, the dock): told as well
     comp.must("workspace 2");
     c.until("workspace 2 active", |s| active(s) == ["2"]);
+    let names = |s: &State| s.ws.iter().map(|w| w.name.clone()).collect::<Vec<_>>();
+
+    // a fifth workspace (YGG-9): asked for through the group, made at the commit, then shown
+    c.state.ws_group.clone().unwrap().create_workspace("anything".into());
+    m.commit();
+    c.until("workspace 5 announced", |s| names(s).len() == 5);
+    assert_eq!(names(&c.state), ["1", "2", "3", "4", "5"], "named by its number, not as asked");
+    assert!(c.state.ws[4].in_group && c.state.ws[4].can_activate && !c.state.ws[4].active);
+    assert_eq!(comp.must("workspaces").len(), 5);
+    c.state.ws[4].handle.activate();
+    m.commit();
+    c.until("workspace 5 active", |s| active(s) == ["5"]);
+    assert_eq!(comp.must("workspace"), ["5"]);
+    // left empty: it goes again, and the program is told
+    comp.must("workspace 1");
+    c.until("workspace 5 removed", |s| names(s).len() == 4 && active(s) == ["1"]);
+    assert_eq!(c.state.ws_removed, 1);
+
+    // made by switching there (Super+Ctrl+7, the control socket): 5 to 7 exist while a window is on 7
+    comp.must("workspace 7");
+    c.until("workspaces 5 to 7", |s| names(s).len() == 7 && active(s) == ["7"]);
+    let w = c.window("test.seven", "Seven");
+    c.draw(&w, (300, 200), 0xff0000ff);
+    comp.must("workspace 1");
+    c.roundtrip();
+    assert_eq!(comp.must("workspaces").len(), 7, "7 holds a window, so it and the empty ones before it stay");
+    // the window gone (closed while on 7, not shown), leaving 7 empty: 7, 6 and 5 go at the next switch
+    w.toplevel.destroy();
+    w.xdg.destroy();
+    w.surface.destroy();
+    c.roundtrip();
+    comp.must("workspace 2");
+    c.until("back to four", |s| names(s).len() == 4 && active(s) == ["2"]);
+    assert!(comp.ctl("workspace 10").is_err(), "nine at most");
 }

@@ -469,6 +469,10 @@ pub struct State {
     /// ext-workspace: the workspaces as told, the group's capabilities and the screens it entered, and the dones
     pub ws: Vec<Ws>,
     pub ws_group_caps: Option<u32>,
+    /// the workspace group (to ask it for a new workspace)
+    pub ws_group: Option<ExtWorkspaceGroupHandleV1>,
+    /// workspaces the compositor said were removed
+    pub ws_removed: usize,
     pub ws_group_outputs: usize,
     pub ws_done: usize,
 }
@@ -1172,6 +1176,7 @@ impl Dispatch<ExtWorkspaceManagerV1, ()> for State {
                 can_activate: false,
                 in_group: false,
             }),
+            ext_workspace_manager_v1::Event::WorkspaceGroup { workspace_group } => st.ws_group = Some(workspace_group),
             ext_workspace_manager_v1::Event::Done => st.ws_done += 1,
             _ => {}
         }
@@ -1206,6 +1211,11 @@ impl Dispatch<ExtWorkspaceGroupHandleV1, ()> for State {
                     w.in_group = true;
                 }
             }
+            ext_workspace_group_handle_v1::Event::WorkspaceLeave { workspace } => {
+                if let Some(w) = st.ws.iter_mut().find(|w| w.handle == workspace) {
+                    w.in_group = false;
+                }
+            }
             _ => {}
         }
     }
@@ -1220,6 +1230,12 @@ impl Dispatch<ExtWorkspaceHandleV1, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let ext_workspace_handle_v1::Event::Removed = event {
+            st.ws.retain(|w| w.handle != *h);
+            st.ws_removed += 1;
+            h.destroy();
+            return;
+        }
         let Some(w) = st.ws.iter_mut().find(|w| w.handle == *h) else { return };
         match event {
             ext_workspace_handle_v1::Event::Id { id } => w.id = id,

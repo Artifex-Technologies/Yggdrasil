@@ -534,10 +534,11 @@ dsp("ALT + TAB", hl.dsp.window.bring_to_top())
 dsp("ALT + SHIFT + TAB", hl.dsp.window.cycle_next({ next = false }), { desc = "Previous window" })
 dsp("ALT + SHIFT + TAB", hl.dsp.window.bring_to_top())
 
--- Workspaces (desktops), as on Windows: Super+Ctrl+Left/Right, or a number; with Shift the window goes along.
+-- Workspaces (desktops), as on Windows: Super+Ctrl+Left/Right, or a number from 1 to 9; with Shift the window goes along.
+-- A workspace is made when first used (on Yggdrasil's own compositor 1 to 4 are always there).
 dsp("SUPER + CTRL + LEFT", hl.dsp.focus({ workspace = "r-1" }), { desc = "Previous desktop" })
 dsp("SUPER + CTRL + RIGHT", hl.dsp.focus({ workspace = "r+1" }), { desc = "Next desktop" })
-for n = 1, 4 do
+for n = 1, 9 do
   -- the number row by name ("code:10" is not understood here and left the shortcut without a key)
   local key = tostring(n)
   dsp("SUPER + CTRL + " .. key, hl.dsp.focus({ workspace = tostring(n) }), { desc = "Desktop " .. n })
