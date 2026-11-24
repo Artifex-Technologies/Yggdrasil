@@ -536,6 +536,92 @@ fn a_window_closing_leaves_the_keyboard_with_the_panel_that_has_it() {
     assert_eq!(typed(&c.state.keys), [(a.surface.id(), KEY_S)], "keys reach A");
 }
 
+/// A program refused as a second locker cannot unlock the session: it still holds its lock object after "finished" (not a
+/// destructor), and its unlock_and_destroy must not end the lock another program holds (Smithay 0.7.0 passed it on to the
+/// compositor without saying whose lock it was: a lock screen bypass).
+#[test]
+fn a_refused_locker_cannot_unlock_the_session() {
+    let _l = limit(60, "a refused locker unlocking");
+    let comp = Compositor::start(&["--size", "800x600"]);
+    // the lock screen locks
+    let mut l = comp.connect();
+    let mgr: ExtSessionLockManagerV1 = l.globals.bind(&l.qh, 1..=1, ()).expect("ext-session-lock");
+    let lock = mgr.lock(&l.qh, ());
+    let s = l.compositor.create_surface(&l.qh, ());
+    let _ls = lock.get_lock_surface(&s, &l.wl_outputs[0], &l.qh, 0);
+    l.until("locked", |s| s.locked && !s.lock_sizes.is_empty());
+    assert_eq!(comp.must("lock")[0], "locked");
+    // another program asks to lock, is refused, and asks to unlock all the same
+    let mut a = comp.connect();
+    let mgr2: ExtSessionLockManagerV1 = a.globals.bind(&a.qh, 1..=1, ()).unwrap();
+    let lock2 = mgr2.lock(&a.qh, ());
+    a.until("refused", |s| s.lock_finished);
+    lock2.unlock_and_destroy();
+    let _ = a.conn.flush();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(comp.must("lock")[0], "locked", "the session stays locked: only the lock screen that locked it may unlock it");
+    // the lock screen itself still can
+    lock.unlock_and_destroy();
+    l.roundtrip();
+    assert_eq!(comp.must("lock"), ["unlocked"]);
+}
+
+/// A program refused as a second locker cannot put up a lock screen of its own: its lock surface is neither shown nor given
+/// the keyboard (it would see the password typed into it), and the real lock screen keeps the screen and the keys.
+#[test]
+fn a_refused_locker_cannot_show_its_own_lock_screen() {
+    let _l = limit(60, "a refused locker's lock surface");
+    let comp = Compositor::start(&["--size", "800x600"]);
+    let draw = |c: &mut Client, s: &wayland_client::protocol::wl_surface::WlSurface, i: usize, argb: u32| {
+        c.until("its configure", |st| st.lock_sizes.contains_key(&i));
+        let (w, h) = c.state.lock_sizes[&i];
+        let b = c.buffer(w as i32, h as i32, argb);
+        s.attach(Some(&b), 0, 0);
+        s.damage_buffer(0, 0, w as i32, h as i32);
+        s.commit();
+        c.roundtrip();
+    };
+    // the real lock screen, red
+    let mut l = comp.connect();
+    let (_lk, _lp) = l.input();
+    let mgr: ExtSessionLockManagerV1 = l.globals.bind(&l.qh, 1..=1, ()).unwrap();
+    let lock = mgr.lock(&l.qh, ());
+    let s = l.compositor.create_surface(&l.qh, ());
+    let _ls = lock.get_lock_surface(&s, &l.wl_outputs[0], &l.qh, 0);
+    l.until("locked", |st| st.locked);
+    draw(&mut l, &s, 0, RED);
+    assert_eq!(comp.screenshot("HEADLESS-1").count((0, 0, 800, 600), RGB_RED), 800 * 600);
+    // a refused locker makes a lock surface of its own, blue
+    let mut a = comp.connect();
+    let (_ak, _ap) = a.input();
+    let mgr2: ExtSessionLockManagerV1 = a.globals.bind(&a.qh, 1..=1, ()).unwrap();
+    let lock2 = mgr2.lock(&a.qh, ());
+    a.until("refused", |st| st.lock_finished);
+    let s2 = a.compositor.create_surface(&a.qh, ());
+    let _ls2 = lock2.get_lock_surface(&s2, &a.wl_outputs[0], &a.qh, 0);
+    a.roundtrip();
+    std::thread::sleep(Duration::from_millis(300));
+    a.roundtrip();
+    if a.state.lock_sizes.contains_key(&0) {
+        let (w, h) = a.state.lock_sizes[&0];
+        let b = a.buffer(w as i32, h as i32, BLUE);
+        s2.attach(Some(&b), 0, 0);
+        s2.damage_buffer(0, 0, w as i32, h as i32);
+        s2.commit();
+        a.roundtrip();
+    }
+    // the screen is still the real lock's, and so are the keys
+    assert_eq!(comp.screenshot("HEADLESS-1").count((0, 0, 800, 600), RGB_RED), 800 * 600, "the real lock screen is still shown");
+    comp.must("type x");
+    l.roundtrip();
+    a.roundtrip();
+    assert!(a.state.keys.is_empty(), "no key reached the refused locker: {:?}", a.state.keys);
+    assert_eq!(l.state.keys.len(), 1, "the real lock screen got the key");
+    lock.unlock_and_destroy();
+    l.roundtrip();
+    assert_eq!(comp.must("lock"), ["unlocked"]);
+}
+
 #[test]
 fn the_lock_covers_every_output_and_takes_all_input_until_unlocked() {
     let _l = limit(60, "session lock");

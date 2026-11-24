@@ -3447,8 +3447,13 @@ impl SessionLockHandler for App {
         self.focus_back();
     }
 
-    /// One lock surface per output, as big as it; the keyboard goes to the one on the first output.
+    /// One lock surface per output, as big as it; the keyboard goes to the one on the first output. Only the surfaces of the
+    /// lock that holds the session are taken: a program refused as a second locker may still make lock surfaces (for a lock of
+    /// its own), and showing one would put up its lock screen in place of the real one, with the keyboard and so the password.
     fn new_surface(&mut self, surface: LockSurface, output: WlOutput) {
+        if surface.lock().is_none() || surface.lock() != self.lock_owner {
+            return;
+        }
         let output = Output::from_resource(&output).unwrap_or_else(|| self.output.clone());
         let size = logical_size(&output);
         surface.with_pending_state(|s| s.size = Some((size.w as u32, size.h as u32).into()));
