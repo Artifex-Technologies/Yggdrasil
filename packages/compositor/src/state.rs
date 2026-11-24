@@ -288,6 +288,10 @@ pub struct App {
     pub x11_sockets: Option<smithay::xwayland::X11Sockets>,
     /// The running XWayland's event source: removed when XWayland has gone away, which lets its display go (xwayland.rs).
     pub xwayland_source: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// The XSETTINGS serial: one more each time they are published (xwayland.rs, x11_resources).
+    pub xsettings_serial: std::sync::atomic::AtomicU32,
+    /// When GTK's settings.ini last changed: XSETTINGS are published again when it does (reload_config).
+    gtk_ini_time: Option<std::time::SystemTime>,
     /// Reads what an X11 window asked for before it was shown (x11asked.rs).
     pub x11_reader: Option<crate::x11asked::Reader>,
     /// the X11 window last marked active (_NET_ACTIVE_WINDOW), while one has the keyboard
@@ -651,6 +655,8 @@ impl App {
             x11_display: None,
             x11_sockets: None,
             xwayland_source: None,
+            xsettings_serial: Default::default(),
+            gtk_ini_time: None,
             x11_reader: None,
             x11_active: None,
             xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(dh),
@@ -1780,6 +1786,12 @@ impl App {
             self.ws_conf = tiling::parse(&std::fs::read_to_string(tiling::config_path()).unwrap_or_default());
             self.retile();
             self.maybe_ask();
+        }
+        // GTK's theme, icons or font changed (ygg-theme, Settings): X11 programs are told through XSETTINGS
+        let gtk_t = mtime(crate::xwayland::gtk_ini_path());
+        if gtk_t != self.gtk_ini_time {
+            self.gtk_ini_time = gtk_t;
+            self.x11_resources(false);
         }
         if sc_t != self.conf_times.1 {
             self.conf_times.1 = sc_t;

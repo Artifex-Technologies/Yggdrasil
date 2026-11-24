@@ -365,3 +365,91 @@ fn xwayland_starts_again_after_it_went_away() {
     let second = xwayland_of(&comp).expect("a new Xwayland");
     assert_ne!(first, second);
 }
+
+/// The XSETTINGS an X11 program reads: the manager's window (the owner of _XSETTINGS_S0) and its settings, as name to value
+/// (numbers as text), with the serial.
+fn xsettings(conn: &impl Connection) -> Option<(u32, std::collections::HashMap<String, String>)> {
+    let atom = |n: &[u8]| conn.intern_atom(false, n).ok()?.reply().ok().map(|r| r.atom);
+    let (sel, prop) = (atom(b"_XSETTINGS_S0")?, atom(b"_XSETTINGS_SETTINGS")?);
+    let owner = conn.get_selection_owner(sel).ok()?.reply().ok()?.owner;
+    if owner == 0 {
+        return None;
+    }
+    let b = conn.get_property(false, owner, prop, prop, 0, 1 << 16).ok()?.reply().ok()?.value;
+    let u32_at = |i: usize| -> Option<u32> { Some(u32::from_le_bytes(b.get(i..i + 4)?.try_into().ok()?)) };
+    let pad = |n: usize| n + (4 - n % 4) % 4;
+    let (serial, n) = (u32_at(4)?, u32_at(8)?);
+    let mut out = std::collections::HashMap::new();
+    let mut i = 12;
+    for _ in 0..n {
+        let kind = *b.get(i)?;
+        let len = u16::from_le_bytes(b.get(i + 2..i + 4)?.try_into().ok()?) as usize;
+        let name = String::from_utf8_lossy(b.get(i + 4..i + 4 + len)?).into_owned();
+        i += 4 + pad(len) + 4;
+        let value = match kind {
+            0 => {
+                i += 4;
+                (u32_at(i - 4)? as i32).to_string()
+            }
+            1 => {
+                let l = u32_at(i)? as usize;
+                let v = String::from_utf8_lossy(b.get(i + 4..i + 4 + l)?).into_owned();
+                i += 4 + pad(l);
+                v
+            }
+            _ => return None,
+        };
+        out.insert(name, value);
+    }
+    Some((serial, out))
+}
+
+#[test]
+fn x11_programs_get_xsettings_and_their_changes() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "XSETTINGS");
+    let ini = |dir: &std::path::Path, theme: &str| {
+        let d = dir.join("home/.config/gtk-3.0");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(
+            d.join("settings.ini"),
+            format!(
+                "[Settings]\ngtk-theme-name={theme}\ngtk-icon-theme-name=Test-Icons\ngtk-font-name=Test Sans 11\ngtk-xft-antialias=1\n"
+            ),
+        )
+        .unwrap();
+    };
+    let (comp, display) = with_xwayland_on(&["--output", "1920x1200@1.25"], |dir| ini(dir, "Test-Theme"));
+    let (conn, _) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let until = |what: &str, ok: &dyn Fn(&std::collections::HashMap<String, String>) -> bool| {
+        let start = Instant::now();
+        loop {
+            if let Some((serial, s)) = xsettings(&conn) {
+                if ok(&s) {
+                    return (serial, s);
+                }
+            }
+            assert!(start.elapsed() < Duration::from_secs(10), "{what}: {:?}", xsettings(&conn));
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    // GTK's own settings, the DPI of 125 % and the pointer
+    let (first, s) = until("the settings", &|s| s.contains_key("Net/ThemeName"));
+    assert_eq!(s["Net/ThemeName"], "Test-Theme");
+    assert_eq!(s["Net/IconThemeName"], "Test-Icons");
+    assert_eq!(s["Gtk/FontName"], "Test Sans 11");
+    assert_eq!(s["Xft/Antialias"], "1");
+    assert_eq!(s["Xft/DPI"], (120 * 1024).to_string(), "96 x 1.25, in 1024ths");
+    assert!(s.contains_key("Gtk/CursorThemeName") && s.contains_key("Gtk/CursorThemeSize"), "{s:?}");
+    // a new pointer theme: told at once, at X11's scale
+    comp.must("cursor-theme Adwaita 32");
+    let (second, s) = until("the new pointer", &|s| s.get("Gtk/CursorThemeName").map(String::as_str) == Some("Adwaita"));
+    assert_eq!(s["Gtk/CursorThemeSize"], "40");
+    assert!(second > first, "a new serial");
+    // GTK's theme changed in settings.ini (ygg-theme): told within the compositor's look at its files
+    ini(&comp.dir, "Other-Theme");
+    until("the new theme", &|s| s.get("Net/ThemeName").map(String::as_str) == Some("Other-Theme"));
+}

@@ -378,8 +378,11 @@ best size of it as a PNG for each window class in the runtime folder's `yggdrasi
 when the window shows, and again when its title changes), and the panel looks there for an icon its theme does not have and
 watches the folder, so the icon shows a moment after the window (`tests/x11.rs`, `tests/apps.rs`). When XWayland goes away
 (it crashed or was killed), its windows go and the next X11 program starts a new one on the same display, so programs already
-told DISPLAY reach it (since 2026-11-24, `tests/x11.rs`). Still missing for X11: drag and drop between X11 and Wayland
-programs, and XSETTINGS.
+told DISPLAY reach it (since 2026-11-24, `tests/x11.rs`). The compositor is the X11 display's XSETTINGS manager (since
+2026-11-24): GTK programs under X11 get their DPI (Xft/DPI, matching Xft.dpi), the pointer's theme and size, and GTK's theme,
+icon theme, font and font settings from GTK's settings.ini, and follow a change at once (a new pointer theme, or settings.ini
+rewritten by ygg-theme or Settings, seen within the compositor's two-second look at its files; `tests/x11.rs`). Still missing
+for X11: drag and drop between X11 and Wayland programs.
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton

@@ -110,8 +110,9 @@ fn spawn(app: &mut App, handle: LoopHandle<'static, App>, sockets: X11Sockets) -
                         let _ = wm.get_randr_primary_output();
                         app.xwm = Some(wm);
                         app.x11_display = Some(display_number);
-                        app.x11_resources(true);
+                        // the reader first: it also keeps XSETTINGS, which x11_resources sends it
                         app.x11_reader = crate::x11asked::Reader::start(display_number, &wm_handle);
+                        app.x11_resources(true);
                     }
                     Err(e) => eprintln!("yggdrasil-compositor: the X11 window manager could not start, X11 programs will not show: {e}"),
                 },
@@ -209,6 +210,95 @@ pub fn with_resources(old: &str, set: &[(&str, String)]) -> String {
 
 /// Set X resources on XWayland's root window (RESOURCE_MANAGER, as xrdb does), the other lines kept. On a thread of its own:
 /// the X server is a client of this compositor and may be waiting on it.
+/// A value in XSETTINGS.
+#[derive(Clone, Debug, PartialEq)]
+pub enum XVal {
+    Int(i32),
+    Str(String),
+}
+
+/// GTK's own settings file (settings.ini, which ygg-theme and Settings write).
+pub fn gtk_ini_path() -> std::path::PathBuf {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"));
+    config.join("gtk-3.0/settings.ini")
+}
+
+/// GTK's settings from settings.ini's [Settings] group, under the names XSETTINGS gives them (only the ones the file sets).
+pub fn gtk_xsettings(ini: &str) -> Vec<(String, XVal)> {
+    // settings.ini key, XSETTINGS name, a number (true/false or digits) rather than text
+    const MAP: [(&str, &str, bool); 10] = [
+        ("gtk-theme-name", "Net/ThemeName", false),
+        ("gtk-icon-theme-name", "Net/IconThemeName", false),
+        ("gtk-font-name", "Gtk/FontName", false),
+        ("gtk-sound-theme-name", "Net/SoundThemeName", false),
+        ("gtk-decoration-layout", "Gtk/DecorationLayout", false),
+        ("gtk-xft-hintstyle", "Xft/HintStyle", false),
+        ("gtk-xft-rgba", "Xft/RGBA", false),
+        ("gtk-xft-antialias", "Xft/Antialias", true),
+        ("gtk-xft-hinting", "Xft/Hinting", true),
+        ("gtk-enable-animations", "Gtk/EnableAnimations", true),
+    ];
+    let mut in_settings = false;
+    let mut out = vec![];
+    for l in ini.lines().map(str::trim) {
+        if l.starts_with('[') {
+            in_settings = l == "[Settings]";
+            continue;
+        }
+        let Some((k, v)) = l.split_once('=').filter(|_| in_settings) else { continue };
+        let (k, v) = (k.trim(), v.trim().trim_matches('"'));
+        let Some((_, name, number)) = MAP.iter().find(|(key, _, _)| *key == k) else { continue };
+        let value = if *number {
+            match v {
+                "true" => XVal::Int(1),
+                "false" => XVal::Int(0),
+                n => match n.parse() {
+                    Ok(i) => XVal::Int(i),
+                    Err(_) => continue,
+                },
+            }
+        } else {
+            XVal::Str(v.to_string())
+        };
+        out.retain(|(n, _): &(String, XVal)| n != name);
+        out.push((name.to_string(), value));
+    }
+    out
+}
+
+/// The XSETTINGS property (`_XSETTINGS_SETTINGS`, the freedesktop XSETTINGS layout): little-endian, every setting last changed
+/// at `serial`.
+pub fn xsettings_blob(serial: u32, items: &[(String, XVal)]) -> Vec<u8> {
+    let pad = |b: &mut Vec<u8>, n: usize| b.extend(std::iter::repeat_n(0u8, (4 - n % 4) % 4));
+    // byte order (LSBFirst), three unused, the serial, how many
+    let mut b = vec![0u8, 0, 0, 0];
+    b.extend(serial.to_le_bytes());
+    b.extend((items.len() as u32).to_le_bytes());
+    for (name, v) in items {
+        b.push(match v {
+            XVal::Int(_) => 0,
+            XVal::Str(_) => 1,
+        });
+        b.push(0);
+        b.extend((name.len() as u16).to_le_bytes());
+        b.extend(name.as_bytes());
+        pad(&mut b, name.len());
+        b.extend(serial.to_le_bytes());
+        match v {
+            XVal::Int(i) => b.extend(i.to_le_bytes()),
+            XVal::Str(s) => {
+                b.extend((s.len() as u32).to_le_bytes());
+                b.extend(s.as_bytes());
+                pad(&mut b, s.len());
+            }
+        }
+    }
+    b
+}
+
 fn set_x_resources(display: u32, set: Vec<(&'static str, String)>) {
     let _ = std::thread::Builder::new().name("x-resources".into()).spawn(move || {
         let Ok((conn, screen)) = x11rb::rust_connection::RustConnection::connect(Some(&format!(":{display}"))) else { return };
@@ -248,9 +338,19 @@ impl App {
         let (Some(d), true) = (self.x11_display, self.xwm.is_some()) else { return };
         let scale = self.x11_client_scale();
         let (theme, size) = self.pointer_theme();
-        let mut set = vec![("Xcursor.theme", theme), ("Xcursor.size", ((size as f64 * scale).round() as u32).to_string())];
+        let mut set = vec![("Xcursor.theme", theme.clone()), ("Xcursor.size", ((size as f64 * scale).round() as u32).to_string())];
         if dpi {
             set.push(("Xft.dpi", ((96.0 * scale).round() as u32).to_string()));
+        }
+        // XSETTINGS too (GTK programs under X11 read their DPI, pointer, theme and font there, and follow changes at once)
+        if let Some(r) = &self.x11_reader {
+            let ini = std::fs::read_to_string(gtk_ini_path()).unwrap_or_default();
+            let mut items = gtk_xsettings(&ini);
+            items.push(("Gtk/CursorThemeName".into(), XVal::Str(theme.clone())));
+            items.push(("Gtk/CursorThemeSize".into(), XVal::Int((size as f64 * scale).round() as i32)));
+            items.push(("Xft/DPI".into(), XVal::Int((96.0 * scale * 1024.0).round() as i32)));
+            let serial = self.xsettings_serial.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            r.settings(xsettings_blob(serial, &items));
         }
         set_x_resources(d, set);
     }
@@ -804,6 +904,40 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn gtks_settings_become_xsettings() {
+        let ini = "[Other]\ngtk-theme-name=Wrong\n[Settings]\ngtk-theme-name=Yggdrasil-dark\ngtk-icon-theme-name = Liki\n\
+                   gtk-font-name=\"Inter 11\"\ngtk-xft-antialias=1\ngtk-enable-animations=false\ngtk-xft-hinting=maybe\nunknown=1\n";
+        assert_eq!(
+            gtk_xsettings(ini),
+            vec![
+                ("Net/ThemeName".to_string(), XVal::Str("Yggdrasil-dark".into())),
+                ("Net/IconThemeName".to_string(), XVal::Str("Liki".into())),
+                ("Gtk/FontName".to_string(), XVal::Str("Inter 11".into())),
+                ("Xft/Antialias".to_string(), XVal::Int(1)),
+                ("Gtk/EnableAnimations".to_string(), XVal::Int(0)),
+            ]
+        );
+        assert!(gtk_xsettings("").is_empty());
+    }
+
+    #[test]
+    fn xsettings_are_laid_out_as_the_spec_says() {
+        let b = xsettings_blob(7, &[("Xft/DPI".into(), XVal::Int(122880)), ("Net/ThemeName".into(), XVal::Str("Adw".into()))]);
+        let mut want = vec![0u8, 0, 0, 0, 7, 0, 0, 0, 2, 0, 0, 0];
+        // an integer: type 0, name length 7, the name padded to 8, serial, value
+        want.extend([0, 0, 7, 0]);
+        want.extend(b"Xft/DPI\0");
+        want.extend([7, 0, 0, 0]);
+        want.extend(122880i32.to_le_bytes());
+        // a string: type 1, name length 13 padded to 16, serial, length 3, the text padded to 4
+        want.extend([1, 0, 13, 0]);
+        want.extend(b"Net/ThemeName\0\0\0");
+        want.extend([7, 0, 0, 0, 3, 0, 0, 0]);
+        want.extend(b"Adw\0");
+        assert_eq!(b, want);
+    }
 
     #[test]
     fn a_big_window_is_fitted_into_the_free_space() {
