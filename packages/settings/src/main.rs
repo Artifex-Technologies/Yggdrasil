@@ -244,6 +244,18 @@ mod visibility_tests {
     use super::*;
 
     #[test]
+    fn a_trusted_network_that_is_not_home_says_how_to_list_its_devices() {
+        let body = r#"{"networks":[],"status":"not_home","status_uuid":"u1","status_time":"2026-11-24T01:00:00Z"}"#;
+        let mut l = devices::parse(body, "u1");
+        l.monitor = "Heimdall".into();
+        assert_eq!(l.status, "not_home");
+        assert_eq!(lan_summary(&l, 0), "Only on your home network");
+        let note = lan_note(&l).unwrap();
+        assert!(note.contains("only on your home network") && note.contains("trust --home"), "{note}");
+        assert!(note.contains(wifitrust::WIRED_HOME_TITLE), "{note}");
+    }
+
+    #[test]
     fn battery_shows_only_on_a_computer_with_one() {
         let desktop = Hardware { battery: false };
         let laptop = Hardware { battery: true };
@@ -1913,17 +1925,7 @@ impl App {
         let on = if l.ssid.is_empty() { "This network".to_string() } else { l.ssid.clone() };
         ui.label(RichText::new(format!("{on} · {}", lan_summary(&l, now))).size(12.0).color(pal.dim));
         ui.add_space(8.0);
-        let note = match l.status.as_str() {
-            "not_trusted" => Some(format!("Devices are listed only on networks you trust (your home network). On other networks {} does not look around: they are not yours.", l.monitor)),
-            "not_home" => Some(format!("Devices are listed only on your home network. On this network {} keeps quiet and does not look around.", l.monitor)),
-            "router_changed" => Some(format!("This network's router is not the one it had when you trusted the network, so {} did not look. If you changed the router, trust the network again.", l.monitor)),
-            "unavailable" => Some(format!("{} is not running, or is too old to keep a device list.", l.monitor)),
-            "waiting" => Some(format!("The first look runs within a few minutes of {} starting.", l.monitor)),
-            "looked" => Some(look_note(&l)),
-            "offline" => Some("This network is not connected now, so nothing was heard.".into()),
-            "look_failed" => Some(format!("{} could not listen: {}", l.monitor, l.error)),
-            _ => None,
-        };
+        let note = lan_note(&l);
         if l.status == "looking" {
             ui::group(ui, pal, None, |ui| {
                 ui::row(ui, pal, true, "Listening…", Some(&format!("About {} seconds; nothing is sent", devices::LOOK_SECONDS)), |ui| {
@@ -5237,6 +5239,25 @@ fn lan_summary(l: &devices::List, now: i64) -> String {
         s += &format!(" · {fresh} new today");
     }
     s
+}
+
+/// The line under the device list that says why there is no list, or what a look did.
+fn lan_note(l: &devices::List) -> Option<String> {
+    match l.status.as_str() {
+        "not_trusted" => Some(format!("Devices are listed only on networks you trust (your home network). On other networks {} does not look around: they are not yours.", l.monitor)),
+        "not_home" => Some(format!(
+            "Devices are listed only on your home network. On this network {} keeps quiet and does not look around. To list them here, make it your home network: sudo heimdall-wifi-guard trust --home while it is connected (a wired network: \"{}\" on its page).",
+            l.monitor,
+            wifitrust::WIRED_HOME_TITLE
+        )),
+        "router_changed" => Some(format!("This network's router is not the one it had when you trusted the network, so {} did not look. If you changed the router, trust the network again.", l.monitor)),
+        "unavailable" => Some(format!("{} is not running, or is too old to keep a device list.", l.monitor)),
+        "waiting" => Some(format!("The first look runs within a few minutes of {} starting.", l.monitor)),
+        "looked" => Some(look_note(l)),
+        "offline" => Some("This network is not connected now, so nothing was heard.".into()),
+        "look_failed" => Some(format!("{} could not listen: {}", l.monitor, l.error)),
+        _ => None,
+    }
 }
 
 /// What a look did and did not do, for its page.
