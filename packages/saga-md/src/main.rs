@@ -7,6 +7,7 @@
 //! are not loaded (nothing is fetched): they show as a link. HTML in a file is never run. When the file changes on disk (another
 //! program wrote it) the page follows, unless you have unsaved changes, which are never thrown away without asking.
 
+mod highlight;
 mod md;
 
 use eframe::egui::{
@@ -97,6 +98,17 @@ struct App {
     scroll_top: bool,
     title: String,
     right_w: f32,
+    /// Find on the page (Ctrl+F)
+    find: Option<Find>,
+}
+
+/// Find on the page: what is looked for, which match is the current one, how many the page had, and whether to scroll to it.
+struct Find {
+    query: String,
+    current: usize,
+    count: usize,
+    jump: bool,
+    focus: bool,
 }
 
 impl App {
@@ -136,6 +148,7 @@ impl App {
             scroll_top: false,
             title: String::new(),
             right_w: 320.0,
+            find: None,
         };
         if let Some(p) = start.path {
             app.open(p, start.anchor, false);
@@ -148,6 +161,51 @@ impl App {
 
     fn dirty(&self) -> bool {
         self.doc.as_ref().map(|d| d.dirty()).unwrap_or(false)
+    }
+
+    /// The Find bar: the text looked for, how many matches and which one, Previous and Next (Enter, Shift+Enter), Close (Esc).
+    fn find_bar(&mut self, ui: &mut egui::Ui, pal: &Palette) {
+        let Some(f) = &mut self.find else { return };
+        let mut close = false;
+        egui::Panel::top("find").frame(egui::Frame::new().fill(pal.field).inner_margin(Margin::symmetric(14, 6))).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let r = ui.add(egui::TextEdit::singleline(&mut f.query).hint_text("Find on the page").desired_width(260.0));
+                if f.focus {
+                    r.request_focus();
+                    f.focus = false;
+                }
+                if r.changed() {
+                    f.current = 0;
+                    f.jump = true;
+                }
+                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                let back = enter && ui.input(|i| i.modifiers.shift);
+                let label = match (f.query.trim().is_empty(), f.count) {
+                    (true, _) => String::new(),
+                    (false, 0) => "No matches".into(),
+                    (false, n) => format!("{} of {n}", f.current + 1),
+                };
+                ui.label(RichText::new(label).color(pal.dim));
+                let prev = ui.add_enabled(f.count > 1, egui::Button::new("Previous")).clicked() || (back && f.count > 0);
+                let next = ui.add_enabled(f.count > 1, egui::Button::new("Next")).clicked() || (enter && !back && f.count > 0);
+                if prev {
+                    f.current = (f.current + f.count - 1) % f.count;
+                    f.jump = true;
+                }
+                if next {
+                    f.current = (f.current + 1) % f.count;
+                    f.jump = true;
+                }
+                if enter {
+                    // keep typing or pressing Enter in the field
+                    f.focus = true;
+                }
+                close = ui.button("Close").clicked();
+            });
+        });
+        if close {
+            self.find = None;
+        }
     }
 
     fn say(&mut self, text: impl Into<String>) {
@@ -491,6 +549,10 @@ struct Page<'a> {
     anchor: &'a mut Option<String>,
     clicked: &'a mut Option<String>,
     copied: &'a mut bool,
+    /// what Find looks for (empty: nothing), the current match, and where each match was drawn, in page order
+    find: &'a str,
+    current: usize,
+    hits: &'a mut Vec<Rect>,
 }
 
 impl Page<'_> {
@@ -585,33 +647,66 @@ fn inlines(ui: &mut egui::Ui, c: &mut Page, inl: &[Inline], size: f32, heading: 
                 Inline::Text { text, style, link } => {
                     let mut st = *style;
                     st.bold |= heading;
-                    let mut rt = RichText::new(text).size(if st.code { size * 0.9 } else { size }).family(c.family(st)).color(color);
-                    if st.code {
-                        rt = rt.background_color(c.code_bg());
-                    }
-                    if st.strike {
-                        rt = rt.strikethrough();
-                    }
-                    if !c.fonts {
-                        if st.bold {
-                            rt = rt.strong();
+                    let (family, code_bg, fonts) = (c.family(st), c.code_bg(), c.fonts);
+                    let make = |t: &str| {
+                        let mut rt = RichText::new(t).size(if st.code { size * 0.9 } else { size }).family(family.clone()).color(color);
+                        if st.code {
+                            rt = rt.background_color(code_bg);
                         }
-                        if st.italic {
-                            rt = rt.italics();
+                        if st.strike {
+                            rt = rt.strikethrough();
                         }
-                    }
-                    match link {
-                        Some(url) => {
-                            let r = ui
-                                .add(Label::new(rt.color(c.link()).underline()).sense(Sense::click()))
-                                .on_hover_cursor(CursorIcon::PointingHand)
-                                .on_hover_text(url.as_str());
-                            if r.clicked() {
-                                *c.clicked = Some(url.clone());
+                        if !fonts {
+                            if st.bold {
+                                rt = rt.strong();
+                            }
+                            if st.italic {
+                                rt = rt.italics();
                             }
                         }
-                        None => {
-                            ui.add(Label::new(rt));
+                        rt
+                    };
+                    // the run in pieces around Find's matches (a match is marked, the current one in the accent)
+                    let hits = find_ranges(text, c.find);
+                    let mut pieces: Vec<(std::ops::Range<usize>, bool)> = vec![];
+                    let mut at = 0;
+                    for h in &hits {
+                        if h.start > at {
+                            pieces.push((at..h.start, false));
+                        }
+                        pieces.push((h.clone(), true));
+                        at = h.end;
+                    }
+                    if at < text.len() || pieces.is_empty() {
+                        pieces.push((at..text.len(), false));
+                    }
+                    for (r, hit) in pieces {
+                        let mut rt = make(&text[r]);
+                        let current = hit && c.hits.len() == c.current;
+                        if hit {
+                            rt = rt.background_color(if current { c.pal.accent } else { c.pal.amber.gamma_multiply(0.45) });
+                            if current {
+                                rt = rt.color(c.pal.on_accent());
+                            }
+                        }
+                        let resp = match link {
+                            Some(url) => {
+                                let r = ui
+                                    .add(
+                                        Label::new(if current { rt.underline() } else { rt.color(c.link()).underline() })
+                                            .sense(Sense::click()),
+                                    )
+                                    .on_hover_cursor(CursorIcon::PointingHand)
+                                    .on_hover_text(url.as_str());
+                                if r.clicked() {
+                                    *c.clicked = Some(url.clone());
+                                }
+                                r
+                            }
+                            None => ui.add(Label::new(rt)),
+                        };
+                        if hit {
+                            c.hits.push(resp.rect);
                         }
                     }
                 }
@@ -679,8 +774,41 @@ fn code_block(ui: &mut egui::Ui, c: &mut Page, lang: &str, text: &str) {
             });
         });
         egui::ScrollArea::horizontal().id_salt(("code", id)).show(ui, |ui| {
-            let mono = c.family(Style { code: true, ..Default::default() });
-            ui.add(Label::new(RichText::new(text).family(mono).size(c.size * 0.86).color(c.text)).extend());
+            let font = FontId::new(c.size * 0.86, c.family(Style { code: true, ..Default::default() }));
+            // coloured by the block's language (highlight.rs); one it does not know is plain
+            let mut job = egui::text::LayoutJob::default();
+            let spans = highlight::spans(lang, text);
+            let hits = find_ranges(text, c.find);
+            // pieces cut at both the colours' and Find's edges
+            let mut cuts: Vec<usize> =
+                spans.iter().flat_map(|(_, r)| [r.start, r.end]).chain(hits.iter().flat_map(|r| [r.start, r.end])).collect();
+            cuts.sort_unstable();
+            cuts.dedup();
+            let base = c.hits.len();
+            for w in cuts.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                let kind = spans.iter().find(|(_, r)| r.contains(&a)).map(|(k, _)| *k).unwrap_or(highlight::Kind::Plain);
+                let mut color = match kind {
+                    highlight::Kind::Plain => c.text,
+                    highlight::Kind::Keyword => c.pal.accent,
+                    highlight::Kind::Str => c.pal.green,
+                    highlight::Kind::Number => c.pal.amber,
+                    highlight::Kind::Comment => c.pal.dim,
+                };
+                let mut format = egui::TextFormat::simple(font.clone(), color);
+                if let Some(k) = hits.iter().position(|r| r.start <= a && a < r.end) {
+                    let current = base + k == c.current;
+                    if current {
+                        color = c.pal.on_accent();
+                        format.color = color;
+                    }
+                    format.background = if current { c.pal.accent } else { c.pal.amber.gamma_multiply(0.45) };
+                }
+                job.append(&text[a..b], 0.0, format);
+            }
+            let resp = ui.add(Label::new(job).extend());
+            // the block's place for each of its matches (Find scrolls to it)
+            c.hits.extend(std::iter::repeat_n(resp.rect, hits.len()));
         });
     });
 }
@@ -840,6 +968,16 @@ impl eframe::App for App {
             self.pending = Some(Pending::Close);
         }
 
+        let (k_find, k_find_close) = ctx
+            .input_mut(|i| (i.consume_key(Modifiers::COMMAND, Key::F), self.find.is_some() && i.consume_key(Modifiers::NONE, Key::Escape)));
+        if k_find && self.doc.is_some() {
+            self.view = View::Formatted;
+            let f = self.find.get_or_insert(Find { query: String::new(), current: 0, count: 0, jump: false, focus: true });
+            f.focus = true;
+        }
+        if k_find_close {
+            self.find = None;
+        }
         let (k_open, k_save, k_view, k_back, k_reload, k_in, k_out, k_reset, k_close) = ctx.input_mut(|i| {
             (
                 i.consume_key(Modifiers::COMMAND, Key::O),
@@ -986,6 +1124,15 @@ impl eframe::App for App {
         let mut clicked: Option<String> = None;
         let mut copied = false;
         let zoom = self.zoom;
+        // Find on the page: a bar above it while open
+        if self.view == View::Formatted && self.doc.is_some() {
+            self.find_bar(ui, &pal);
+        }
+        let (find_query, find_current, find_jump) = match &self.find {
+            Some(f) if self.view == View::Formatted => (f.query.clone(), f.current, f.jump),
+            _ => (String::new(), 0, false),
+        };
+        let mut hits: Vec<Rect> = vec![];
         egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg)).show(ui, |ui| {
             let Some(doc) = &mut self.doc else {
                 empty_page(ui, &pal, &mut acts);
@@ -1022,11 +1169,19 @@ impl eframe::App for App {
                                     anchor: &mut self.anchor,
                                     clicked: &mut clicked,
                                     copied: &mut copied,
+                                    find: find_query.as_str(),
+                                    current: find_current,
+                                    hits: &mut hits,
                                 };
                                 if doc.blocks.is_empty() {
                                     ui.label(RichText::new("This file is empty.").color(pal.dim));
                                 } else {
                                     blocks(ui, &mut page, &doc.blocks);
+                                }
+                                if find_jump {
+                                    if let Some(r) = hits.get(find_current) {
+                                        ui.scroll_to_rect(*r, Some(Align::Center));
+                                    }
                                 }
                             });
                         });
@@ -1044,30 +1199,49 @@ impl eframe::App for App {
                             if has_doc_fonts(ui.ctx()) { FontFamily::Name("doc-mono".into()) } else { FontFamily::Monospace },
                         );
                         let size = vec2(ui.available_width(), ui.available_height());
+                        // line numbers in a gutter on the left, on the first row of each line (a long line wraps)
+                        let lines = doc.text.split('\n').count();
+                        let gutter =
+                            ui.painter().layout_no_wrap("0".repeat(lines.to_string().len()), font.clone(), pal.dim).size().x + 16.0;
                         egui::Frame::new().inner_margin(Margin::symmetric(18, 14)).show(ui, |ui| {
-                            if doc.readonly.is_some() {
-                                let mut view: &str = doc.text.as_str();
-                                ui.add(
+                            ui.horizontal_top(|ui| {
+                                let (g, _) = ui.allocate_exact_size(vec2(gutter, 1.0), Sense::hover());
+                                let min = size - vec2(36.0 + gutter + ui.spacing().item_spacing.x, 28.0);
+                                let out = if doc.readonly.is_some() {
+                                    let mut view: &str = doc.text.as_str();
                                     egui::TextEdit::multiline(&mut view)
-                                        .font(font)
+                                        .font(font.clone())
                                         .frame(egui::Frame::NONE)
                                         .desired_width(f32::INFINITY)
-                                        .min_size(size - vec2(36.0, 28.0)),
-                                );
-                            } else {
-                                let r = ui.add(
-                                    egui::TextEdit::multiline(&mut doc.text)
-                                        .font(font)
+                                        .min_size(min)
+                                        .show(ui)
+                                } else {
+                                    let out = egui::TextEdit::multiline(&mut doc.text)
+                                        .font(font.clone())
                                         .frame(egui::Frame::NONE)
                                         .code_editor()
                                         .lock_focus(true)
                                         .desired_width(f32::INFINITY)
-                                        .min_size(size - vec2(36.0, 28.0)),
-                                );
-                                if r.changed() {
-                                    doc.gen += 1;
+                                        .min_size(min)
+                                        .show(ui);
+                                    if out.response.changed() {
+                                        doc.gen += 1;
+                                    }
+                                    out
+                                };
+                                let starts = line_starts(out.galley.rows.iter().map(|r| r.ends_with_newline));
+                                for (row, n) in out.galley.rows.iter().zip(starts) {
+                                    if let Some(n) = n {
+                                        ui.painter().text(
+                                            pos2(g.right() - 10.0, out.galley_pos.y + row.pos.y),
+                                            Align2::RIGHT_TOP,
+                                            n.to_string(),
+                                            font.clone(),
+                                            pal.dim,
+                                        );
+                                    }
                                 }
-                            }
+                            });
                         });
                     });
                 }
@@ -1082,6 +1256,17 @@ impl eframe::App for App {
             } else {
                 ctx.request_repaint_after(Duration::from_millis(50));
             }
+        }
+        // Find: how many matches the page had, and the current one kept among them
+        if let Some(f) = &mut self.find {
+            if f.count != hits.len() {
+                f.count = hits.len();
+                ctx.request_repaint();
+            }
+            if f.count > 0 && f.current >= f.count {
+                f.current = 0;
+            }
+            f.jump = false;
         }
         if copied {
             self.say("Copied");
@@ -1170,6 +1355,45 @@ fn tidy_path(p: &Path) -> String {
     }
 }
 
+/// Where `query` is in `text`: without regard to case for a query in ASCII, as written otherwise. Nothing for an empty query.
+fn find_ranges(text: &str, query: &str) -> Vec<std::ops::Range<usize>> {
+    let q = query.trim();
+    if q.is_empty() {
+        return vec![];
+    }
+    if !q.is_ascii() {
+        return text.match_indices(q).map(|(i, m)| i..i + m.len()).collect();
+    }
+    let (t, n) = (text.as_bytes(), q.len());
+    let mut out = vec![];
+    let mut i = 0;
+    while i + n <= t.len() {
+        if text.is_char_boundary(i) && t[i..i + n].eq_ignore_ascii_case(q.as_bytes()) {
+            out.push(i..i + n);
+            i += n;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// For each laid-out row (told by whether it ends a line), the number of the line it starts, or None for a row that a long
+/// line wrapped onto.
+fn line_starts(ends_with_newline: impl Iterator<Item = bool>) -> Vec<Option<usize>> {
+    let (mut n, mut start) = (0, true);
+    ends_with_newline
+        .map(|ends| {
+            let out = start.then(|| {
+                n += 1;
+                n
+            });
+            start = ends;
+            out
+        })
+        .collect()
+}
+
 fn empty_page(ui: &mut egui::Ui, pal: &Palette, acts: &mut Vec<Pending>) {
     ui.vertical_centered(|ui| {
         ui.add_space((ui.available_height() / 2.0 - 110.0).max(20.0));
@@ -1240,6 +1464,23 @@ fn main() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_matches_without_regard_to_case_and_not_inside_letters_it_cannot_split() {
+        let f = |t: &str, q: &str| super::find_ranges(t, q).into_iter().map(|r| (r.start, r.end)).collect::<Vec<_>>();
+        assert_eq!(f("Proteus reads proteus", "PROTEUS"), [(0, 7), (14, 21)]);
+        assert_eq!(f("aaa", "aa"), [(0, 2)], "matches do not overlap");
+        assert_eq!(f("café Café", "Café"), [(6, 11)], "a non-ASCII query matches as written");
+        assert_eq!(f("ünits", "nit"), [(2, 5)]);
+        assert!(f("anything", "  ").is_empty());
+    }
+
+    #[test]
+    fn only_the_first_row_of_a_line_is_numbered() {
+        // line 1, line 2 wrapped over two rows, an empty line 3, line 4 last
+        assert_eq!(super::line_starts([true, false, true, true, false].into_iter()), [Some(1), Some(2), None, Some(3), Some(4)]);
+        assert_eq!(super::line_starts([false].into_iter()), [Some(1)]);
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("saga-md-{name}-{}", std::process::id()));

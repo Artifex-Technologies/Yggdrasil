@@ -14,6 +14,7 @@ The switch in the title bar, or **Ctrl+E**, changes between the two. There is ne
 | Keys | |
 | --- | --- |
 | Ctrl+E | Formatted or source |
+| Ctrl+F | Find on the page: Enter for the next match, Shift+Enter for the one before, Esc to close |
 | Ctrl+S | Save (source changes) |
 | Ctrl+O | Open another file (the desktop's file chooser), or drop one on the window |
 | Alt+Left | Back to the page before (after following a link to another Markdown file) |
@@ -30,6 +31,11 @@ The switch in the title bar, or **Ctrl+E**, changes between the two. There is ne
 - Saving writes a new copy beside the file and puts it in place, so a crash never leaves half a file. Files you cannot write, and
   files that are not UTF-8 text, open read-only.
 
-Known limitations: no find on the page, no syntax colours in code blocks, no line numbers in the source.
+- Code blocks are coloured for shell, Rust, Python, C and its kin, JavaScript and TypeScript, Lua, Go, TOML, INI, YAML and
+  JSON (keywords, strings, numbers, comments; a scanner of its own, no grammar files); other languages show plain. The source
+  view numbers its lines (a long line wraps under one number).
+
+Known limitations: Find looks inside each run of text, so a match across a change of style (half of it bold) is not found;
+it looks in the formatted page, not the source.
 
     saga-md [--source] [--zoom PERCENT] [FILE[#heading]]
