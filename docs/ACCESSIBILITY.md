@@ -14,8 +14,11 @@ animations follow), the pointer's size (`ygg-theme cursor-size 24|32|48|64|96`: 
 `cursor_size` in appearance.conf), Hyprland's zoom around the pointer with the Super+Alt+= / - / 0 keys beside it, and colour
 filters (greyscale, protanopia, deuteranopia, tritanopia: a screen shader Settings writes to ~/.config/yggdrasil/shaders, named
 in accessibility.conf, which the session's yggdrasil.lua gives Hyprland at every start; `packages/session/tests/color-filter.lua`).
-Zoom and colour filters are Hyprland's: Yggdrasil's own compositor does not offer them yet. Still missing: sticky, slow and
-bounce keys, high contrast, mono audio. The shaders and the live zoom were not tried on a screen yet.
+Zoom and colour filters are Hyprland's: Yggdrasil's own compositor does not offer them yet. Since 2026-11-24 a High contrast
+switch there gives the egui apps a black-and-white palette (`yggdrasil_ui::theme::palette_with`): text and dim text at least
+7:1 on every background, lines 3:1, status colours 4.5:1, the chosen accent moved toward white or black until it reads at 7:1,
+buttons and fields outlined; `the_high_contrast_palettes_meet_the_contrast_levels` checks every pair on both styles with six
+accents. It follows the switch without a restart. Still missing: sticky, slow and bounce keys, mono audio. The shaders and the live zoom were not tried on a screen yet.
 
 **Status 2026-11-04:** KDE is gone (removed from the owner's PC on 2026-10-24), and with it everything this audit said was still
 KDE's: `kaccess` (sticky, slow and bounce keys, mouse keys), KWin's zoom and high-contrast effects, KDE's Orca hook and
@@ -59,9 +62,10 @@ with Orca before trusting the table below**, and again when eframe is upgraded.
 2. **The lock screen is silent:** it announces nothing ("Screen locked", "Wrong password") and gives no audible cue.
 3. **No keyboard path to the dock, bar, tray and toast buttons:** they are mouse-only, the Allow / Deny prompts of "Ask before
    connecting" included.
-4. **Text size and reduce motion** (Settings > Accessibility) apply to the egui apps (Settings, Minos, the password box,
-   Calculator, the keyring tool); the bar, dock, start menu, toasts and lock screen follow only the screen scale.
-5. **No high-contrast palette.** The pointer's size is in Settings > Accessibility.
+4. **Text size, reduce motion and high contrast** (Settings > Accessibility) apply to the egui apps (Settings, Minos, the
+   password box, Calculator, the keyring tool); the bar, dock, start menu, toasts and lock screen follow only the screen scale.
+5. **High contrast reaches only the egui apps** (item 4); GTK and Qt programs keep their own themes. The pointer's size is in
+   Settings > Accessibility.
 6. **Orca, Speech Dispatcher and eSpeak NG come as the optional component `accessibility`** (and in the "everything" preset), not
    by default. Super+Alt+S starts or stops Orca (`yggdrasil-screen-reader`) and says how to install it when it is missing. The
    live ISO has no boot entry that starts with speech, and there is no braille support.

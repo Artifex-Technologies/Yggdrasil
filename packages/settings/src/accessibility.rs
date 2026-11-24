@@ -171,6 +171,18 @@ impl App {
                     }
                 },
             );
+            ui::row(
+                ui,
+                pal,
+                false,
+                "High contrast",
+                Some("Black and white with strong lines in the desktop's own apps; the accent is made bright or dark enough to read"),
+                |ui| {
+                    if ui::switch(ui, pal, &mut conf.high_contrast).changed() {
+                        conf_changed = true;
+                    }
+                },
+            );
             ui::row(ui, pal, false, "Pointer size", None, |ui| {
                 let labels: Vec<String> = CURSOR_SIZES.iter().map(|s| s.to_string()).collect();
                 let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -257,7 +269,7 @@ impl App {
         ui::footnote(
             ui,
             pal,
-            "Not here yet: sticky, slow and bounce keys (Hyprland has no such setting), high contrast and mono audio. \
+            "Not here yet: sticky, slow and bounce keys (Hyprland has no such setting), and mono audio. \
              Super+Alt+S starts or stops the screen reader (Orca) when it is installed.",
         );
         if conf_changed {

@@ -166,6 +166,8 @@ pub struct PanelConf {
     pub text_scale: u16,
     /// No animations (the apps' fades and slides).
     pub reduce_motion: bool,
+    /// The desktop's own apps in black and white with strong lines (Settings > Accessibility).
+    pub high_contrast: bool,
     /// The assistant says its answer aloud after a spoken question (Super+S).
     pub assistant_speaks: bool,
     /// The colours of the voice island wave: 0 copper, 1 Siri, 2 the accent purple (the default).
@@ -208,6 +210,7 @@ impl Default for PanelConf {
             own_wallpaper: false,
             text_scale: 100,
             reduce_motion: false,
+            high_contrast: false,
             assistant_speaks: true,
             voice_wave: 2,
             security_alerts: AlertLevel::Warning,
@@ -291,6 +294,7 @@ impl PanelConf {
                 "voice_wave" | "sarina_wave" => c.voice_wave = v.parse::<u8>().map(|n| n.min(2)).unwrap_or(c.voice_wave),
                 "assistant_speaks" | "sarina_speaks" => c.assistant_speaks = !matches!(v, "no" | "false" | "off" | "0"),
                 "reduce_motion" => c.reduce_motion = matches!(v, "yes" | "true" | "on" | "1"),
+                "high_contrast" => c.high_contrast = matches!(v, "yes" | "true" | "on" | "1"),
                 "own_wallpaper" => c.own_wallpaper = matches!(v, "yes" | "true" | "on" | "1"),
                 "minos_first_window" => {
                     c.minos_first_window = StartIn::parse(v).filter(|x| *x != StartIn::Here).unwrap_or(c.minos_first_window)
@@ -316,7 +320,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nnotify_sound = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nassistant_speaks = {}\nvoice_wave = {}\nsecurity_alerts = {}\nminos_first_window = {}\nminos_more_windows = {}\nminos_new_tab = {}\nminos_transparent = {}\nminos_opacity = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nnotify_sound = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nhigh_contrast = {}\nassistant_speaks = {}\nvoice_wave = {}\nsecurity_alerts = {}\nminos_first_window = {}\nminos_more_windows = {}\nminos_new_tab = {}\nminos_transparent = {}\nminos_opacity = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -342,6 +346,7 @@ impl PanelConf {
             if self.own_wallpaper { "yes" } else { "no" },
             self.text_scale,
             if self.reduce_motion { "yes" } else { "no" },
+            if self.high_contrast { "yes" } else { "no" },
             if self.assistant_speaks { "yes" } else { "no" },
             self.voice_wave,
             self.security_alerts.as_str(),
@@ -431,6 +436,7 @@ mod tests {
             own_wallpaper: true,
             text_scale: 150,
             reduce_motion: true,
+            high_contrast: true,
             assistant_speaks: false,
             voice_wave: 2,
             security_alerts: AlertLevel::Critical,

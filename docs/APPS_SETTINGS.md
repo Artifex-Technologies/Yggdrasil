@@ -278,7 +278,7 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
     says installing needs a newer Heimdall privacy package and takes nothing.
 
 - **Accessibility** (`src/accessibility.rs`, near the top of the sidebar; Appearance keeps a row to it): text and control
-  size, pointer size, zoom, colour filters, reduce motion, and rows to key repeat and the on-screen keyboard. What each does
+  size, high contrast, pointer size, zoom, colour filters, reduce motion, and rows to key repeat and the on-screen keyboard. What each does
   and what is still missing: docs/ACCESSIBILITY.md.
 
 ## The pages

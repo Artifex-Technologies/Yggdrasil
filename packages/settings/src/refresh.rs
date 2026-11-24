@@ -162,7 +162,7 @@ pub fn watch_config(ctx: egui::Context, changed: Arc<AtomicBool>) {
     });
 }
 
-/// Text size and reduced motion from Settings > Appearance (panel.conf): set at the start and again when the settings folder
+/// Text size, reduced motion and high contrast from Settings > Accessibility (panel.conf): set at the start and again when the settings folder
 /// changes (`watch_config`), instead of the shared look's once-a-second check, which kept the window waking.
 pub fn apply_accessibility(ctx: &egui::Context) {
     let c = yggdrasil_conf::PanelConf::load();
@@ -172,6 +172,10 @@ pub fn apply_accessibility(ctx: &egui::Context) {
     }
     let anim = if c.reduce_motion { 0.0 } else { 1.0 / 12.0 };
     ctx.all_styles_mut(|s| s.animation_time = anim);
+    // Settings applies its look every frame, from palettes that follow this
+    if yggdrasil_ui::theme::set_high_contrast(c.high_contrast) {
+        ctx.request_repaint();
+    }
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@
 //! counterpart, not a design of its own.
 
 use eframe::egui::{self, Color32, CornerRadius};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone, Copy)]
 pub struct Palette {
@@ -27,6 +28,21 @@ pub struct Palette {
     /// What is picked on a map or a chart, set apart from the accent (the time zone picker's chosen zone): orange unless the
     /// operating system's branding names one (`highlight = #rrggbb`).
     pub highlight: Color32,
+    /// Settings > Accessibility > High contrast: black and white, strong lines, the accent pushed until it reads.
+    pub high_contrast: bool,
+}
+
+/// High contrast as last read from Settings > Accessibility (`apply_accessibility`); every palette made after follows it.
+static HIGH_CONTRAST: AtomicBool = AtomicBool::new(false);
+
+/// Whether this program's palettes are the high-contrast ones.
+pub fn high_contrast() -> bool {
+    HIGH_CONTRAST.load(Ordering::Relaxed)
+}
+
+/// Turns this program's high-contrast palettes on or off; true when that changed.
+pub fn set_high_contrast(on: bool) -> bool {
+    HIGH_CONTRAST.swap(on, Ordering::Relaxed) != on
 }
 
 /// The default palette (Minos's own purple).
@@ -35,8 +51,16 @@ pub fn palette(dark: bool) -> Palette {
 }
 
 impl Palette {
-    /// Text and marks that sit on the accent color: white, or near-black when the accent itself is light (a white accent).
+    /// Text and marks that sit on the accent color: white, or near-black when the accent itself is light (a white accent); with
+    /// high contrast, whichever of black and white stands out more.
     pub fn on_accent(&self) -> Color32 {
+        if self.high_contrast {
+            return if contrast(Color32::BLACK, self.accent) >= contrast(Color32::WHITE, self.accent) {
+                Color32::BLACK
+            } else {
+                Color32::WHITE
+            };
+        }
         let l = |c: u8| {
             let v = c as f32 / 255.0;
             if v <= 0.03928 {
@@ -55,8 +79,24 @@ impl Palette {
 }
 
 /// The palette with a different accent color: the accent itself, plus the active-tab and selection
-/// colors mixed from it so they stay readable on the background.
+/// colors mixed from it so they stay readable on the background. High contrast when Settings says so (`high_contrast`).
 pub fn palette_for(dark: bool, accent: Option<[u8; 3]>) -> Palette {
+    palette_with(dark, accent, high_contrast())
+}
+
+/// [`palette_for`] with high contrast given: text at least 7:1 on every background it sits on, the dim text too, lines and
+/// the status colours at least 3:1 and 4.5:1 (WCAG's AAA text, non-text and AA levels; the test checks every pair).
+pub fn palette_with(dark: bool, accent: Option<[u8; 3]>, high: bool) -> Palette {
+    if high {
+        let mut p = high_contrast_palette(dark);
+        let a = accent.map(|[r, g, b]| Color32::from_rgb(r, g, b)).unwrap_or(p.accent);
+        let backs = [p.bg, p.sidebar, p.field, p.row_alt];
+        p.accent = toward_contrast(a, &backs, 7.0);
+        p.highlight = toward_contrast(p.highlight, &backs, 4.5);
+        p.tab_active = tint(p.bg, a, p.text, if dark { 0.55 } else { 0.40 });
+        p.select = tint(p.bg, a, p.text, if dark { 0.35 } else { 0.30 });
+        return p;
+    }
     let mut p = base_palette(dark);
     if let Some([r, g, b]) = accent {
         let a = Color32::from_rgb(r, g, b);
@@ -78,6 +118,76 @@ pub fn readable_on_dark(c: Color32) -> Color32 {
     let k = 176.0 / m as f32;
     let f = |x: u8| (x as f32 * k).round().min(255.0) as u8;
     Color32::from_rgb(f(c.r()), f(c.g()), f(c.b()))
+}
+
+/// The WCAG contrast ratio of two opaque colours (1 to 21).
+pub fn contrast(a: Color32, b: Color32) -> f32 {
+    let lum = |c: Color32| {
+        let l = |x: u8| {
+            let v = x as f32 / 255.0;
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * l(c.r()) + 0.7152 * l(c.g()) + 0.0722 * l(c.b())
+    };
+    let (x, y) = (lum(a), lum(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+/// `c` moved toward white (on dark backgrounds) or black (on light ones) until it has `min` contrast with each of `backs`; hue
+/// kept as far as it can be.
+fn toward_contrast(c: Color32, backs: &[Color32], min: f32) -> Color32 {
+    let bg = backs[0];
+    let to = if contrast(bg, Color32::BLACK) < contrast(bg, Color32::WHITE) { Color32::WHITE } else { Color32::BLACK };
+    (0..=20).map(|i| mix(c, to, i as f32 / 20.0)).find(|x| backs.iter().all(|b| contrast(*x, *b) >= min)).unwrap_or(to)
+}
+
+/// The accent mixed into `bg`, as strongly as `strongest` but no more than keeps `text` at 7:1 on it.
+fn tint(bg: Color32, accent: Color32, text: Color32, strongest: f32) -> Color32 {
+    (0..=10).map(|i| mix(bg, accent, strongest * (10 - i) as f32 / 10.0)).find(|x| contrast(text, *x) >= 7.0).unwrap_or(bg)
+}
+
+/// Black and white with strong lines; the accent, selection and highlight are set from the chosen accent in `palette_with`.
+fn high_contrast_palette(dark: bool) -> Palette {
+    let mut p = base_palette(dark);
+    p.high_contrast = true;
+    if dark {
+        p.bg = Color32::BLACK;
+        p.sidebar = Color32::BLACK;
+        p.strip = Color32::BLACK;
+        p.field = Color32::from_rgb(10, 10, 12);
+        p.border = Color32::from_rgb(200, 200, 210);
+        p.text = Color32::WHITE;
+        p.dim = Color32::from_rgb(214, 214, 222);
+        p.hover = Color32::from_rgb(44, 44, 52);
+        p.row_alt = Color32::from_rgb(16, 16, 20);
+        p.folder = Color32::from_rgb(255, 210, 80);
+        p.file = Color32::from_rgb(230, 230, 236);
+        p.drive = Color32::from_rgb(220, 220, 228);
+        p.green = Color32::from_rgb(90, 230, 130);
+        p.amber = Color32::from_rgb(255, 196, 70);
+        p.red = Color32::from_rgb(255, 112, 122);
+    } else {
+        p.bg = Color32::WHITE;
+        p.sidebar = Color32::WHITE;
+        p.strip = Color32::from_rgb(240, 240, 244);
+        p.field = Color32::WHITE;
+        p.border = Color32::from_rgb(64, 64, 74);
+        p.text = Color32::BLACK;
+        p.dim = Color32::from_rgb(56, 56, 66);
+        p.hover = Color32::from_rgb(222, 222, 230);
+        p.row_alt = Color32::from_rgb(244, 244, 248);
+        p.folder = Color32::from_rgb(150, 100, 0);
+        p.file = Color32::from_rgb(60, 64, 76);
+        p.drive = Color32::from_rgb(60, 64, 76);
+        p.green = Color32::from_rgb(0, 110, 40);
+        p.amber = Color32::from_rgb(140, 84, 0);
+        p.red = Color32::from_rgb(176, 0, 20);
+    }
+    p
 }
 
 fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
@@ -120,6 +230,7 @@ fn base_palette(dark: bool) -> Palette {
             amber: Color32::from_rgb(201, 146, 58),
             red: Color32::from_rgb(180, 58, 69),
             highlight: highlight(true),
+            high_contrast: false,
         }
     } else {
         Palette {
@@ -142,6 +253,7 @@ fn base_palette(dark: bool) -> Palette {
             amber: Color32::from_rgb(196, 130, 30),
             red: Color32::from_rgb(190, 50, 60),
             highlight: highlight(false),
+            high_contrast: false,
         }
     }
 }
@@ -191,6 +303,7 @@ pub fn apply(ctx: &egui::Context, dark: bool, accent: Option<[u8; 3]>) {
 
 /// `apply`, with the window's backgrounds `pct` percent opaque (for a see-through window).
 pub fn apply_opacity(ctx: &egui::Context, dark: bool, accent: Option<[u8; 3]>, pct: u32) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(LOOK_ID), (dark, accent, pct)));
     let p = palette_for(dark, accent).translucent(pct);
     ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
     ctx.all_styles_mut(|style| {
@@ -216,6 +329,13 @@ pub fn apply_opacity(ctx: &egui::Context, dark: bool, accent: Option<[u8; 3]>, p
         v.widgets.hovered.bg_fill = p.hover;
         v.widgets.active.weak_bg_fill = p.select;
         v.widgets.active.bg_fill = p.select;
+        if p.high_contrast {
+            // every button and field outlined, not told apart by a faint fill alone
+            let line = egui::Stroke::new(1.0, p.border);
+            v.widgets.inactive.bg_stroke = line;
+            v.widgets.hovered.bg_stroke = egui::Stroke::new(1.5, p.text);
+            v.widgets.active.bg_stroke = egui::Stroke::new(1.5, p.accent);
+        }
         v.window_corner_radius = CornerRadius::same(12);
         v.menu_corner_radius = CornerRadius::same(10);
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
@@ -226,7 +346,7 @@ pub fn apply_opacity(ctx: &egui::Context, dark: bool, accent: Option<[u8; 3]>, p
     });
 }
 
-/// Text size and reduced motion from Settings > Accessibility (panel.conf), and the system font from Settings > Appearance >
+/// Text size, reduced motion and high contrast from Settings > Accessibility (panel.conf), and the system font from Settings > Appearance >
 /// Fonts (`fonts::refresh`): read at the first frame, then again only when a file in the settings folder is written (an
 /// inotify watch on a thread of its own wakes the window then). Nothing wakes an idle app for it: a once-a-second look kept
 /// every app waking (YGG-17). Call it at the top of every frame of every app.
@@ -238,8 +358,17 @@ pub fn apply_accessibility(ctx: &egui::Context) {
     apply_settings(ctx, &yggdrasil_conf::PanelConf::load());
 }
 
-/// Text size and reduced motion from `c`, and the system font.
+/// The arguments of the last `apply_opacity`, kept in the context so a change of contrast can apply the look again.
+const LOOK_ID: &str = "yggdrasil-look";
+
+/// Text size, reduced motion and high contrast from `c`, and the system font.
 fn apply_settings(ctx: &egui::Context, c: &yggdrasil_conf::PanelConf) {
+    if set_high_contrast(c.high_contrast) {
+        if let Some((dark, accent, pct)) = ctx.data(|d| d.get_temp::<(bool, Option<[u8; 3]>, u32)>(egui::Id::new(LOOK_ID))) {
+            apply_opacity(ctx, dark, accent, pct);
+        }
+        ctx.request_repaint();
+    }
     let zoom = f32::from(c.text_scale.clamp(yggdrasil_conf::TEXT_SCALE_MIN, yggdrasil_conf::TEXT_SCALE_MAX)) / 100.0;
     if (ctx.zoom_factor() - zoom).abs() > 0.001 {
         ctx.set_zoom_factor(zoom);
@@ -364,6 +493,50 @@ fn start_watch(dirs: &[std::path::PathBuf]) -> Option<&'static Watch> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Every pair the apps draw in the high-contrast palettes, with the default accent and accents that are hard to read on one
+    /// style or the other (a deep red, white, yellow, a mid grey).
+    #[test]
+    fn the_high_contrast_palettes_meet_the_contrast_levels() {
+        use super::*;
+        let accents =
+            [None, Some([0x65, 0x00, 0x0b]), Some([255, 255, 255]), Some([255, 230, 0]), Some([128, 128, 128]), Some([110, 70, 200])];
+        for dark in [true, false] {
+            for accent in accents {
+                let p = palette_with(dark, accent, true);
+                let at = |a: Color32, b: Color32, min: f32, what: &str| {
+                    let r = contrast(a, b);
+                    assert!(r >= min, "{} {accent:?}: {what} is {r:.2}:1, under {min}:1", if dark { "dark" } else { "light" });
+                };
+                for (bg, name) in [
+                    (p.bg, "bg"),
+                    (p.sidebar, "sidebar"),
+                    (p.strip, "strip"),
+                    (p.field, "field"),
+                    (p.hover, "hover"),
+                    (p.row_alt, "row_alt"),
+                    (p.select, "select"),
+                    (p.tab_active, "tab_active"),
+                ] {
+                    at(p.text, bg, 7.0, &format!("text on {name}"));
+                }
+                for (bg, name) in [(p.bg, "bg"), (p.sidebar, "sidebar"), (p.field, "field"), (p.row_alt, "row_alt")] {
+                    at(p.dim, bg, 7.0, &format!("dim text on {name}"));
+                    at(p.accent, bg, 7.0, &format!("accent on {name}"));
+                    at(p.border, bg, 3.0, &format!("lines on {name}"));
+                    for (c, what) in [(p.green, "green"), (p.amber, "amber"), (p.red, "red"), (p.highlight, "highlight")] {
+                        at(c, bg, 4.5, &format!("{what} on {name}"));
+                    }
+                    for (c, what) in [(p.folder, "folder"), (p.file, "file"), (p.drive, "drive")] {
+                        at(c, bg, 3.0, &format!("{what} icon on {name}"));
+                    }
+                }
+                at(p.on_accent(), p.accent, 7.0, "text on the accent");
+            }
+            // off, the palette is the usual one
+            assert!(!palette_with(dark, None, false).high_contrast && palette_with(dark, None, true).high_contrast);
+        }
+    }
 
     #[test]
     fn a_text_size_written_in_settings_is_applied_without_polling() {
