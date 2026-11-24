@@ -61,6 +61,7 @@ use smithay::backend::allocator::format::FormatSet;
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
 use smithay::backend::allocator::{Format, Fourcc, Modifier};
 use smithay::backend::drm::compositor::FrameFlags;
+use smithay::backend::drm::compositor::PrimaryPlaneElement;
 use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
 use smithay::backend::drm::output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements};
 use smithay::backend::drm::VrrSupport;
@@ -82,6 +83,7 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{EventLoop, Interest, LoopHandle, Mode as LoopMode, PostAction, RegistrationToken};
 use smithay::reexports::drm::control::{connector, crtc, Device as _, ModeTypeFlags};
 use smithay::reexports::input::{AccelProfile, DeviceCapability, Libinput};
+use smithay::wayland::dmabuf::DmabufFeedback;
 
 use crate::input::{DeviceInfo, Kind as InputKind};
 use crate::laptop::Switches;
@@ -179,6 +181,38 @@ struct Screen {
     gamma: Option<[f64; 3]>,
     /// variable refresh can be switched on this screen without a modeset (the monitor and the GPU say so)
     vrr_capable: bool,
+    /// what programs on this screen are told to allocate their GPU buffers as (linux-dmabuf feedback): the renderer's
+    /// formats, and for a window the screen could show directly (a full screen game) the formats its planes scan out first
+    feedback: Option<Feedback>,
+    /// the last frame's picture went to the screen as it is, a program's buffer on the primary plane (direct scanout)
+    direct: bool,
+}
+
+/// A screen's two dmabuf feedbacks: the renderer's (the default), and the one with the planes' scanout formats first.
+struct Feedback {
+    render: DmabufFeedback,
+    scanout: DmabufFeedback,
+}
+
+/// The feedbacks for a screen drawn by a GBM compositor: its primary and overlay planes' formats that the renderer can also
+/// read (so a buffer that cannot be scanned out can still be drawn), as a scanout tranche on the screen's device, then the
+/// renderer's formats on the render node.
+fn screen_feedback(out: &GbmOut, render_node: DrmNode, render_formats: &FormatSet) -> Option<Feedback> {
+    use smithay::reexports::wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1::TrancheFlags;
+    out.with_compositor(|c| {
+        let surface = c.surface();
+        let planes = surface.planes();
+        let scanout: FormatSet = std::iter::once(surface.plane_info())
+            .chain(planes.overlay.iter())
+            .flat_map(|p| p.formats.iter().copied())
+            .filter(|f| render_formats.contains(f))
+            .collect();
+        let device = surface.device_fd().dev_id().ok()?;
+        let builder = DmabufFeedbackBuilder::new(render_node.dev_id(), render_formats.iter().copied());
+        let render = builder.clone().build().ok()?;
+        let scanout = builder.add_preference_tranche(device, Some(TrancheFlags::Scanout), scanout).build().ok()?;
+        Some(Feedback { render, scanout })
+    })
 }
 
 struct Device {
@@ -882,6 +916,10 @@ fn scan(
             output.change_current_state(Some(mode), None, None, None);
         }
         let planes = drm.planes(&crtc).ok();
+        let render_formats = match &dev.gpu {
+            Gpu::Gles { renderer, .. } => Some(renderer.dmabuf_formats()),
+            Gpu::Pixman { .. } => None,
+        };
         let made = match &mut dev.gpu {
             Gpu::Gles { renderer, manager } => manager
                 .initialize_output::<_, Elem>(
@@ -915,6 +953,11 @@ fn scan(
                     Out::Pixman(o) => o.with_compositor(|c| c.vrr_supported(conn.handle()).ok()),
                 };
                 let vrr_capable = matches!(vrr, Some(VrrSupport::Supported));
+                let render_node = dev.node.node_with_type(NodeType::Render).and_then(|n| n.ok()).unwrap_or(dev.node);
+                let feedback = match (&drm, &render_formats) {
+                    (Out::Gles(o), Some(f)) => screen_feedback(o, render_node, f),
+                    _ => None,
+                };
                 match vrr {
                     Some(VrrSupport::Supported) => eprintln!("yggdrasil-compositor: {name} can use variable refresh"),
                     Some(VrrSupport::RequiresModeset) => {
@@ -946,6 +989,8 @@ fn scan(
                         not_before: Instant::now(),
                         gamma: None,
                         vrr_capable,
+                        feedback,
+                        direct: false,
                     },
                 );
                 added.push(output);
@@ -1416,8 +1461,15 @@ macro_rules! frame {
             BACKGROUND
         };
         match $out.render_frame(&mut **$renderer, &elements, clear, FrameFlags::DEFAULT) {
-            Ok(r) if r.is_empty => Ok(false),
-            Ok(_) => $out.queue_frame(()).map(|_| true).map_err(|e| e.to_string()),
+            Ok(r) => {
+                let direct = matches!(r.primary_element, PrimaryPlaneElement::Element(_));
+                let (empty, states) = (r.is_empty, r.states);
+                if empty {
+                    Ok((false, states, direct))
+                } else {
+                    $out.queue_frame(()).map(|_| (true, states, direct)).map_err(|e| e.to_string())
+                }
+            }
             Err(e) => Err(e.to_string()),
         }
     }};
@@ -1580,8 +1632,25 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
     let Some(dev) = b.devices.get_mut(&node) else { return };
     let Some(screen) = dev.screens.get_mut(&crtc) else { return };
     if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
-        eprintln!("frame {} at {:?}: {result:?}", screen.output.name(), b.start.elapsed());
+        eprintln!("frame {} at {:?}: {:?}", screen.output.name(), b.start.elapsed(), result.as_ref().map(|(q, _, d)| (q, d)));
     }
+    let result = match result {
+        Ok((queued, states, direct)) => {
+            if let Some(f) = &screen.feedback {
+                app.send_dmabuf_feedback(&screen.output, &f.render, &f.scanout, &states);
+            }
+            if direct != screen.direct {
+                screen.direct = direct;
+                eprintln!(
+                    "yggdrasil-compositor: {}: {}",
+                    screen.output.name(),
+                    if direct { "a full screen picture goes to the screen directly (scanout, no copy)" } else { "composited again" }
+                );
+            }
+            Ok(queued)
+        }
+        Err(e) => Err(e),
+    };
     match result {
         Ok(true) => {
             screen.queued = true;

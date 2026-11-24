@@ -376,7 +376,9 @@ inhibit, primary selection, cursor shapes and xdg-activation are built but not y
 workspaces through `ext-workspace` (the panel follows them through yggdrasil-wm), and it has four workspaces. On the hardware
 backend, hotplug has not been tried on real hardware; explicit sync for NVIDIA is built and checked nested on an RTX 2080 Ti
 but not yet on the hardware backend, and a machine with two GPUs picks the one with the screens (not tried on two cards);
-there is no direct scanout, no VRR or tearing control, and no screen recording or screenshots through the portal. It is developed in a virtual machine, never on the live session, and the
+VRR (while a full screen window covers the screen) and direct scanout of full screen games are built but not yet seen with a
+game; there is no tearing control (Smithay 0.7 has no asynchronous page flips), and no screen recording or screenshots through
+the portal. It is developed in a virtual machine, never on the live session, and the
 headless tests run in CI the whole time.
 
 Debugging: `YGGDRASIL_COMPOSITOR_DEBUG=1` prints pointer positions, button presses and move requests. To drive it from a script, move the host pointer

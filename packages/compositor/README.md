@@ -318,6 +318,16 @@ RESOURCE_MANAGER` shows Xft.dpi 120, and a GTK window under X11 drew at its plac
 | GPU memory | NVIDIA's driver keeps memory a Wayland compositor frees in its own pool (about 1 GB, as other compositors found) unless the application profile `GLVidHeapReuseRatio=0` applies; the package and `session/install-session.sh` install `session/nvidia-application-profile.json` as `/etc/nvidia/nvidia-application-profiles-rc.d/50-yggdrasil-compositor` | not yet measured on hardware |
 
 `YGGDRASIL_COMPOSITOR_EXPLICIT_SYNC=0` leaves explicit sync out, for a driver that gets it wrong (the implicit wait stays).
+
+## Games on the hardware backend (2026-11-23)
+
+| Part | How | Checked |
+| --- | --- | --- |
+| Variable refresh (VRR) | Each screen learns at setup whether its CRTC can switch VRR without a modeset (the monitor's `vrr_capable`); before each frame VRR follows `YGGDRASIL_COMPOSITOR_VRR`: 2, the default, while a full screen window covers the screen (as the Hyprland session's `vrr = 2`), 1 always, 0 never. A screen that needs a modeset for it keeps a fixed rate, so a game going full screen never blanks it. The switch is logged | unit test of the rule; my desktop's ultrawide reports `vrr_capable` 1 (modetest); not yet seen switching with a game |
+| Direct scanout | Each GBM screen has two dmabuf feedbacks: the renderer's, and one with the primary and overlay planes' formats (those the renderer can also read) as a scanout tranche first. After each frame a window the screen showed directly, or tried to and could not for the buffer's format, is sent the scanout feedback (Smithay's `select_dmabuf_feedback`), so a full screen game allocates buffers the screen can show without a copy. The log says when a screen's picture starts and stops going out directly | builds and the headless tests; not yet seen with a game |
+
+Not possible yet: tearing for games that ask for it (wp-tearing-control): Smithay 0.7's DRM compositor has no asynchronous page
+flips.
 On the hardware backend (`--drm`) the NVIDIA card has not been tried yet: `session/install-session.sh --entry-only` adds the
 login entry without changing the default session, for that first try.
 

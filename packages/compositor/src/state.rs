@@ -1052,6 +1052,26 @@ impl App {
         }
     }
 
+    /// Tells the programs whose windows are on `output` how to allocate their GPU buffers: the scanout feedback for a window
+    /// the screen tried to show directly (or does), the renderer's otherwise (Smithay's choice from the frame's states).
+    pub fn send_dmabuf_feedback(
+        &self,
+        output: &Output,
+        render: &smithay::wayland::dmabuf::DmabufFeedback,
+        scanout: &smithay::wayland::dmabuf::DmabufFeedback,
+        states: &smithay::backend::renderer::element::RenderElementStates,
+    ) {
+        for w in self.space.elements() {
+            if self.space.outputs_for_element(w).contains(output) {
+                w.send_dmabuf_feedback(
+                    output,
+                    |_, _| Some(output.clone()),
+                    |surface, _| smithay::backend::renderer::element::utils::select_dmabuf_feedback(surface, states, render, scanout),
+                );
+            }
+        }
+    }
+
     /// Whether a full screen window covers `output` now (on the workspace shown, drawn): when variable refresh is for
     /// (udev.rs).
     pub fn fullscreen_on(&self, output: &Output) -> bool {
