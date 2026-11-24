@@ -96,6 +96,17 @@ pub struct Overview {
     /// What the monitor holds in its own quarantine, waiting for the owner (its API's /v1/quarantine), when it declares `held_release`.
     pub held: Vec<Held>,
     pub has_held: bool,
+    /// What the automatic scans skip, when the monitor declares the file (`scan_exclude`).
+    pub excludes: Option<Excludes>,
+}
+
+/// The automatic scans' exclusions: the file and its entries, or why it cannot be read.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Excludes {
+    pub file: std::path::PathBuf,
+    pub entries: Vec<String>,
+    /// Not UTF-8 or not readable (a missing file is just empty): shown, and nothing is changed in it.
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -315,7 +326,86 @@ pub fn overview() -> Overview {
         has_release: i.command("release").is_some(),
         held,
         has_held,
+        excludes: i.path("scan_exclude").map(|f| read_excludes(&f)),
     }
+}
+
+/// The entries of an exclusions file, as the scan reads them: one folder, file or pattern per line, without the spaces around
+/// it; blank lines and lines starting with `#` are not entries.
+pub fn parse_excludes(text: &str) -> Vec<String> {
+    text.lines().filter(|l| !l.starts_with('#')).map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
+}
+
+pub fn read_excludes(file: &std::path::Path) -> Excludes {
+    let (entries, error) = match std::fs::read(file) {
+        Ok(b) => match String::from_utf8(b) {
+            Ok(t) => (parse_excludes(&t), None),
+            Err(_) => (vec![], Some("The file is not plain text (UTF-8); fix or remove it by hand".to_string())),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (vec![], None),
+        Err(e) => (vec![], Some(e.to_string())),
+    };
+    Excludes { file: file.to_path_buf(), entries, error }
+}
+
+/// An entry as typed, ready for the file: one line, without the spaces around it, not a comment.
+pub fn check_exclude(entry: &str) -> Result<String, String> {
+    let e = entry.trim();
+    if e.is_empty() {
+        return Err("Type a folder, a file or a pattern such as *.iso".into());
+    }
+    if e.starts_with('#') {
+        return Err("A line starting with # is a comment, not an entry".into());
+    }
+    if e.chars().any(char::is_control) {
+        return Err("An entry is one line of text".into());
+    }
+    Ok(e.to_string())
+}
+
+/// The file's text with the entry added at the end; the text as it was when the entry is there already.
+pub fn with_exclude(text: &str, entry: &str) -> String {
+    if parse_excludes(text).iter().any(|e| e == entry) {
+        return text.to_string();
+    }
+    let mut t = text.to_string();
+    if !t.is_empty() && !t.ends_with('\n') {
+        t.push('\n');
+    }
+    t + entry + "\n"
+}
+
+/// The file's text without the lines that are this entry; comments, blank lines and the other entries stay as they were.
+pub fn without_exclude(text: &str, entry: &str) -> String {
+    let mut out: String = text.split_inclusive('\n').filter(|l| l.starts_with('#') || l.trim() != entry).collect();
+    if out.trim().is_empty() {
+        out.clear();
+    }
+    out
+}
+
+/// Changes the exclusions file (made with its folder when missing), written whole and then moved into place. Refused when the
+/// file cannot be read as text (its other lines would be lost) and while a fixture stands in for the system.
+pub fn change_excludes(file: &std::path::Path, f: impl FnOnce(&str) -> String) -> Result<(), String> {
+    if crate::fixture::get().is_some() {
+        return Err("not with a fixture".into());
+    }
+    let text = match std::fs::read(file) {
+        Ok(b) => String::from_utf8(b).map_err(|_| "the file is not plain text (UTF-8)".to_string())?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.to_string()),
+    };
+    let next = f(&text);
+    if next == text {
+        return Ok(());
+    }
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let mut tmp = file.as_os_str().to_owned();
+    tmp.push(".new");
+    std::fs::write(&tmp, next).map_err(|e| format!("{}: {e}", file.display()))?;
+    std::fs::rename(&tmp, file).map_err(|e| format!("{}: {e}", file.display()))
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -348,6 +438,41 @@ pub fn scan_folder(folder: &str) -> ScanReport {
 
 #[cfg(test)]
 mod tests {
+    /// The scan's own reading (Labyrinth's scan tool): comments only at the start of a line, spaces around an entry dropped.
+    #[test]
+    fn exclusions_are_read_as_the_scan_reads_them() {
+        let t = "# comment\n*.iso\n\n   \n~/Downloads/big\n  # not a comment\r\nlast-no-newline";
+        assert_eq!(parse_excludes(t), ["*.iso", "~/Downloads/big", "# not a comment", "last-no-newline"]);
+        assert!(check_exclude("  ").is_err() && check_exclude("#x").is_err() && check_exclude("a\nb").is_err());
+        assert_eq!(check_exclude(" ~/Videos ").unwrap(), "~/Videos");
+    }
+
+    /// Adding and removing write the file and keep its comments and other lines; an unreadable file is left alone.
+    #[test]
+    fn exclusions_are_added_and_removed_in_the_file() {
+        let d = std::env::temp_dir().join(format!("ygg-scan-exclude-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let f = d.join("labyrinth/scan-exclude");
+        change_excludes(&f, |t| with_exclude(t, "*.iso")).unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "*.iso\n");
+        std::fs::write(&f, "# mine\n*.iso\n~/Games").unwrap();
+        change_excludes(&f, |t| with_exclude(t, "~/Videos")).unwrap();
+        change_excludes(&f, |t| with_exclude(t, "*.iso")).unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "# mine\n*.iso\n~/Games\n~/Videos\n");
+        assert_eq!(read_excludes(&f).entries, ["*.iso", "~/Games", "~/Videos"]);
+        change_excludes(&f, |t| without_exclude(t, "~/Games")).unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "# mine\n*.iso\n~/Videos\n");
+        // removing the last entry leaves the comment; a file of nothing but blanks is emptied
+        assert_eq!(without_exclude("  *.iso \n\n", "*.iso"), "");
+        assert_eq!(without_exclude("# keep\n*.iso\n", "*.iso"), "# keep\n");
+        std::fs::write(&f, b"a\xffb\n").unwrap();
+        assert!(read_excludes(&f).error.is_some());
+        assert!(change_excludes(&f, |t| with_exclude(t, "x")).is_err());
+        assert_eq!(std::fs::read(&f).unwrap(), b"a\xffb\n");
+        assert_eq!(read_excludes(&d.join("none")), Excludes { file: d.join("none"), ..Excludes::default() });
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn held_files() {
         let j = r#"[{"sha256":"ab12","original":"/home/u/.local/bin/tool","kind":"Elf","reason":"found during a containment","status":"held","held_at":"2026-10-25T05:00:00Z","seen_since":"2026-10-01T00:00:00Z"},

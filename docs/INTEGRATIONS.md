@@ -84,6 +84,7 @@ devices_scan = /usr/bin/systemctl start heimdall-lan-scan.service   # optional: 
 devices_kind = /usr/bin/heimdalld lan kind   # optional, with devices_scan: run with pkexec + MAC KIND (or "guess"): what the owner says a device is
 devices_look = /usr/bin/heimdalld lan look   # optional, with devices_scan: run as the user (no password) + --wait SECONDS UUID: one listen-only look at a network the monitor keeps no list for; prints JSON
 wifi_check = /usr/bin/heimdalld wifi-health --json   # optional: Wi-Fi & Network > Wi-Fi checks; Settings adds --speed for the download test; prints the report as JSON
+scan_exclude = %h/.config/labyrinth/scan-exclude   # optional: what the OS's automatic scans skip, one folder, file or pattern per line (# starts a comment line); Settings > Security lists it with Add and Remove
 switch.a_auto_quarantine = Move certain malware to quarantine automatically | ... | /usr/local/bin/labyrinth-security-setting auto-quarantine
 ```
 
@@ -95,7 +96,8 @@ Heimdall since 2026-11-18) is shown there as the names with the ID beside them, 
 `T` and four digits (with `.` and three more for a sub-technique) is dropped, a name is plain text without control or direction
 characters, at most 120 characters, and at most 8 are shown. The panel turns them into notifications under `name`
 (Settings > Notifications chooses how many); Settings > Security gets a page named `name` with the state, alerts, new connections,
-the quarantine, the scan, the declared controls and, while the assistant is contained, a "Restore and release" button, and what the monitor holds in its own quarantine with Release and It's malware. Each part appears only when its key is there.
+the quarantine, the scan, what the automatic scans skip (`scan_exclude`: Settings edits the user's own file itself, keeping its
+comment lines, and leaves a file that is not UTF-8 alone), the declared controls and, while the assistant is contained, a "Restore and release" button, and what the monitor holds in its own quarantine with Release and It's malware. Each part appears only when its key is there.
 
 With `devices_scan`, Settings > Wi-Fi & Network gets **Devices** (under This Network, on the connected network's own page): `GET /v1/lan/devices` answers `{"networks": [{"uuid", "ssid",
 "last_scan", "devices": [{"mac", "ip", "name", "vendor", "model", "kind", "services", "private_mac", "first_seen",

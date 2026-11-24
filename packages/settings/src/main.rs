@@ -477,6 +477,8 @@ struct App {
     log_busy: bool,
     scan_busy: bool,
     scan_report: Option<security::ScanReport>,
+    /// Settings > Security: the exclusion being typed for the automatic scans.
+    scan_exclude_new: String,
     // Users page: the password form
     pw_open: bool,
     pw_cur: String,
@@ -685,6 +687,7 @@ impl App {
             log_busy: false,
             scan_busy: false,
             scan_report: None,
+            scan_exclude_new: String::new(),
             pw_open: false,
             pw_cur: String::new(),
             pw_new: String::new(),
@@ -3635,6 +3638,52 @@ impl App {
                             ui::row(ui, pal, false, f, Some("Nothing was moved or deleted: decide what to do with it"), |_| {});
                         }
                     }
+                }
+            });
+        }
+        let mut exclude: Option<(String, bool)> = None;
+        if let Some(x) = &o.excludes {
+            ui.add_space(8.0);
+            ui::group(ui, pal, Some("Not scanned"), |ui| {
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Skipped by the automatic scans",
+                    Some("New files are scanned as they arrive, and the home folder once a week; these folders, files and patterns (such as *.iso) are left out. \"Scan now\" leaves nothing out"),
+                    |_| {},
+                );
+                if let Some(e) = &x.error {
+                    ui::row(ui, pal, false, "The list cannot be read", Some(&format!("{e}: {}", x.file.display())), |_| {});
+                    return;
+                }
+                for e in &x.entries {
+                    ui::row(ui, pal, false, e, None, |ui| {
+                        if ui::quiet(ui, pal, "Remove").clicked() {
+                            exclude = Some((e.clone(), false));
+                        }
+                    });
+                }
+                ui::row(ui, pal, false, "Add", Some("A folder (~/Videos), a file, or a pattern"), |ui| {
+                    let ok = security::check_exclude(&self.scan_exclude_new).is_ok();
+                    let add = ui.add_enabled(ok, egui::Button::new("Add")).clicked();
+                    let r = ui::field(ui, pal, &mut self.scan_exclude_new, "~/Videos", 220.0, false);
+                    if add || (ok && r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                        exclude = Some((self.scan_exclude_new.trim().to_string(), true));
+                    }
+                });
+            });
+        }
+        if let (Some((entry, add)), Some(file)) = (exclude, o.excludes.as_ref().map(|x| x.file.clone())) {
+            if add {
+                self.scan_exclude_new.clear();
+            }
+            self.change(ctx, move || {
+                if add {
+                    let e = security::check_exclude(&entry)?;
+                    security::change_excludes(&file, |t| security::with_exclude(t, &e))
+                } else {
+                    security::change_excludes(&file, |t| security::without_exclude(t, &entry))
                 }
             });
         }
