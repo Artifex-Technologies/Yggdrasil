@@ -73,8 +73,9 @@ fn announce(tx: &calloop::channel::Sender<NMsg>, d: &Drive, arrived: bool) {
         time: notify::now_secs(),
         actions: vec![],
         link: if arrived { format!("mount:{}", d.device) } else { String::new() },
+        image: String::new(),
     };
-    let _ = tx.send(NMsg::New(n));
+    let _ = tx.send(NMsg::New(Box::new(n)));
 }
 
 pub fn spawn(tx: calloop::channel::Sender<NMsg>) {

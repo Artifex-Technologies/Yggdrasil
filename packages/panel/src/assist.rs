@@ -167,7 +167,7 @@ pub fn paint(
             let app = apps::for_app_id(apps_list, &win.class);
             let (name, icon) =
                 app.map(|a| (a.name.clone(), a.icon.clone())).unwrap_or_else(|| (win.class.clone(), win.class.to_lowercase()));
-            crate::notify::draw_app_icon(pix, scale, icons, fonts, &name, &icon, t.0 + (TILE_W - 52.0) / 2.0, t.1 + 18.0, 52.0, false);
+            crate::notify::draw_app_icon(pix, scale, icons, fonts, &name, &icon, "", t.0 + (TILE_W - 52.0) / 2.0, t.1 + 18.0, 52.0, false);
             let label = if win.title.is_empty() { name.clone() } else { win.title.clone() };
             let line = crate::fylgja::fit(&fonts.regular, 12.0 * scale, &label, (TILE_W - 20.0) * scale);
             let lw = paint::text_width(&fonts.regular, 12.0 * scale, &line) / scale;

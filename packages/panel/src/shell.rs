@@ -2121,6 +2121,7 @@ mod tests {
                 time: now - age,
                 actions: vec![],
                 link: String::new(),
+                image: String::new(),
             });
         }
         let s = 1.0;

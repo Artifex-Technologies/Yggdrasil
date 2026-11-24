@@ -54,6 +54,9 @@ pub struct Notif {
     pub actions: Vec<(String, String)>,
     /// What to open for a notification that is not an app's (a security alert's): a `yggdrasil-settings` page.
     pub link: String,
+    /// The picture the app sent with it (a contact's face, an album cover): a PNG or SVG file, drawn in the pop-up in the
+    /// icon's place. One sent inline (`image-data`) is saved in `images_dir()` and goes when the notification does.
+    pub image: String,
 }
 
 impl Notif {
@@ -68,7 +71,7 @@ impl Notif {
 
     fn to_json(&self) -> serde_json::Value {
         serde_json::json!({"id": self.id, "app": self.app, "entry": self.entry, "icon": self.icon, "summary": self.summary,
-            "body": self.body, "urgency": self.urgency, "time": self.time, "link": self.link,
+            "body": self.body, "urgency": self.urgency, "time": self.time, "link": self.link, "image": self.image,
             "actions": self.actions.iter().map(|(k, l)| serde_json::json!([k, l])).collect::<Vec<_>>()})
     }
 
@@ -84,6 +87,7 @@ impl Notif {
             urgency: v.get("urgency").and_then(|x| x.as_u64()).unwrap_or(1).min(2) as u8,
             time: v.get("time").and_then(|x| x.as_u64()).unwrap_or(0),
             link: s("link"),
+            image: s("image"),
             actions: v
                 .get("actions")
                 .and_then(|a| a.as_array())
@@ -166,12 +170,15 @@ impl Store {
     pub fn add(&mut self, n: Notif) {
         self.unread.insert(n.id);
         if let Some(old) = self.items.iter_mut().find(|o| o.id == n.id) {
+            if old.image != n.image {
+                drop_image(old);
+            }
             *old = n;
         } else {
             self.items.push(n);
             if self.items.len() > MAX_KEPT {
                 let drop = self.items.len() - MAX_KEPT;
-                self.items.drain(..drop); // the oldest
+                self.items.drain(..drop).for_each(|o| drop_image(&o)); // the oldest
             }
         }
         self.save();
@@ -180,6 +187,7 @@ impl Store {
     pub fn remove(&mut self, id: u32) -> Option<Notif> {
         let i = self.items.iter().position(|n| n.id == id)?;
         let n = self.items.remove(i);
+        drop_image(&n);
         self.unread.remove(&id);
         self.save();
         Some(n)
@@ -199,6 +207,7 @@ impl Store {
         for id in &ids {
             self.unread.remove(id);
         }
+        self.items.iter().filter(|n| n.group_key() == key).for_each(drop_image);
         self.items.retain(|n| n.group_key() != key);
         self.expanded.remove(key);
         self.save();
@@ -207,6 +216,7 @@ impl Store {
 
     pub fn clear_all(&mut self) -> Vec<u32> {
         let ids = self.items.iter().map(|n| n.id).collect();
+        self.items.iter().for_each(drop_image);
         self.items.clear();
         self.unread.clear();
         self.expanded.clear();
@@ -300,7 +310,7 @@ pub fn ago(then: u64, now: u64) -> String {
 /// What the D-Bus thread and the security-alert thread tell the panel.
 #[derive(Debug)]
 pub enum NMsg {
-    New(Notif),
+    New(Box<Notif>),
     /// An app asked to take this one away.
     Close(u32),
 }
@@ -336,6 +346,101 @@ pub fn emit_action(id: u32, key: &str) {
     }
 }
 
+/// Pictures sent inline with notifications, saved as PNG files while their notification is kept.
+pub fn images_dir() -> PathBuf {
+    yggdrasil_conf::dirs::cache().join("notification-images")
+}
+
+/// Removes a notification's picture when it is one of ours (an inline picture saved in `images_dir()`).
+fn drop_image(n: &Notif) {
+    if !n.image.is_empty() && std::path::Path::new(&n.image).starts_with(images_dir()) {
+        let _ = std::fs::remove_file(&n.image);
+    }
+}
+
+/// The PNG of an inline picture (`image-data`: width, height, bytes per row, has alpha, bits per sample, channels, the
+/// bytes), at most 256 pixels on its long side. None when the numbers do not describe the bytes.
+#[allow(clippy::too_many_arguments)]
+pub fn image_data_png(w: i32, h: i32, stride: i32, alpha: bool, bits: i32, channels: i32, data: &[u8]) -> Option<Vec<u8>> {
+    if bits != 8 || !(channels == 4 && alpha || channels == 3 && !alpha) {
+        return None;
+    }
+    let (w, h, stride, ch) = (u32::try_from(w).ok()?, u32::try_from(h).ok()?, usize::try_from(stride).ok()?, channels as usize);
+    if w == 0 || h == 0 || w > 4096 || h > 4096 || stride < w as usize * ch {
+        return None;
+    }
+    let need = stride.checked_mul(h as usize - 1)?.checked_add(w as usize * ch)?;
+    if data.len() < need {
+        return None;
+    }
+    let mut pm = Pixmap::new(w, h)?;
+    let px = pm.pixels_mut();
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let p = &data[y * stride + x * ch..y * stride + x * ch + ch];
+            let a = if ch == 4 { p[3] } else { 255 };
+            px[y * w as usize + x] = resvg::tiny_skia::ColorU8::from_rgba(p[0], p[1], p[2], a).premultiply();
+        }
+    }
+    let long = w.max(h);
+    let pm = if long > 256 {
+        let k = 256.0 / long as f32;
+        paint::area_resize(&pm, ((w as f32 * k).round() as u32).max(1), ((h as f32 * k).round() as u32).max(1))?
+    } else {
+        pm
+    };
+    pm.encode_png().ok()
+}
+
+/// The PNG of an inline picture as D-Bus sends it (the `(iiibiiay)` structure).
+fn inline_png(v: &zbus::zvariant::OwnedValue) -> Option<Vec<u8>> {
+    let (w, h, stride, alpha, bits, ch, data) = <(i32, i32, i32, bool, i32, i32, Vec<u8>)>::try_from(v.try_clone().ok()?).ok()?;
+    image_data_png(w, h, stride, alpha, bits, ch, &data)
+}
+
+/// A `file://` address as a path (its %XX escapes undone); a plain path as it is.
+fn file_path(s: &str) -> Option<String> {
+    let Some(rest) = s.strip_prefix("file://") else { return s.starts_with('/').then(|| s.to_string()) };
+    let b = rest.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).ok()?, 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    let p = String::from_utf8(out).ok()?;
+    p.starts_with('/').then_some(p)
+}
+
+/// A notification's picture: `image-data` (or the older `image_data` and `icon_data`) saved to a file, else `image-path`
+/// (`image_path`) when it names a file. Empty when there is none.
+fn image_of(hints: &HashMap<String, zbus::zvariant::OwnedValue>, id: u32) -> String {
+    for key in ["image-data", "image_data", "icon_data"] {
+        let Some(png) = hints.get(key).and_then(inline_png) else { continue };
+        let dir = images_dir();
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+        let path = dir.join(format!("{id}-{}-{nanos}.png", now_secs()));
+        if std::fs::create_dir_all(&dir).is_ok() && std::fs::write(&path, png).is_ok() {
+            return path.to_string_lossy().into_owned();
+        }
+    }
+    for key in ["image-path", "image_path"] {
+        if let Some(p) = hints.get(key).and_then(|v| <&str>::try_from(v).ok()).and_then(file_path) {
+            if std::path::Path::new(&p).is_file() {
+                return p;
+            }
+        }
+    }
+    String::new()
+}
+
 struct Server {
     tx: calloop::channel::Sender<NMsg>,
 }
@@ -343,7 +448,7 @@ struct Server {
 #[zbus::interface(name = "org.freedesktop.Notifications")]
 impl Server {
     fn get_capabilities(&self) -> Vec<String> {
-        ["body", "actions", "icon-static", "persistence"].iter().map(|s| s.to_string()).collect()
+        ["body", "actions", "icon-static", "persistence", "body-images"].iter().map(|s| s.to_string()).collect()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -362,13 +467,12 @@ impl Server {
         let urgency = hints.get("urgency").and_then(|v| u8::try_from(v).ok()).unwrap_or(1).min(2);
         let entry =
             hints.get("desktop-entry").and_then(|v| <&str>::try_from(v).ok()).unwrap_or("").trim_end_matches(".desktop").to_string();
-        let icon = if app_icon.is_empty() {
-            hints.get("image-path").and_then(|v| <&str>::try_from(v).ok()).unwrap_or("").to_string()
-        } else {
-            app_icon
-        };
+        // an image-path that is an icon's name (not a file) stands in for a missing app icon, as before
+        let named = hints.get("image-path").and_then(|v| <&str>::try_from(v).ok()).filter(|p| !p.contains('/')).unwrap_or("");
+        let icon = if app_icon.is_empty() { named.to_string() } else { app_icon };
+        let image = image_of(&hints, id);
         let acts: Vec<(String, String)> = actions.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0].clone(), clean(&c[1]))).collect();
-        let _ = self.tx.send(NMsg::New(Notif {
+        let _ = self.tx.send(NMsg::New(Box::new(Notif {
             id,
             app: clean(&app_name),
             entry,
@@ -379,7 +483,8 @@ impl Server {
             time: now_secs(),
             actions: acts,
             link: String::new(),
-        }));
+            image,
+        })));
         id
     }
 
@@ -461,7 +566,7 @@ pub fn spawn_disk_watch(tx: calloop::channel::Sender<NMsg>) {
                     continue;
                 }
                 if warned.insert(path.to_string()) {
-                    let _ = tx.send(NMsg::New(Notif {
+                    let _ = tx.send(NMsg::New(Box::new(Notif {
                         id: next_id(),
                         app: "Storage".into(),
                         entry: String::new(),
@@ -472,7 +577,8 @@ pub fn spawn_disk_watch(tx: calloop::channel::Sender<NMsg>) {
                         time: now_secs(),
                         actions: vec![],
                         link: "about".into(),
-                    }));
+                        image: String::new(),
+                    })));
                 }
             }
             std::thread::sleep(Duration::from_secs(600));
@@ -504,6 +610,7 @@ pub fn hypr_errors_note(text: &str, id: u32) -> Option<Notif> {
         time: now_secs(),
         actions: vec![],
         link: String::new(),
+        image: String::new(),
     })
 }
 
@@ -521,7 +628,7 @@ pub fn spawn_hypr_watch(tx: calloop::channel::Sender<NMsg>) {
             let text = h.config_errors().unwrap_or_default();
             if text != *last {
                 if let Some(n) = hypr_errors_note(&text, next_id()) {
-                    let _ = tx.send(NMsg::New(n));
+                    let _ = tx.send(NMsg::New(Box::new(n)));
                 }
                 *last = text;
             }
@@ -610,6 +717,7 @@ pub fn from_alert(v: &serde_json::Value, min: &str, id: u32) -> Option<Notif> {
         time: now_secs(),
         actions: vec![],
         link,
+        image: String::new(),
     })
 }
 
@@ -656,7 +764,7 @@ pub fn spawn_security_alerts(tx: calloop::channel::Sender<NMsg>) {
                         let fresh = fresh_alerts(&list, &mut seen, first);
                         for a in fresh.iter().take(5) {
                             if let Some(n) = from_alert(a, min, next_id()) {
-                                let _ = tx.send(NMsg::New(n));
+                                let _ = tx.send(NMsg::New(Box::new(n)));
                             }
                         }
                         if seen.len() > 2000 {
@@ -731,12 +839,20 @@ pub fn draw_app_icon(
     fonts: &Fonts,
     name: &str,
     icon: &str,
+    image: &str,
     x: f32,
     y: f32,
     size: f32,
     urgent: bool,
 ) {
     let px = (size * s) as u32;
+    // the picture the notification came with, in the icon's place
+    if image.starts_with('/') {
+        if let Some(ic) = icons.get(image, px) {
+            paint::draw_pixmap(pix, ic, (x * s) as i32, (y * s) as i32);
+            return;
+        }
+    }
     let candidates = [icon.to_string(), name.to_lowercase(), name.to_lowercase().replace(' ', "-")];
     for c in candidates.iter().filter(|c| !c.is_empty() && !c.contains('/')) {
         if let Some(ic) = icons.get(c, px) {
@@ -810,7 +926,7 @@ pub fn paint_list(
                 );
                 let top = &g.items[0];
                 let urgent = g.items.iter().any(|n| n.urgency == 2);
-                draw_app_icon(pix, s, icons, fonts, &g.name, &g.icon, ax + 10.0, y + 9.0, 30.0, urgent);
+                draw_app_icon(pix, s, icons, fonts, &g.name, &g.icon, "", ax + 10.0, y + 9.0, 30.0, urgent);
                 let text_x = ax + 50.0;
                 let right = ax + aw - 12.0;
                 let t = ago(top.time, now);
@@ -1031,7 +1147,7 @@ pub fn paint_toasts(
             s,
             if n.urgency == 2 { (232, 84, 84, 140) } else { (255, 255, 255, 34) },
         );
-        draw_app_icon(pix, s, icons, fonts, &n.app, &n.icon, 14.0, y + 14.0, 36.0, n.urgency == 2);
+        draw_app_icon(pix, s, icons, fonts, &n.app, &n.icon, &n.image, 14.0, y + 14.0, 36.0, n.urgency == 2);
         let tx = 62.0;
         let right = w - 14.0;
         let t = ago(n.time, now);
@@ -1115,7 +1231,40 @@ mod tests {
             time,
             actions: vec![],
             link: String::new(),
+            image: String::new(),
         }
+    }
+
+    #[test]
+    fn an_inline_picture_becomes_a_png() {
+        // 2x2, RGB with two bytes of padding per row: red, green / blue, white
+        let rgb = [255, 0, 0, 0, 255, 0, 9, 9, 0, 0, 255, 255, 255, 255, 9, 9];
+        let png = image_data_png(2, 2, 8, false, 8, 3, &rgb).unwrap();
+        let pm = Pixmap::decode_png(&png).unwrap();
+        let px = |i: usize| pm.pixels()[i].demultiply();
+        assert_eq!((px(0).red(), px(1).green(), px(2).blue(), px(3).alpha()), (255, 255, 255, 255));
+        // as D-Bus sends it
+        let v = zbus::zvariant::Value::from((2i32, 2i32, 8i32, false, 8i32, 3i32, rgb.to_vec()));
+        let owned = zbus::zvariant::OwnedValue::try_from(v).unwrap();
+        assert_eq!(inline_png(&owned), Some(png));
+        // numbers that do not describe the bytes, and other kinds of picture, are refused
+        assert_eq!(image_data_png(2, 2, 8, false, 8, 3, &rgb[..10]), None, "too few bytes");
+        assert_eq!(image_data_png(2, 2, 4, false, 8, 3, &rgb), None, "rows shorter than a row of pixels");
+        assert_eq!(image_data_png(2, 2, 8, false, 16, 3, &rgb), None, "16 bits a sample");
+        assert_eq!(image_data_png(-2, 2, 8, false, 8, 3, &rgb), None);
+        assert_eq!(image_data_png(2, 2, 8, true, 8, 3, &rgb), None, "alpha with three channels");
+        // a large one is kept at 256 pixels on its long side
+        let big = vec![200u8; 1000 * 500 * 4];
+        let pm = Pixmap::decode_png(&image_data_png(1000, 500, 4000, true, 8, 4, &big).unwrap()).unwrap();
+        assert_eq!((pm.width(), pm.height()), (256, 128));
+    }
+
+    #[test]
+    fn a_picture_named_by_a_file_address() {
+        assert_eq!(file_path("file:///home/a%20b/x.png").as_deref(), Some("/home/a b/x.png"));
+        assert_eq!(file_path("/tmp/y.png").as_deref(), Some("/tmp/y.png"));
+        assert_eq!(file_path("dialog-information"), None);
+        assert_eq!(file_path("file://relative%"), None);
     }
 
     #[test]
@@ -1320,6 +1469,7 @@ mod render {
             time: now - age,
             actions: vec![],
             link: String::new(),
+            image: String::new(),
         };
         s.add(mk(1, "Mail", "Alice", "Are we still on for lunch?", 600, 1));
         s.add(mk(2, "Mail", "Bob", "Invoice attached for October", 120, 1));
@@ -1343,6 +1493,27 @@ mod render {
         let list = vec![with_buttons, s.get(3).unwrap().clone()];
         let th = paint_toasts(&mut pix, 2.0, &list, None, &fonts, &mut icons);
         assert_eq!(th.len(), 6); // first: close, two buttons, card; second: close, card
+                                 // a pop-up with a picture draws it in the icon's place (a green square here: nothing else on a card is green)
+        let green = |p: &Pixmap| {
+            p.pixels()
+                .iter()
+                .filter(|c| {
+                    let c = c.demultiply();
+                    c.green() > 200 && c.red() < 60 && c.blue() < 60
+                })
+                .count()
+        };
+        let file = std::env::temp_dir().join(format!("ygg-notify-picture-{}.png", std::process::id()));
+        let square = [0u8, 255, 0, 255].repeat(64 * 64);
+        std::fs::write(&file, image_data_png(64, 64, 256, true, 8, 4, &square).unwrap()).unwrap();
+        let mut pictured = s.get(4).unwrap().clone();
+        pictured.image = file.to_string_lossy().into_owned();
+        let mut with = Pixmap::new(720, 2 * surface_h()).unwrap();
+        paint_toasts(&mut with, 2.0, &[pictured], None, &fonts, &mut icons);
+        let _ = std::fs::remove_file(&file);
+        let mut without = Pixmap::new(720, 2 * surface_h()).unwrap();
+        paint_toasts(&mut without, 2.0, &[s.get(4).unwrap().clone()], None, &fonts, &mut icons);
+        assert!(green(&with) > 3000 && green(&without) == 0, "{} {}", green(&with), green(&without));
         if let Some(dir) = std::env::var_os("NOTIFY_PNG_DIR") {
             pix.save_png(std::path::Path::new(&dir).join("toast.png")).unwrap();
         }

@@ -2058,6 +2058,7 @@ impl State {
     fn on_notif(&mut self, msg: notify::NMsg) {
         match msg {
             notify::NMsg::New(n) => {
+                let n = *n;
                 let (id, urgency) = (n.id, n.urgency);
                 // quiet hours and muted apps (yggdrasil_conf::notifyrules); the app is noted so Settings can offer to mute it
                 let key = n.group_key();
