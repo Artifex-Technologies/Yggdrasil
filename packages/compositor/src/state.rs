@@ -39,7 +39,7 @@ use smithay::utils::{IsAlive, Scale};
 use smithay::utils::{Logical, Point, Serial, SERIAL_COUNTER};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
-    get_parent, is_sync_subsurface, with_states, CompositorClientState, CompositorHandler, CompositorState,
+    get_parent, is_sync_subsurface, with_states, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes,
 };
 use smithay::wayland::idle_notify::{IdleNotifierHandler, IdleNotifierState};
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
@@ -306,6 +306,12 @@ pub struct App {
     input_time: Option<std::time::SystemTime>,
     /// The pointer the compositor draws (pointer.rs): what programs asked it to look like, when it last moved, the theme's pictures.
     pub cursor: crate::pointer::Pointer,
+    /// A drag and drop a program started (a file dragged out of Minos): while it lasts the pointer is a closed hand whatever
+    /// the windows under it ask for, and the picture the program gave for it (its icon) is drawn under the pointer.
+    pub dragging: bool,
+    pub dnd_icon: Option<WlSurface>,
+    /// where the icon sits from the pointer's hotspot (the program's own offsets, added up as it commits them)
+    pub dnd_offset: Point<i32, Logical>,
     /// The standard window list (ext-foreign-toplevel-list; its handles are kept in toplevels.rs) and the window and screen
     /// copies of ext-image-copy-capture (capture.rs: the panel's previews; headless only).
     pub toplevel_list: smithay::wayland::foreign_toplevel_list::ForeignToplevelListState,
@@ -624,6 +630,9 @@ impl App {
             pointer_timeout: 0.0,
             cursor_theme: None,
             cursor: Default::default(),
+            dragging: false,
+            dnd_icon: None,
+            dnd_offset: Point::from((0, 0)),
             input_time: std::fs::metadata(yggdrasil_wm::input::InputConf::path()).and_then(|m| m.modified()).ok(),
             input: input_conf,
             input_devices: vec![],
@@ -2153,6 +2162,15 @@ impl App {
         // where a picture made by the compositor (in logical coordinates of the space) goes on this output
         let at = |p: Point<i32, Logical>| -> Point<f64, smithay::utils::Physical> { (p - origin).to_f64().to_physical(scale) };
         let screen = logical_size(output);
+        // a drag's icon, under the pointer (which is drawn on top of the scene)
+        if let Some(icon) = self.dnd_icon.as_ref().filter(|i| i.is_alive()) {
+            let p = at(self.pointer_location.to_i32_round() + self.dnd_offset).to_i32_round();
+            out.extend(
+                render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<R>>(renderer, icon, p, scale, 1.0, Kind::Unspecified)
+                    .into_iter()
+                    .map(R::Elem::from),
+            );
+        }
         if primary {
             if let Some((ws, sel)) = self.chooser {
                 if self.chooser_art.as_ref().map(|(k, _)| *k != (ws, sel)).unwrap_or(true) {
@@ -2509,6 +2527,10 @@ impl App {
             let out = self.output_at(self.pointer_location);
             smithay::desktop::utils::send_frames_surface_tree(s, &out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
         }
+        if let Some(icon) = &self.dnd_icon {
+            let out = self.output_at(self.pointer_location);
+            smithay::desktop::utils::send_frames_surface_tree(icon, &out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
+        }
         let out = primary;
         for x in &self.overlays {
             if let Some(s) = x.wl_surface() {
@@ -2701,8 +2723,15 @@ impl App {
         if hover != self.bar_hover {
             self.bar_hover = hover;
         }
+        // a drag that ended without its drop reaching us (Smithay always says, but the hand must never stay)
+        if self.dragging && !pointer.is_grabbed() {
+            self.end_drag();
+        }
         let under = self.surface_under(pos);
-        if under.is_none() && !matches!(self.cursor.status, CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Default)) {
+        if under.is_none()
+            && !self.dragging
+            && !matches!(self.cursor.status, CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Default))
+        {
             // over no program (the background, the compositor's own title bars): the default arrow
             self.cursor.status = CursorImageStatus::default_named();
         }
@@ -2879,6 +2908,12 @@ impl CompositorHandler for App {
     fn commit(&mut self, surface: &WlSurface) {
         self.wake();
         on_commit_buffer_handler::<Self>(surface);
+        // a drag's icon moved by its program (wl_surface.offset): it keeps its place from the pointer
+        if self.dnd_icon.as_ref() == Some(surface) {
+            if let Some(d) = with_states(surface, |st| st.cached_state.get::<SurfaceAttributes>().current().buffer_delta.take()) {
+                self.dnd_offset += d;
+            }
+        }
         self.popups.commit(surface);
         // a menu's (xdg_popup's) first commit is answered with its first configure: without it the program never shows the menu
         if let Some(PopupKind::Xdg(p)) = self.popups.find_popup(surface) {
@@ -3055,6 +3090,10 @@ impl SeatHandler for App {
         smithay::wayland::selection::primary_selection::set_primary_focus(&self.display_handle, seat, client);
     }
     fn cursor_image(&mut self, _: &Seat<Self>, image: CursorImageStatus) {
+        if self.dragging {
+            // the drag's closed hand stays; a window under it (its edge, a column divider) does not change it
+            return;
+        }
         self.cursor.status = image.clone();
         self.wake();
         if let Some(f) = self.cursor_hook.as_mut() {
@@ -3103,7 +3142,38 @@ impl DataDeviceHandler for App {
         &self.data_device_state
     }
 }
-impl ClientDndGrabHandler for App {}
+impl ClientDndGrabHandler for App {
+    /// A program started dragging (with the left button held): a closed hand, and its icon under the pointer.
+    fn started(
+        &mut self,
+        _source: Option<smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource>,
+        icon: Option<WlSurface>,
+        _seat: Seat<Self>,
+    ) {
+        self.dragging = true;
+        // the offset the icon's first picture was committed with (before the drag began)
+        self.dnd_offset = icon
+            .as_ref()
+            .and_then(|i| with_states(i, |st| st.cached_state.get::<SurfaceAttributes>().current().buffer_delta.take()))
+            .unwrap_or_default();
+        self.dnd_icon = icon;
+        self.cursor.status = CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Grabbing);
+        self.wake();
+    }
+    /// The drag ended (dropped on a window, or let go where nothing takes it): the arrow until a window sets its own.
+    fn dropped(&mut self, _target: Option<WlSurface>, _validated: bool, _seat: Seat<Self>) {
+        self.end_drag();
+    }
+}
+
+impl App {
+    fn end_drag(&mut self) {
+        self.dragging = false;
+        self.dnd_icon = None;
+        self.cursor.status = CursorImageStatus::default_named();
+        self.wake();
+    }
+}
 impl ServerDndGrabHandler for App {}
 delegate_data_device!(App);
 

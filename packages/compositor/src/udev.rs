@@ -909,7 +909,15 @@ fn scan(
         };
         let offered: Vec<Mode> = modes.iter().map(|m| Mode::from(*m)).collect();
         let had = output.current_mode().and_then(|m| crate::outputs::closest_mode(&offered, m));
-        let start = had.and_then(|m| modes.iter().find(|x| Mode::from(**x) == m).copied()).unwrap_or(preferred);
+        // a new screen starts in the mode Settings' file gives it, so it is not set twice (its own preferred first, then
+        // the file's as soon as the rules are read)
+        let ruled = || {
+            let rules =
+                std::fs::read_to_string(crate::outputs::monitors_path()).map(|t| crate::outputs::parse_rules(&t)).unwrap_or_default();
+            let want = crate::outputs::want_from_rules(&rules, &name, Mode::from(preferred), &offered, 1.0);
+            want.enabled.then(|| crate::outputs::closest_mode(&offered, want.mode)).flatten()
+        };
+        let start = had.or_else(ruled).and_then(|m| modes.iter().find(|x| Mode::from(**x) == m).copied()).unwrap_or(preferred);
         let mode = Mode::from(start);
         if output.current_mode() != Some(mode) {
             // the mode only: a screen keeps its turn (outputs.rs)

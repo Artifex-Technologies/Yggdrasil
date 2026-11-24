@@ -641,7 +641,7 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec
     if let Some(r) = touch_command(words, app, h) {
         return Some(r);
     }
-    const OWN: [&str; 17] = [
+    const OWN: [&str; 19] = [
         "resize",
         "add-output",
         "remove-output",
@@ -654,6 +654,8 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec
         "type",
         "pointer",
         "click",
+        "press",
+        "release",
         "pointer-move",
         "scroll",
         "input",
@@ -819,6 +821,23 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             let (x, y) = (x.parse::<f64>().map_err(|_| "pointer X Y: numbers")?, y.parse::<f64>().map_err(|_| "pointer X Y: numbers")?);
             let t = h.ms();
             app.pointer_to((x, y).into(), t);
+            Ok(vec![])
+        }
+        [which @ ("press" | "release"), rest @ ..] if rest.len() <= 1 => {
+            // a button held (a drag), or let go
+            let button = match rest.first().copied().unwrap_or("left") {
+                "left" => 0x110,
+                "right" => 0x111,
+                "middle" => 0x112,
+                b => return Err(format!("{b}: left, right or middle")),
+            };
+            let button = crate::input::button(&crate::input::mouse(&app.input, crate::input::HEADLESS_MOUSE), button);
+            let state = if *which == "press" {
+                smithay::backend::input::ButtonState::Pressed
+            } else {
+                smithay::backend::input::ButtonState::Released
+            };
+            app.button(button, state, h.ms());
             Ok(vec![])
         }
         ["click", rest @ ..] if rest.len() <= 1 => {

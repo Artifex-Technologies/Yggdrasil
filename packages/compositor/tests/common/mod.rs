@@ -436,6 +436,8 @@ pub struct State {
     pub pointer_on: Option<ObjectId>,
     /// the serial of the last pointer enter (a cursor surface is set with it)
     pub pointer_serial: u32,
+    /// the serial of the last button press (a drag is started with it)
+    pub button_serial: u32,
     /// where the pointer is on the surface it is on (enter and motion), the buttons pressed and the scrolls (axis, value)
     pub pointer_at: (f64, f64),
     pub buttons: Vec<u32>,
@@ -1014,7 +1016,10 @@ impl Dispatch<WlPointer, ()> for State {
             }
             wl_pointer::Event::Leave { .. } => st.pointer_on = None,
             wl_pointer::Event::Motion { surface_x, surface_y, .. } => st.pointer_at = (surface_x, surface_y),
-            wl_pointer::Event::Button { button, state: WEnum::Value(wl_pointer::ButtonState::Pressed), .. } => st.buttons.push(button),
+            wl_pointer::Event::Button { button, serial, state: WEnum::Value(wl_pointer::ButtonState::Pressed), .. } => {
+                st.button_serial = serial;
+                st.buttons.push(button)
+            }
             wl_pointer::Event::Axis { axis, value, .. } => st.axis.push((
                 match axis {
                     WEnum::Value(a) => a as u32,
@@ -1222,6 +1227,24 @@ impl Dispatch<ExtImageCopyCaptureFrameV1, usize> for State {
             _ => {}
         }
     }
+}
+// drag and drop: the source and its offers are not looked at, only what the compositor does with the drag
+delegate_noop!(State: ignore wayland_client::protocol::wl_data_device_manager::WlDataDeviceManager);
+delegate_noop!(State: ignore wayland_client::protocol::wl_data_source::WlDataSource);
+delegate_noop!(State: ignore wayland_client::protocol::wl_data_offer::WlDataOffer);
+impl Dispatch<wayland_client::protocol::wl_data_device::WlDataDevice, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &wayland_client::protocol::wl_data_device::WlDataDevice,
+        _: wayland_client::protocol::wl_data_device::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+    event_created_child!(State, wayland_client::protocol::wl_data_device::WlDataDevice, [
+        wayland_client::protocol::wl_data_device::EVT_DATA_OFFER_OPCODE => (wayland_client::protocol::wl_data_offer::WlDataOffer, ()),
+    ]);
 }
 delegate_noop!(State: ignore WlShm);
 delegate_noop!(State: ignore WlShmPool);

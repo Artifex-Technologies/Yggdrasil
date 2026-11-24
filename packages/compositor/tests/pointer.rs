@@ -218,6 +218,56 @@ fn a_programs_own_pointer_and_named_shapes_are_drawn() {
 }
 
 #[test]
+fn a_drag_shows_a_closed_hand_and_its_icon_whatever_the_window_under_it_asks() {
+    use wayland_client::protocol::{wl_data_device::WlDataDevice, wl_data_device_manager::WlDataDeviceManager};
+    let _l = limit(60, "a drag's pointer");
+    let comp = Compositor::start_with(&["--size", "640x480"], |dir| {
+        themes(dir);
+        std::fs::write(dir.join("home/.config/yggdrasil/appearance.conf"), "cursor = TestPointer\n").unwrap();
+    });
+    let mut c = comp.connect();
+    let (_k, pointer) = c.input();
+    let w = c.window("test.drag", "Files");
+    c.draw(&w, (300, 200), BLUE);
+    let info = comp.window("test.drag").unwrap();
+    let (px, py) = (info.at.0 + 100, info.at.1 + 100);
+    comp.must(&format!("pointer {px} {py}"));
+    c.until("the pointer on the window", |s| s.pointer_on == Some(wayland_client::Proxy::id(&w.surface)));
+
+    // the left button held on a file, then the program starts the drag with its icon (8 x 8 green, 20 px right and below)
+    comp.must("press");
+    c.until("the press", |s| s.button_serial != 0);
+    let manager: WlDataDeviceManager = c.globals.bind(&c.qh, 1..=3, ()).expect("wl_data_device_manager");
+    let device: WlDataDevice = manager.get_data_device(&c.seat, &c.qh, ());
+    let source = manager.create_data_source(&c.qh, ());
+    source.offer("text/uri-list".into());
+    let icon = c.compositor.create_surface(&c.qh, ());
+    let b = c.buffer(8, 8, 0xff00ff00);
+    icon.attach(Some(&b), 0, 0);
+    icon.offset(20, 20);
+    icon.damage_buffer(0, 0, 8, 8);
+    icon.commit();
+    device.start_drag(Some(&source), &w.surface, Some(&icon), c.state.button_serial);
+    c.roundtrip();
+    assert_eq!(comp.must("pointer-look"), ["theme\tTestPointer\t24\tgrabbing"]);
+
+    // moved over the window's edge, where it asks for a resize arrow: still the hand
+    comp.must(&format!("pointer {} {}", px + 120, py));
+    let shapes: WpCursorShapeManagerV1 = c.globals.bind(&c.qh, 1..=1, ()).expect("cursor-shape");
+    shapes.get_pointer(&pointer, &c.qh, ()).set_shape(c.state.pointer_serial, Shape::EwResize);
+    c.roundtrip();
+    assert_eq!(comp.must("pointer-look"), ["theme\tTestPointer\t24\tgrabbing"]);
+    let pic = shot_with_pointer(&comp, "HEADLESS-1");
+    assert_eq!(found(&pic, RGB_GREEN), Some((px + 140, py + 20, 8, 8)), "the icon at its offset from the pointer");
+
+    // let go: the drag ends, the icon goes, and the pointer is the arrow until a window sets its own
+    comp.must("release");
+    c.roundtrip();
+    assert_ne!(comp.must("pointer-look"), ["theme\tTestPointer\t24\tgrabbing"]);
+    assert_eq!(found(&shot_with_pointer(&comp, "HEADLESS-1"), RGB_GREEN), None, "no icon after the drop");
+}
+
+#[test]
 fn the_pointer_hides_while_the_screen_is_dimmed() {
     let _l = limit(60, "the pointer while dimmed");
     let comp = Compositor::start_with(&["--size", "640x480"], |dir| {
