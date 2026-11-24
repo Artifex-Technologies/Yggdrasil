@@ -8,6 +8,12 @@
 //!
 //! Everything runs 7-Zip with an argument list (never through a shell), puts `--` before names so
 //! a file called `-x` cannot become an option, and extracts only into folders we choose.
+//!
+//! Extract goes through Heimdall's file guard (`heimdall-fileguard extract`) for the formats it unpacks itself (ZIP and
+//! tar, plain or compressed): it runs sandboxed, counts what it really unpacks against bomb limits, cleans names and has
+//! each file checked (ClamAV included), and on a refusal keeps nothing. It unpacks into a new folder only, so the result
+//! is unpacked into a hidden folder inside the destination and then moved into place, a name that is taken getting
+//! "name (2)" as 7-Zip's own renaming did. 7z, RAR and the rest still go to 7-Zip, as when the file guard is not installed.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -250,16 +256,114 @@ fn out_dir(dest: &Path) -> std::ffi::OsString {
     s
 }
 
-/// Extract everything into `dest` (created if needed). Existing files are renamed, not overwritten.
+/// Heimdall's file guard: `heimdall-fileguard` on PATH (`MINOS_FILEGUARD` names another, for tests).
+pub fn fileguard() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("MINOS_FILEGUARD") {
+        return Some(PathBuf::from(p));
+    }
+    std::env::var_os("PATH")?.to_str()?.split(':').map(|d| Path::new(d).join("heimdall-fileguard")).find(|p| p.is_file())
+}
+
+/// The formats the file guard unpacks itself: ZIP, tar, and tar or a single file compressed with gzip, xz, zstd or bzip2.
+pub fn guarded_format(p: &Path) -> bool {
+    let n = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    [".zip", ".tar", ".tgz", ".txz", ".tzst", ".tbz2", ".gz", ".xz", ".zst", ".bz2"].iter().any(|e| n.ends_with(e))
+}
+
+/// Unpacks `archive` through the file guard into `fresh`, a folder it makes (it must not exist). A refusal (a bomb, a name
+/// climbing out, a file a check refused) leaves nothing and comes back as the error.
+fn guard_extract(guard: &Path, archive: &Path, fresh: &Path) -> Result<(), String> {
+    let out = Command::new(guard)
+        .arg("extract")
+        .arg("--json")
+        .arg("--")
+        .arg(archive)
+        .arg(fresh)
+        .output()
+        .map_err(|e| format!("cannot run Heimdall's file guard: {e}"))?;
+    let said: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+    if let Some(why) = said.get("refused").and_then(|r| r.as_str()) {
+        return Err(format!("Heimdall refused it: {why}"));
+    }
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    Err(err
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim().to_string())
+        .unwrap_or_else(|| "Heimdall's file guard failed".into()))
+}
+
+/// A folder inside `dest` for the file guard to unpack into (hidden, and not there yet).
+fn staging(dest: &Path) -> PathBuf {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    dest.join(format!(".minos-extracting-{}-{n}", std::process::id()))
+}
+
+/// Moves `from` to `to`'s folder under `to`'s name, or "name (2)" when that is taken.
+fn move_free(from: &Path, to: &Path) -> Result<(), String> {
+    let dir = to.parent().ok_or("no folder")?;
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let name = to.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or("no name")?;
+    let target = crate::fileops::unique_path(dir, &name);
+    std::fs::rename(from, &target).map_err(|e| format!("{}: {e}", target.display()))
+}
+
+/// Unpacks through the file guard into a staging folder in `dest`, then moves `pick` (every top-level entry when `None`,
+/// else that one entry, under its own path) into `dest`. The staging folder goes in any case.
+fn guarded_into(guard: &Path, archive: &Path, dest: &Path, pick: Option<&str>) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    let stage = staging(dest);
+    let r = guard_extract(guard, archive, &stage).and_then(|()| match pick {
+        None => {
+            let mut names: Vec<_> =
+                std::fs::read_dir(&stage).map_err(|e| e.to_string())?.filter_map(|e| e.ok()).map(|e| e.file_name()).collect();
+            names.sort();
+            names.iter().try_for_each(|n| move_free(&stage.join(n), &dest.join(n)))
+        }
+        Some(inner) => {
+            let rel = inner.trim_end_matches(['/', '\\']);
+            let from = stage.join(rel);
+            if !from.exists() {
+                return Err(format!("{inner} is not in the archive"));
+            }
+            move_free(&from, &dest.join(rel))
+        }
+    });
+    let _ = std::fs::remove_dir_all(&stage);
+    r
+}
+
+/// Extract everything into `dest` (created if needed). Existing files are kept: what comes out gets a free name. Through
+/// Heimdall's file guard when it is installed and unpacks the format; otherwise 7-Zip.
 pub fn extract_all(archive: &Path, dest: &Path) -> Result<(), String> {
+    extract_all_with(fileguard().as_deref(), archive, dest)
+}
+
+fn extract_all_with(guard: Option<&Path>, archive: &Path, dest: &Path) -> Result<(), String> {
+    if let Some(g) = guard.filter(|_| guarded_format(archive)) {
+        return guarded_into(g, archive, dest, None);
+    }
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     run(vec![os("x"), os("-y"), os("-aou"), out_dir(dest), os("--"), archive.into()], None).map(|_| ())
 }
 
-/// Extract one entry (a file or folder) into `dest`, keeping its folder structure below it.
+/// Extract one entry (a file or folder) into `dest`, keeping its folder structure below it (through the file guard as
+/// `extract_all`: the whole archive is checked, the entry kept).
 pub fn extract_entry(archive: &Path, inner: &str, dest: &Path) -> Result<(), String> {
+    extract_entry_with(fileguard().as_deref(), archive, inner, dest)
+}
+
+fn extract_entry_with(guard: Option<&Path>, archive: &Path, inner: &str, dest: &Path) -> Result<(), String> {
     if !safe_inner(inner) {
         return Err(format!("refusing unsafe name inside archive: {inner}"));
+    }
+    if let Some(g) = guard.filter(|_| guarded_format(archive)) {
+        return guarded_into(g, archive, dest, Some(inner));
     }
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     run(vec![os("x"), os("-y"), os("-aou"), out_dir(dest), os("--"), archive.into(), inner.into()], None).map(|_| ())
@@ -315,6 +419,66 @@ mod tests {
 
     fn names(v: &[Entry]) -> Vec<(String, bool)> {
         v.iter().map(|e| (e.name.clone(), e.is_dir)).collect()
+    }
+
+    /// A stand-in for `heimdall-fileguard extract --json -- ARCHIVE OUTDIR`: an archive named "bomb.zip" is refused, any
+    /// other unpacks to `a.txt` and `sub/b.txt`; each call is written down beside it.
+    fn stand_in(dir: &Path) -> PathBuf {
+        let p = dir.join("fileguard");
+        std::fs::write(
+            &p,
+            format!(
+                "#!/bin/sh\necho \"$*\" >> '{}'\ncase \"$4\" in *bomb.zip) echo '{{\"files\":[],\"skipped\":[],\"refused\":\"too large when unpacked\"}}'; exit 1;; esac\nmkdir \"$5\" && mkdir \"$5/sub\" && echo a > \"$5/a.txt\" && echo b > \"$5/sub/b.txt\"\necho '{{\"files\":[],\"skipped\":[],\"refused\":null}}'\n",
+                dir.join("calls").display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    }
+
+    #[test]
+    fn extract_goes_through_the_file_guard_and_a_bomb_leaves_nothing() {
+        let base = std::env::temp_dir().join(format!("minos-guard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        struct Gone(PathBuf);
+        impl Drop for Gone {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _gone = Gone(base.clone());
+        let t = base.as_path();
+        let guard = stand_in(t);
+        let dest = t.join("Downloads");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(dest.join("a.txt"), "mine").unwrap();
+        extract_all_with(Some(&guard), &t.join("mod.zip"), &dest).unwrap();
+        let calls = std::fs::read_to_string(t.join("calls")).unwrap();
+        assert!(calls.starts_with("extract --json -- ") && calls.contains("mod.zip"), "{calls}");
+        // a name taken already is kept; what came out gets a free name; the staging folder is gone
+        assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "mine");
+        assert_eq!(std::fs::read_to_string(dest.join("a (2).txt")).unwrap(), "a\n");
+        assert!(dest.join("sub/b.txt").is_file());
+        let mut names: Vec<String> =
+            std::fs::read_dir(&dest).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        assert_eq!(names, ["a (2).txt", "a.txt", "sub"]);
+        // one entry: only it, under its own path
+        let one = t.join("one");
+        extract_entry_with(Some(&guard), &t.join("mod.tar.gz"), "sub/b.txt", &one).unwrap();
+        assert!(one.join("sub/b.txt").is_file() && !one.join("a.txt").exists());
+        // refused: the reason comes back and nothing is left
+        let bombed = t.join("bombed");
+        let e = extract_all_with(Some(&guard), &t.join("bomb.zip"), &bombed).unwrap_err();
+        assert!(e.contains("Heimdall refused it: too large when unpacked"), "{e}");
+        assert_eq!(std::fs::read_dir(&bombed).unwrap().count(), 0);
+        // 7z is not the guard's: 7-Zip still unpacks it (the guard is not called)
+        let before = std::fs::read_to_string(t.join("calls")).unwrap().lines().count();
+        let _ = extract_all_with(Some(&guard), &t.join("other.7z"), &t.join("x"));
+        assert_eq!(std::fs::read_to_string(t.join("calls")).unwrap().lines().count(), before);
     }
 
     #[test]
@@ -453,7 +617,8 @@ mod tests {
             assert!(l.iter().all(|e| !e.path.starts_with('/') && !e.path.contains(':')));
             let one = extract_file_flat(&arc, "src/sub dir/b.txt", &d.join(format!("flat-{name}"))).unwrap();
             assert_eq!(std::fs::read_to_string(one).unwrap(), "bravo");
-            extract_all(&arc, &d.join(format!("all-{name}"))).unwrap();
+            // 7-Zip itself, whether or not the file guard is installed here (its own test is above)
+            extract_all_with(None, &arc, &d.join(format!("all-{name}"))).unwrap();
             assert_eq!(std::fs::read_to_string(d.join(format!("all-{name}/src/a.txt"))).unwrap(), "alpha");
         }
         // a file whose name looks like an option must not be treated as one

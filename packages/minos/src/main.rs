@@ -60,6 +60,14 @@ struct ScrubJob {
     stopped: bool,
 }
 
+/// One archive to extract: everything (`inner` empty) or one entry, into `dest`; `here` for Extract Here's wording.
+struct ExtractJob {
+    archive: PathBuf,
+    dest: PathBuf,
+    inner: String,
+    here: bool,
+}
+
 /// Right-click > Remove hidden info, running on its own thread (see App::start_strip): a small window while it works, then
 /// what was removed (or that nothing was hidden), until closed.
 struct StripJob {
@@ -2224,6 +2232,9 @@ struct App {
     scrub_next: u64,
     /// Right-click > Remove hidden info, the same way.
     strips: Vec<StripJob>,
+    /// Extract Here / Extract To running on threads of their own (Heimdall's file guard checks each file, which takes a
+    /// few seconds): each sends what happened when it is done.
+    extracts: Vec<Receiver<String>>,
     status: String,
     drives: Vec<places::Drive>,
     /// Recently closed tabs (pane, folder), newest last, for Ctrl+Shift+T.
@@ -2364,6 +2375,7 @@ impl App {
             scrubs: Vec::new(),
             scrub_next: 0,
             strips: Vec::new(),
+            extracts: Vec::new(),
             status: String::new(),
             drives,
             closed_tabs: Vec::new(),
@@ -2679,6 +2691,53 @@ impl App {
         self.scrub_next += 1;
         self.status = format!("Removing hidden info from {name}...");
         self.strips.push(StripJob { id: self.scrub_next, name, out, pid, rx, result: None, stopped: false });
+    }
+
+    /// Extracts on a thread of its own; the status says what happened when it is done (`poll_extracts`).
+    fn start_extract(&mut self, ctx: &egui::Context, jobs: Vec<ExtractJob>) {
+        if jobs.is_empty() {
+            return;
+        }
+        let (tx, rx) = channel();
+        let c = ctx.clone();
+        std::thread::spawn(move || {
+            let msgs: Vec<String> = jobs
+                .iter()
+                .map(|j| {
+                    let r = if j.inner.is_empty() {
+                        archive::extract_all(&j.archive, &j.dest)
+                    } else {
+                        archive::extract_entry(&j.archive, &j.inner, &j.dest)
+                    };
+                    match r {
+                        Ok(()) if j.here => format!("Extracted {}", j.archive.file_name().unwrap_or_default().to_string_lossy()),
+                        Ok(()) => format!("Extracted to {}", j.dest.display()),
+                        Err(e) => format!("{}: {e}", j.archive.display()),
+                    }
+                })
+                .collect();
+            let _ = tx.send(msgs.join("; "));
+            c.request_repaint();
+        });
+        self.extracts.push(rx);
+        self.status =
+            if archive::fileguard().is_some() { "Extracting (Heimdall checks each file)...".into() } else { "Extracting...".into() };
+    }
+
+    fn poll_extracts(&mut self) {
+        let mut done = vec![];
+        self.extracts.retain(|rx| match rx.try_recv() {
+            Ok(m) => {
+                done.push(m);
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
+        });
+        if !done.is_empty() {
+            self.status = done.join("; ");
+            self.reload_all();
+        }
     }
 
     /// The Remove hidden info windows: Stop while one runs, then what was removed (with Show), nothing found, or Failed.
@@ -3416,19 +3475,19 @@ impl App {
                     }
                 },
                 Action::ExtractHere(archives) => {
-                    let mut msgs = vec![];
-                    for a in &archives {
-                        let dest = a.parent().map(Path::to_path_buf).unwrap_or_default();
-                        match archive::extract_all(a, &dest) {
-                            Ok(()) => msgs.push(format!("Extracted {}", a.file_name().unwrap_or_default().to_string_lossy())),
-                            Err(e) => msgs.push(format!("{}: {e}", a.display())),
-                        }
-                    }
-                    self.status = msgs.join("; ");
-                    self.reload_all();
+                    let jobs = archives
+                        .iter()
+                        .map(|a| ExtractJob {
+                            archive: a.clone(),
+                            dest: a.parent().map(Path::to_path_buf).unwrap_or_default(),
+                            inner: String::new(),
+                            here: true,
+                        })
+                        .collect();
+                    self.start_extract(ctx, jobs);
                 }
                 Action::ExtractTo(paths) => {
-                    let mut msgs = vec![];
+                    let mut jobs = vec![];
                     for p in &paths {
                         let (arc, inner) = match archive::split(p) {
                             Some((a, i)) => (a, i),
@@ -3441,15 +3500,9 @@ impl App {
                         let single_top = inner.is_empty()
                             && archive::list_cached(&arc).map(|l| archive::top_level_names(&l).len() == 1).unwrap_or(false);
                         let dest = if single_top { parent.clone() } else { fileops::unique_path(&parent, &stem) };
-                        let r =
-                            if inner.is_empty() { archive::extract_all(&arc, &dest) } else { archive::extract_entry(&arc, &inner, &dest) };
-                        msgs.push(match r {
-                            Ok(()) => format!("Extracted to {}", dest.display()),
-                            Err(e) => format!("{}: {e}", arc.display()),
-                        });
+                        jobs.push(ExtractJob { archive: arc, dest, inner, here: false });
                     }
-                    self.status = msgs.join("; ");
-                    self.reload_all();
+                    self.start_extract(ctx, jobs);
                 }
                 Action::Compress(paths, format) => {
                     let Some(first) = paths.first() else { continue };
@@ -4729,6 +4782,7 @@ impl eframe::App for App {
         self.poll_transfer(&ctx);
         self.poll_scrubs(&ctx);
         self.poll_strips(&ctx);
+        self.poll_extracts();
         self.pump_dnd(&ctx, _frame);
         if let Some(p) = egui::DragAndDrop::payload::<DragPaths>(&ctx) {
             if let Some(pos) = ctx.pointer_latest_pos() {
