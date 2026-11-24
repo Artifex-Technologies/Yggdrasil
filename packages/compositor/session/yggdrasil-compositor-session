@@ -21,6 +21,13 @@ TAG=yggdrasil-compositor-session
 
 export XDG_CURRENT_DESKTOP=Yggdrasil XDG_SESSION_DESKTOP=yggdrasil XDG_SESSION_TYPE=wayland
 export QT_QPA_PLATFORM='wayland;xcb' GDK_BACKEND='wayland,x11' MOZ_ENABLE_WAYLAND=1 ELECTRON_OZONE_PLATFORM_HINT=auto
+# NVIDIA's driver: video decoding through it (VA-API's nvidia driver, its direct backend) and GLX through NVIDIA's library, as
+# the Hyprland session sets them (packages/session, session.rs)
+NV_VARS=""
+if [ -e /proc/driver/nvidia/version ]; then
+  export LIBVA_DRIVER_NAME=nvidia __GLX_VENDOR_LIBRARY_NAME=nvidia NVD_BACKEND=direct
+  NV_VARS=" LIBVA_DRIVER_NAME __GLX_VENDOR_LIBRARY_NAME NVD_BACKEND"
+fi
 
 say() { echo "$*" | systemd-cat -t "$TAG"; }
 
@@ -39,7 +46,7 @@ SPLASH="(yggdrasil-splash 2>&1 | systemd-cat -t yggdrasil-splash) & "
 # a session that ended without its cleanup (killed, or the login screen restarted) can leave graphical-session.target and
 # yggdrasil-session.target active with their programs gone, and starting an active target starts nothing (no panel: a black
 # screen, YGG-91): so whatever is left is stopped first. A Hyprland session that ran before also leaves its signature behind.
-AUTOSTART="${SPLASH}systemctl --user stop graphical-session.target; systemctl --user reset-failed; systemctl --user unset-environment HYPRLAND_INSTANCE_SIGNATURE; systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT; dbus-update-activation-environment --systemd --all; systemctl --user start yggdrasil-session.target$PANEL_SWAP; echo autostart started for \$XDG_CURRENT_DESKTOP on \$WAYLAND_DISPLAY"
+AUTOSTART="${SPLASH}systemctl --user stop graphical-session.target; systemctl --user reset-failed; systemctl --user unset-environment HYPRLAND_INSTANCE_SIGNATURE; systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT$NV_VARS; dbus-update-activation-environment --systemd --all; systemctl --user start yggdrasil-session.target$PANEL_SWAP; echo autostart started for \$XDG_CURRENT_DESKTOP on \$WAYLAND_DISPLAY"
 
 # Restart and Shut down: yggdrasil-logout closes every window, writes "reboot" or "poweroff" here and ends the compositor;
 # this does it once the compositor has let go of the screen (as yggdrasil-session does for Hyprland). Without it a Shut down

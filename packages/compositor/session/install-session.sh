@@ -28,14 +28,16 @@ LIB=/usr/local/lib/yggdrasil-own
 ENTRY=/usr/share/wayland-sessions/yggdrasil-compositor.desktop
 GREETER=/etc/yggdrasil/greeter.conf
 BACKUP=$GREETER.before-own-compositor
-MODE=${1:-do}
 NVPROFILE=/etc/nvidia/nvidia-application-profiles-rc.d/50-yggdrasil-compositor
+MODE=do
 ENTRY_ONLY=0
-case "$MODE" in
-  do|--check|--undo) ;;
-  --entry-only) ENTRY_ONLY=1; MODE=do ;;
-  *) echo "usage: $0 [--check|--undo|--entry-only]" >&2; exit 2 ;;
-esac
+for a in "$@"; do   # --entry-only goes with --check too
+  case "$a" in
+    --check|--undo) MODE=$a ;;
+    --entry-only) ENTRY_ONLY=1 ;;
+    *) echo "usage: $0 [--check] [--entry-only] | --undo" >&2; exit 2 ;;
+  esac
+done
 step() { printf '\n== %s\n' "$*"; }
 run() { # a root step: shown with --check, done otherwise
   if [ "$MODE" = --check ]; then printf '   would run: %s\n' "$*"; else printf '   running: %s\n' "$*"; sudo "$@"; fi
