@@ -41,9 +41,7 @@ fn with_stand_ins(args: &[&str]) -> (Compositor, Called) {
     for p in PROGRAMS {
         let f = bin.join(p);
         // shell built-ins only: nothing else is on this PATH
-        std::fs::write(&f, format!("#!/bin/sh\necho \"${{0##*/}} $*\" >> '{}'\n", log.display())).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_script(&f, &format!("#!/bin/sh\necho \"${{0##*/}} $*\" >> '{}'\n", log.display()));
     }
     let comp = Compositor::start_env(args, &[("PATH", bin.to_str().unwrap())], |_| {});
     (comp, Called(log))
@@ -678,4 +676,15 @@ fn a_steam_games_card_shows_its_shortcuts_icon() {
     let all = (0, 0, pic.w as i32, pic.h as i32);
     assert!(pic.count(all, (255, 0, 255)) > 100, "the game's card has the shortcut's icon");
     comp.must("key-up alt");
+}
+
+/// Writes an executable script with `install -m 755`, a program of its own, so that no thread of this test process ever holds
+/// it open for writing: another test's program started meanwhile would inherit that handle until its exec, and running the
+/// script then fails with "Text file busy" (ETXTBSY).
+fn write_script(path: &std::path::Path, text: &str) {
+    let src = path.with_extension("script-text");
+    std::fs::write(&src, text).unwrap();
+    let ok = std::process::Command::new("install").args(["-m", "755"]).arg(&src).arg(path).status().is_ok_and(|s| s.success());
+    let _ = std::fs::remove_file(&src);
+    assert!(ok, "install could not write {}", path.display());
 }

@@ -908,13 +908,10 @@ fn logout_stand_ins(comp: &Compositor) -> (PathBuf, PathBuf) {
     for t in ["systemd-cat", "notify-send", "loginctl", "systemctl"] {
         let p = bin.join(t);
         let l = log.display();
-        std::fs::write(
+        write_script(
             &p,
-            format!("#!/bin/sh\nprintf '%s' '{t}' >> '{l}'\nfor a in \"$@\"; do printf ' [%s]' \"$a\" >> '{l}'; done\necho >> '{l}'\n"),
-        )
-        .unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            &format!("#!/bin/sh\nprintf '%s' '{t}' >> '{l}'\nfor a in \"$@\"; do printf ' [%s]' \"$a\" >> '{l}'; done\necho >> '{l}'\n"),
+        );
     }
     (bin, log)
 }
@@ -1088,4 +1085,15 @@ fn the_argus_app_opens_reaches_the_fake_flipper_and_closes() {
     for w in ["StorageWriteRequest", "StorageDeleteRequest", "SystemRebootRequest", "SystemUpdateRequest", "SystemFactoryResetRequest"] {
         assert!(!asked.contains(w), "nothing changed the fake: {asked}");
     }
+}
+
+/// Writes an executable script with `install -m 755`, a program of its own, so that no thread of this test process ever holds
+/// it open for writing: another test's program started meanwhile would inherit that handle until its exec, and running the
+/// script then fails with "Text file busy" (ETXTBSY).
+fn write_script(path: &std::path::Path, text: &str) {
+    let src = path.with_extension("script-text");
+    std::fs::write(&src, text).unwrap();
+    let ok = std::process::Command::new("install").args(["-m", "755"]).arg(&src).arg(path).status().is_ok_and(|s| s.success());
+    let _ = std::fs::remove_file(&src);
+    assert!(ok, "install could not write {}", path.display());
 }

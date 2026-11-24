@@ -7,7 +7,6 @@
 
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -111,8 +110,7 @@ fn crashes_without_a_stored_core_come_from_the_journal() {
 
     let log = d.join("notices.log");
     let prog = d.join("notice");
-    std::fs::write(&prog, format!("#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\" >> '{}'\n", log.display())).unwrap();
-    std::fs::set_permissions(&prog, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_script(&prog, &format!("#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\" >> '{}'\n", log.display()));
     let w = Command::new(env!("CARGO_BIN_EXE_yggdrasil-crashwatch"))
         .args(["--dir", cores.to_str().unwrap(), "--journal-dir", journal.to_str().unwrap()])
         .env("CRASHWATCH_NOTICE", &prog)
@@ -174,4 +172,15 @@ fn crashes_without_a_stored_core_come_from_the_journal() {
     write_journal(&file, 40, &[crash(me, 902, "/usr/bin/later-still", "8", None)]);
     assert_eq!(lines(&log, 4).last().map(String::as_str), Some("/usr/bin/later-still|SIGFPE"));
     let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Writes an executable script with `install -m 755`, a program of its own, so that no thread of this test process ever holds
+/// it open for writing: another test's program started meanwhile would inherit that handle until its exec, and running the
+/// script then fails with "Text file busy" (ETXTBSY).
+fn write_script(path: &std::path::Path, text: &str) {
+    let src = path.with_extension("script-text");
+    std::fs::write(&src, text).unwrap();
+    let ok = std::process::Command::new("install").args(["-m", "755"]).arg(&src).arg(path).status().is_ok_and(|s| s.success());
+    let _ = std::fs::remove_file(&src);
+    assert!(ok, "install could not write {}", path.display());
 }

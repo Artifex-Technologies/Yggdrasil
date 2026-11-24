@@ -4,7 +4,6 @@
 //! The cancel tests skip themselves where `unshare -rm` is not allowed.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -94,8 +93,7 @@ fn yay() -> Yay {
     let d = tmp("yay");
     let log = d.join("pacman.log");
     // a stand-in pacman: records its arguments, lists nothing as installed
-    fs::write(d.join("pacman"), format!("#!/bin/sh\n[ \"$1\" = -Qq ] && exit 0\necho \"$*\" >> {}\n", log.display())).unwrap();
-    fs::set_permissions(d.join("pacman"), fs::Permissions::from_mode(0o755)).unwrap();
+    write_script(&d.join("pacman"), &format!("#!/bin/sh\n[ \"$1\" = -Qq ] && exit 0\necho \"$*\" >> {}\n", log.display()));
     let pkg = d.join("cadcraft-bin-0.12.0-1-x86_64.pkg.tar.zst");
     fs::write(&pkg, "").unwrap();
     Yay { d, log, pkg: pkg.to_string_lossy().into_owned() }
@@ -173,9 +171,9 @@ fn test_options_after_the_separator_are_not_options() {
 #[test]
 fn pacmans_exit_code_is_given_back() {
     let y = yay();
-    fs::write(y.d.join("pacman"), "#!/bin/sh\n[ \"$1\" = -Qq ] && exit 0\nexit 3\n").unwrap();
+    write_script(&y.d.join("pacman"), "#!/bin/sh\n[ \"$1\" = -Qq ] && exit 0\nexit 3\n");
     assert_eq!(code(&y.go(&["-S", "--noconfirm", "krita"])), 3);
-    fs::write(y.d.join("pacman"), "#!/bin/sh\n[ \"$1\" = -Qq ] && exit 0\nkill -TERM $$\n").unwrap();
+    write_script(&y.d.join("pacman"), "#!/bin/sh\n[ \"$1\" = -Qq ] && exit 0\nkill -TERM $$\n");
     assert_eq!(code(&y.go(&["-S", "--noconfirm", "krita"])), 241, "killed by SIGTERM: sys.exit(-15)");
 }
 
@@ -210,16 +208,14 @@ fn cancel_world() -> PathBuf {
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
     fs::File::options().write(true).open(w.join("cache/old-1-1-x86_64.pkg.tar.zst")).unwrap().set_modified(old).unwrap();
     let wd = w.display();
-    fs::write(
-        w.join("bin/pacman"),
-        format!(
+    write_script(
+        &w.join("bin/pacman"),
+        &format!(
             "#!/bin/sh\nif [ \"$1\" = -Qq ]; then cat {wd}/installed; exit 0; fi\necho \"pacman $*\" >> {wd}/calls\n\
              case \"$1\" in -Rns) exit 0 ;; esac\necho newpkg >> {wd}/installed\necho x > /var/cache/pacman/pkg/newpkg-1-1-x86_64.pkg.tar.zst\n\
              echo x > /var/cache/pacman/pkg/other.pkg.tar.zst.part\nexec sleep 30\n"
         ),
-    )
-    .unwrap();
-    fs::set_permissions(w.join("bin/pacman"), fs::Permissions::from_mode(0o755)).unwrap();
+    );
     w
 }
 
@@ -280,4 +276,15 @@ fn a_remove_that_is_cancelled_is_not_undone() {
     assert_eq!(String::from_utf8_lossy(&o.stdout), "");
     assert!(w.join("cache/old-1-1-x86_64.pkg.tar.zst").exists());
     let _ = fs::remove_dir_all(&w);
+}
+
+/// Writes an executable script with `install -m 755`, a program of its own, so that no thread of this test process ever holds
+/// it open for writing: another test's program started meanwhile would inherit that handle until its exec, and running the
+/// script then fails with "Text file busy" (ETXTBSY).
+fn write_script(path: &std::path::Path, text: &str) {
+    let src = path.with_extension("script-text");
+    std::fs::write(&src, text).unwrap();
+    let ok = std::process::Command::new("install").args(["-m", "755"]).arg(&src).arg(path).status().is_ok_and(|s| s.success());
+    let _ = std::fs::remove_file(&src);
+    assert!(ok, "install could not write {}", path.display());
 }

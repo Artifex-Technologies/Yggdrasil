@@ -4,7 +4,6 @@
 
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -86,8 +85,7 @@ fn lines(log: &Path, at_least: usize) -> Vec<String> {
 fn fake_notice(d: &Path) -> (PathBuf, PathBuf) {
     let log = d.join("notices.log");
     let prog = d.join("notice");
-    std::fs::write(&prog, format!("#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\" >> '{}'\n", log.display())).unwrap();
-    std::fs::set_permissions(&prog, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_script(&prog, &format!("#!/bin/sh\nprintf '%s|%s\\n' \"$1\" \"$2\" >> '{}'\n", log.display()));
     (prog, log)
 }
 
@@ -166,4 +164,15 @@ fn dry_run_prints_instead() {
         assert_eq!(String::from_utf8_lossy(&out.stdout), "/usr/bin/game crashed (SIGFPE)\n");
     }
     let _ = std::fs::remove_dir_all(d.parent().unwrap());
+}
+
+/// Writes an executable script with `install -m 755`, a program of its own, so that no thread of this test process ever holds
+/// it open for writing: another test's program started meanwhile would inherit that handle until its exec, and running the
+/// script then fails with "Text file busy" (ETXTBSY).
+fn write_script(path: &std::path::Path, text: &str) {
+    let src = path.with_extension("script-text");
+    std::fs::write(&src, text).unwrap();
+    let ok = std::process::Command::new("install").args(["-m", "755"]).arg(&src).arg(path).status().is_ok_and(|s| s.success());
+    let _ = std::fs::remove_file(&src);
+    assert!(ok, "install could not write {}", path.display());
 }

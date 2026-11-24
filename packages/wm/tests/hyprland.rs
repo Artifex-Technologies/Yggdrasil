@@ -494,18 +494,15 @@ fn stand_ins(h: &FakeHyprland) -> PathBuf {
     let log = h.run.join("calls");
     for t in ["systemd-cat", "notify-send", "loginctl", "systemctl"] {
         let p = bin.join(t);
-        std::fs::write(
+        write_script(
             &p,
-            format!(
+            &format!(
                 "#!/bin/sh\nprintf '%s' '{t}' >> '{}'\nfor a in \"$@\"; do printf ' [%s]' \"$a\" >> '{}'; done\necho >> '{}'\n",
                 log.display(),
                 log.display(),
                 log.display()
             ),
-        )
-        .unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
     }
     log
 }
@@ -548,4 +545,15 @@ fn logout_with_a_window_left_locks_instead() {
     assert!(c.contains("notify-send [-a] [Desktop] [-u] [critical] [-i] [dialog-warning] [Still signed in] [notes.txt - Editor, A Song - Player, Terminal 1 and others did not close"));
     assert!(c.ends_with("loginctl [lock-session]\n"));
     assert!(!h.run.join("yggdrasil-after-session").exists());
+}
+
+/// Writes an executable script with `install -m 755`, a program of its own, so that no thread of this test process ever holds
+/// it open for writing: another test's program started meanwhile would inherit that handle until its exec, and running the
+/// script then fails with "Text file busy" (ETXTBSY).
+fn write_script(path: &std::path::Path, text: &str) {
+    let src = path.with_extension("script-text");
+    std::fs::write(&src, text).unwrap();
+    let ok = std::process::Command::new("install").args(["-m", "755"]).arg(&src).arg(path).status().is_ok_and(|s| s.success());
+    let _ = std::fs::remove_file(&src);
+    assert!(ok, "install could not write {}", path.display());
 }

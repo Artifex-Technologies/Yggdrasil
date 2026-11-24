@@ -23,9 +23,11 @@ fn stand_ins(dir: &fake::Dir, lsblk: &str) -> String {
         "chroot",
     ] {
         let body = if t == "lsblk" { lsblk.to_string() } else { String::new() };
-        dir.write(&format!("bin/{t}"), &format!("#!/bin/sh\necho \"$0 $*\" >> \"{}\"\n{body}", dir.path("calls")));
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dir.path(&format!("bin/{t}")), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::create_dir_all(dir.path("bin")).unwrap();
+        write_script(
+            std::path::Path::new(&dir.path(&format!("bin/{t}"))),
+            &format!("#!/bin/sh\necho \"$0 $*\" >> \"{}\"\n{body}", dir.path("calls")),
+        );
     }
     dir.path("bin")
 }
@@ -82,4 +84,15 @@ fn the_disks_from_lsblk() {
     assert!(out.trim_end().ends_with(r#""table": "", "partitions": [], "free": [{"start": 1048576, "size": 536868814848}]}]"#), "{out}");
     let calls = std::fs::read_to_string(dir.path("calls")).unwrap();
     assert!(calls.lines().all(|l| l.contains("/bin/lsblk ") || l.contains("/bin/findmnt ")), "{calls}");
+}
+
+/// Writes an executable script with `install -m 755`, a program of its own, so that no thread of this test process ever holds
+/// it open for writing: another test's program started meanwhile would inherit that handle until its exec, and running the
+/// script then fails with "Text file busy" (ETXTBSY).
+fn write_script(path: &std::path::Path, text: &str) {
+    let src = path.with_extension("script-text");
+    std::fs::write(&src, text).unwrap();
+    let ok = std::process::Command::new("install").args(["-m", "755"]).arg(&src).arg(path).status().is_ok_and(|s| s.success());
+    let _ = std::fs::remove_file(&src);
+    assert!(ok, "install could not write {}", path.display());
 }

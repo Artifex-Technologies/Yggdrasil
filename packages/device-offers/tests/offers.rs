@@ -3,7 +3,6 @@
 //! Every call is written to a calls file. No real network, notification, package or service is touched; the no-network case
 //! also runs in a network namespace of its own (unshare -rn) when the system allows one.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -43,11 +42,11 @@ impl World {
         w.tool("os-apps", "echo \"AGORA_SUDO=$AGORA_SUDO\" >> \"$WORLD/calls\"; exit ${APPS_RC:-0}");
         w.tool("sudo", "");
         // the dispatcher starts systemctl with a clean environment: this one knows its world by itself
-        w.write(
-            "bin/systemctl",
+        std::fs::create_dir_all(w.dir.join("bin")).unwrap();
+        write_script(
+            &w.dir.join("bin/systemctl"),
             &format!("#!/bin/sh\nWORLD='{}'\n{RECORD}echo \"XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR\" >> \"$WORLD/calls\"\n", w.dir.display()),
         );
-        std::fs::set_permissions(w.dir.join("bin/systemctl"), std::fs::Permissions::from_mode(0o755)).unwrap();
         for d in ["run", "home", "sys"] {
             std::fs::create_dir_all(w.dir.join(d)).unwrap();
         }
@@ -61,8 +60,8 @@ impl World {
     }
 
     fn tool(&self, name: &str, body: &str) {
-        self.write(&format!("bin/{name}"), &format!("#!/bin/sh\n{RECORD}{body}\n"));
-        std::fs::set_permissions(self.dir.join("bin").join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::create_dir_all(self.dir.join("bin")).unwrap();
+        write_script(&self.dir.join("bin").join(name), &format!("#!/bin/sh\n{RECORD}{body}\n"));
     }
 
     /// A USB device with a boot keyboard interface or none.
@@ -299,4 +298,15 @@ fn the_units_and_the_rule_are_valid() {
     assert!(service.contains("ConditionEnvironment=WAYLAND_DISPLAY"), "only in a desktop session");
     let rule = std::fs::read_to_string(data.join("71-yggdrasil-device-offers.rules")).unwrap();
     assert!(rule.contains("ENV{SYSTEMD_USER_WANTS}+=\"yggdrasil-device-offers.service\""));
+}
+
+/// Writes an executable script with `install -m 755`, a program of its own, so that no thread of this test process ever holds
+/// it open for writing: another test's program started meanwhile would inherit that handle until its exec, and running the
+/// script then fails with "Text file busy" (ETXTBSY).
+fn write_script(path: &std::path::Path, text: &str) {
+    let src = path.with_extension("script-text");
+    std::fs::write(&src, text).unwrap();
+    let ok = std::process::Command::new("install").args(["-m", "755"]).arg(&src).arg(path).status().is_ok_and(|s| s.success());
+    let _ = std::fs::remove_file(&src);
+    assert!(ok, "install could not write {}", path.display());
 }
