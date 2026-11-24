@@ -2,6 +2,8 @@
 # compositor)": the same desktop as the Yggdrasil session on Hyprland (the panel, idle and lock, the password box, the autostart
 # folder through yggdrasil-session.target), drawn by the compositor itself on the hardware (DRM/KMS through logind). When it
 # ends badly within its first seconds, its session start goes on with the Hyprland session instead, if that is installed.
+# On NVIDIA: an application profile for the driver (read only by NVIDIA's driver; nothing on other GPUs) so the compositor's
+# freed GPU memory goes back instead of staying in the driver's pool (about 1 GB otherwise, as other Wayland compositors found).
 pkgname=yggdrasil-compositor
 pkgver=1.0.0
 pkgrel=1
@@ -16,6 +18,7 @@ depends=('gcc-libs' 'glibc' 'libdrm' 'libinput' 'libxkbcommon' 'lua54' 'mesa' 'p
 optdepends=('hyprsunset: Night Light (Settings > Displays)'
             'xdg-desktop-portal-hyprland: screenshots and screen sharing through the portal')
 makedepends=('cargo')
+backup=('etc/nvidia/nvidia-application-profiles-rc.d/50-yggdrasil-compositor')
 options=('!lto')
 
 _src="$startdir/../../compositor"
@@ -39,4 +42,6 @@ package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-compositor" "$pkgdir/usr/bin/yggdrasil-compositor"
   install -Dm755 "$_src/session/yggdrasil-compositor-session" "$pkgdir/usr/bin/yggdrasil-compositor-session"
   install -Dm644 "$_src/session/yggdrasil-compositor.desktop" "$pkgdir/usr/share/wayland-sessions/yggdrasil-compositor.desktop"
+  install -Dm644 "$_src/session/nvidia-application-profile.json" \
+    "$pkgdir/etc/nvidia/nvidia-application-profiles-rc.d/50-yggdrasil-compositor"
 }

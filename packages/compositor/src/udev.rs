@@ -43,9 +43,11 @@
 //! - **The control socket** (control.rs) is there too, for Yggdrasil's own tools (yggdrasil-wm); it makes no input.
 //! - **Ending**: `ctl quit`, SIGTERM, SIGINT or SIGHUP end it cleanly: the session is closed and the console comes back.
 //!
+//! - **Waiting for programs' GPUs** (sync.rs): a commit with a GPU buffer is applied once the buffer is drawn, through
+//!   explicit sync (linux-drm-syncobj-v1, which NVIDIA needs) where the GPU can, the buffer's own fences otherwise.
+//!
 //! Not yet (later milestones, docs/COMPOSITOR.md): several GPUs drawing for each other (a laptop's NVIDIA GPU behind the Intel
-//! one), explicit sync (linux-drm-syncobj-v1, which NVIDIA needs), direct scanout of full screen games tuned per GPU, VRR, tearing
-//! control.
+//! one), direct scanout of full screen games tuned per GPU, VRR, tearing control.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -235,12 +237,13 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let (session, notifier) = LibSeatSession::new().map_err(|e| format!("no seat (logind or seatd): {e}"))?;
     let seat = session.seat();
     eprintln!("yggdrasil-compositor: seat {seat}");
-    let primary = udev::primary_gpu(&seat)
-        .ok()
-        .flatten()
-        .and_then(|p| DrmNode::from_path(p).ok())
-        .or_else(|| udev::all_gpus(&seat).ok()?.into_iter().find_map(|p| DrmNode::from_path(p).ok()))
-        .ok_or("no GPU found")?;
+    let boot = udev::primary_gpu(&seat).ok().flatten();
+    let all = udev::all_gpus(&seat).unwrap_or_default();
+    let wanted = std::env::var("YGGDRASIL_COMPOSITOR_GPU").ok();
+    let (chosen, why) =
+        render_gpu(boot.as_deref(), &all, wanted.as_deref(), |p| has_screen(p, Path::new("/sys/class/drm"))).ok_or("no GPU found")?;
+    eprintln!("yggdrasil-compositor: drawing on {} ({why})", chosen.display());
+    let primary = DrmNode::from_path(&chosen).map_err(|e| format!("{}: {e}", chosen.display()))?;
     let udev_backend = UdevBackend::new(&seat)?;
 
     let mut libinput = Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(session.clone().into());
@@ -497,6 +500,49 @@ fn same_gpu(a: DrmNode, b: DrmNode) -> bool {
         || a.node_with_type(NodeType::Render).and_then(|n| n.ok()) == b.node_with_type(NodeType::Render).and_then(|n| n.ok())
 }
 
+/// The GPU that draws, and that programs render on: the one YGGDRASIL_COMPOSITOR_GPU names (`/dev/dri/card1`, or `card1`);
+/// otherwise the boot GPU when a screen is connected to it, else the first GPU with a screen, else the boot GPU (else the
+/// first). A desktop with two cards may boot from the one with no screen (the firmware goes by slot); drawing there would
+/// need every frame copied to the other card, which this compositor does not do yet. Gives the path and why it was chosen.
+fn render_gpu(
+    boot: Option<&Path>,
+    all: &[std::path::PathBuf],
+    wanted: Option<&str>,
+    has_screen: impl Fn(&Path) -> bool,
+) -> Option<(std::path::PathBuf, &'static str)> {
+    let same = |a: &Path, b: &Path| a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y);
+    if let Some(w) = wanted.map(str::trim).filter(|w| !w.is_empty()) {
+        let w = if w.contains('/') { std::path::PathBuf::from(w) } else { Path::new("/dev/dri").join(w) };
+        if let Some(p) = all.iter().find(|p| same(p, &w)) {
+            return Some((p.clone(), "YGGDRASIL_COMPOSITOR_GPU"));
+        }
+        eprintln!("yggdrasil-compositor: YGGDRASIL_COMPOSITOR_GPU={} is not one of the GPUs; choosing as usual", w.display());
+    }
+    let mut gpus: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(b) = boot {
+        gpus.push(b.to_path_buf());
+    }
+    gpus.extend(all.iter().filter(|p| !boot.is_some_and(|b| same(p, b))).cloned());
+    if let Some(b) = boot.filter(|b| has_screen(b)) {
+        return Some((b.to_path_buf(), if gpus.len() > 1 { "the boot GPU, which has the screens" } else { "the only GPU" }));
+    }
+    if let Some(p) = gpus.iter().find(|p| has_screen(p)) {
+        return Some((p.clone(), "the GPU the screens are connected to (not the boot one)"));
+    }
+    gpus.into_iter().next().map(|p| (p, if boot.is_some() { "the boot GPU (no screen connected yet)" } else { "the first GPU" }))
+}
+
+/// Whether a screen is connected to the GPU `/dev/dri/cardN`: one of its connectors in sysfs (`cardN-DP-1/status`) says
+/// "connected".
+fn has_screen(gpu: &Path, sysfs: &Path) -> bool {
+    let Some(name) = gpu.file_name().map(|n| n.to_string_lossy().into_owned()) else { return false };
+    let prefix = format!("{name}-");
+    std::fs::read_dir(sysfs).into_iter().flatten().flatten().any(|e| {
+        e.file_name().to_string_lossy().starts_with(&prefix)
+            && std::fs::read_to_string(e.path().join("status")).is_ok_and(|s| s.trim() == "connected")
+    })
+}
+
 /// Block SIGTERM, SIGINT and SIGHUP and give a signalfd that becomes readable when one comes.
 fn block_signals() -> Result<std::os::fd::OwnedFd, String> {
     use std::os::fd::FromRawFd;
@@ -626,6 +672,10 @@ fn gpu_buffers(udev: &Rc<RefCell<Udev>>, app: &mut App, dh: &smithay::reexports:
                 }
             }
             let _ = renderer.bind_wl_display(dh);
+            // explicit sync (NVIDIA needs it): on the node programs render on
+            if let Some(path) = render.dev_path() {
+                crate::sync::offer(app, dh, &path);
+            }
             // copies may go straight into programs' GPU buffers (readback.rs): the formats the GPU draws into
             let render_formats = renderer.egl_context().dmabuf_render_formats().clone();
             let copy_formats: Vec<(Fourcc, Vec<u64>)> = COLOR_FORMATS
@@ -1509,6 +1559,53 @@ fn frame_shown(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crt
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_gpu_with_the_screens_draws_and_the_variable_wins() {
+        use std::path::{Path, PathBuf};
+        let (c0, c1) = (PathBuf::from("/dev/dri/card0"), PathBuf::from("/dev/dri/card1"));
+        let all = vec![c0.clone(), c1.clone()];
+        let screens_on = |which: &'static str| move |p: &Path| p.ends_with(which);
+        // one GPU, with or without a screen
+        assert_eq!(super::render_gpu(Some(&c1), std::slice::from_ref(&c1), None, screens_on("card1")), Some((c1.clone(), "the only GPU")));
+        // the boot card has the screens
+        assert_eq!(super::render_gpu(Some(&c0), &all, None, screens_on("card0")).unwrap().0, c0);
+        // the boot card has none: the one with the screens draws
+        let (p, why) = super::render_gpu(Some(&c0), &all, None, screens_on("card1")).unwrap();
+        assert_eq!((p, why), (c1.clone(), "the GPU the screens are connected to (not the boot one)"));
+        // nothing connected yet: the boot card
+        assert_eq!(super::render_gpu(Some(&c1), &all, None, |_| false).unwrap().0, c1);
+        assert_eq!(super::render_gpu(None, &all, None, |_| false).unwrap().0, c0);
+        // the variable, by path or name; one that names no GPU is ignored
+        assert_eq!(
+            super::render_gpu(Some(&c0), &all, Some("card1"), screens_on("card0")).unwrap(),
+            (c1.clone(), "YGGDRASIL_COMPOSITOR_GPU")
+        );
+        assert_eq!(super::render_gpu(Some(&c0), &all, Some("/dev/dri/card1"), screens_on("card0")).unwrap().0, c1);
+        assert_eq!(super::render_gpu(Some(&c0), &all, Some("card7"), screens_on("card0")).unwrap().0, c0);
+        assert_eq!(super::render_gpu(None, &[], None, |_| true), None);
+    }
+
+    #[test]
+    fn a_screen_counts_when_one_connector_of_that_gpu_says_connected() {
+        let t = std::env::temp_dir().join(format!("ygg-sysfs-{}", std::process::id()));
+        for (dir, status) in [
+            ("card0-DP-1", "disconnected"),
+            ("card1-HDMI-A-1", "disconnected"),
+            ("card1-DP-2", "connected\n"),
+            ("card10-DP-1", "connected"),
+        ] {
+            std::fs::create_dir_all(t.join(dir)).unwrap();
+            std::fs::write(t.join(dir).join("status"), status).unwrap();
+        }
+        let (zero, one, two) = (
+            super::has_screen(std::path::Path::new("/dev/dri/card0"), &t),
+            super::has_screen(std::path::Path::new("/dev/dri/card1"), &t),
+            super::has_screen(std::path::Path::new("/dev/dri/card2"), &t),
+        );
+        std::fs::remove_dir_all(&t).unwrap();
+        assert!(!zero && one && !two);
+    }
+
     use super::*;
 
     fn v(s: &[&str]) -> Vec<String> {

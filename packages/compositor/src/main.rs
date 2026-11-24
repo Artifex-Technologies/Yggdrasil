@@ -42,6 +42,7 @@ mod screencopy;
 mod shortcuts;
 mod state;
 mod switcher;
+mod sync;
 mod tiling;
 mod toplevels;
 mod touch;
@@ -84,6 +85,9 @@ fn gpu_buffers(
     }
     let node =
         EGLDevice::device_for_display(b.renderer().egl_context().display()).ok().and_then(|d| d.try_get_render_node().ok().flatten());
+    if let Some(path) = node.and_then(|n| n.dev_path()) {
+        crate::sync::offer(app, dh, &path);
+    }
     let feedback = node.and_then(|n| DmabufFeedbackBuilder::new(n.dev_id(), formats.iter().copied()).build().ok());
     match &feedback {
         Some(f) => {

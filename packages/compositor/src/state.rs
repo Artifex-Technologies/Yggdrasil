@@ -161,6 +161,8 @@ pub struct App {
     /// None until then, when every import fails and programs fall back to shared memory).
     pub dmabuf_state: smithay::wayland::dmabuf::DmabufState,
     pub dmabuf_import: Option<DmabufImport>,
+    /// Explicit sync (linux-drm-syncobj-v1, sync.rs): offered when the render GPU can wait on a timeline; None otherwise.
+    pub syncobj_state: Option<smithay::wayland::drm_syncobj::DrmSyncobjState>,
     /// Surfaces that keep the screen awake (idle-inhibit: a video, a game): while any is alive, idle does not start.
     pub inhibitors: Vec<WlSurface>,
     // The protocol states named with a leading _ (here and further down) are only held: each owns its global (what programs
@@ -535,6 +537,7 @@ impl App {
             shm_state: ShmState::new::<Self>(dh, vec![]),
             dmabuf_state: smithay::wayland::dmabuf::DmabufState::new(),
             dmabuf_import: None,
+            syncobj_state: None,
             inhibitors: vec![],
             _idle_inhibit_state: smithay::wayland::idle_inhibit::IdleInhibitManagerState::new::<Self>(dh),
             primary_selection_state: smithay::wayland::selection::primary_selection::PrimarySelectionState::new::<Self>(dh),
@@ -2840,6 +2843,10 @@ impl CompositorHandler for App {
         if self.keyboard.current_focus() == Some(KbFocus::Wl(surface.clone())) {
             self.keyboard_check();
         }
+    }
+    /// Every new surface's GPU buffers are used only once the program's GPU has drawn them (sync.rs).
+    fn new_surface(&mut self, surface: &WlSurface) {
+        crate::sync::wait_for_gpu(surface);
     }
     fn commit(&mut self, surface: &WlSurface) {
         self.wake();

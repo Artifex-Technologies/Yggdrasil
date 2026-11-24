@@ -309,6 +309,18 @@ RESOURCE_MANAGER` shows Xft.dpi 120, and a GTK window under X11 drew at its plac
    foot drawn and used in the VM.
 12. **The bake-off:** the same games and the CAD model measured against Hyprland (`tools/bakeoff`), and only then a decision.
 
+## NVIDIA (2026-11-23)
+
+| Part | How | Checked |
+| --- | --- | --- |
+| Waiting for programs' GPUs | A commit with a GPU buffer is applied only once the buffer is drawn (src/sync.rs): through explicit sync, linux-drm-syncobj-v1 (the program's acquire point on a DRM timeline; the release point is signalled when the compositor lets go of the buffer), offered when the render GPU can wait on a timeline through an eventfd; otherwise through the buffer's own fences (implicit sync). NVIDIA's driver needs the explicit kind: without either, frames can be shown half drawn or out of order | nested on my desktop's RTX 2080 Ti (driver 620.73): the compositor offered the protocol on the render node, and vkcube (Vulkan) and eglgears_wayland (EGL) set an acquire and a release point on all 1,054 of their frames in 8 s; glxgears through XWayland 24.1 on all 427 of its frames (72 frames a second, the window's pace); no errors |
+| Which GPU draws | The one a screen is connected to: the boot GPU when it has one, else the first GPU with a screen (a desktop with two cards may boot from the one without screens), else the boot GPU; `YGGDRASIL_COMPOSITOR_GPU=card1` (or a path) chooses; the choice and why are printed at the start | unit tests (`the_gpu_with_the_screens_draws_and_the_variable_wins`, the connectors read from sysfs); one GPU on my desktop, so the two-card case is not yet tried on hardware |
+| GPU memory | NVIDIA's driver keeps memory a Wayland compositor frees in its own pool (about 1 GB, as other compositors found) unless the application profile `GLVidHeapReuseRatio=0` applies; the package and `session/install-session.sh` install `session/nvidia-application-profile.json` as `/etc/nvidia/nvidia-application-profiles-rc.d/50-yggdrasil-compositor` | not yet measured on hardware |
+
+`YGGDRASIL_COMPOSITOR_EXPLICIT_SYNC=0` leaves explicit sync out, for a driver that gets it wrong (the implicit wait stays).
+On the hardware backend (`--drm`) the NVIDIA card has not been tried yet: `session/install-session.sh --entry-only` adds the
+login entry without changing the default session, for that first try.
+
 ## Before it replaces Hyprland
 
 It replaces Hyprland on a machine only after it has been checked there from a separate login entry, with Hyprland's entry kept
@@ -367,8 +379,8 @@ to `~/.cache/yggdrasil-compositor/laptop-current.env` (`YGG_WAYLAND`, `YGG_CTL`)
 `WAYLAND_DISPLAY=$YGG_WAYLAND grim shot.png` and `yggdrasil-compositor ctl --socket "$YGG_CTL" outputs`. Settings there writes
 the same files the desktop reads.
 
-Not in it yet, in the order of the next milestones: NVIDIA (explicit sync, linux-drm-syncobj-v1;
-a GPU drawing for another, Smithay's GpuManager/MultiRenderer, for hybrid laptops; several monitors; VRR; direct scanout of full
+Not in it yet, in the order of the next milestones: a GPU drawing for another (Smithay's GpuManager/MultiRenderer, for hybrid
+laptops); several monitors; VRR; direct scanout of full
 screen games tuned per GPU; wp-tearing-control; 10-bit), and meanwhile: presentation-time feedback, VR headsets leased
 (drm-lease), the pen as a tablet (tablet-v2), the magnifier (Super+Alt+=).
 

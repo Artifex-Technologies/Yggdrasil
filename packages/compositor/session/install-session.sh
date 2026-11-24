@@ -6,6 +6,8 @@
 #   install-session.sh --check    what it would do, changing nothing (no password)
 #   install-session.sh            do it (asks for the administrator's password once)
 #   install-session.sh --undo     back to Hyprland as the default, and the files it added taken out again
+#   install-session.sh --entry-only   the same, but the login screen's default stays as it is: the own compositor is one
+#                                 more entry there (F2), for a first try on a machine (as on the desktop with NVIDIA)
 #
 # What it puts where:
 #   /usr/local/lib/yggdrasil-own/yggdrasil-compositor, yggdrasil-panel   the release builds, copied (the checkout may change)
@@ -16,6 +18,9 @@
 #   one in its place, so the Yggdrasil session on Hyprland, the way back, keeps the packaged panel exactly as it was)
 #   /etc/yggdrasil/greeter.conf                                          `session = yggdrasil-compositor`; the file as it was is
 #                                                                        kept beside it, greeter.conf.before-own-compositor
+#                                                                        (not with --entry-only)
+#   /etc/nvidia/nvidia-application-profiles-rc.d/50-yggdrasil-compositor on a machine with NVIDIA's driver: its profile that
+#                                                                        lets the compositor's freed GPU memory go back
 set -euo pipefail
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)   # through the desktop shortcut too
 BUILD=${YGG_BUILD:-$HERE/../../../target/release}
@@ -24,8 +29,13 @@ ENTRY=/usr/share/wayland-sessions/yggdrasil-compositor.desktop
 GREETER=/etc/yggdrasil/greeter.conf
 BACKUP=$GREETER.before-own-compositor
 MODE=${1:-do}
-
-case "$MODE" in do|--check|--undo) ;; *) echo "usage: $0 [--check|--undo]" >&2; exit 2 ;; esac
+NVPROFILE=/etc/nvidia/nvidia-application-profiles-rc.d/50-yggdrasil-compositor
+ENTRY_ONLY=0
+case "$MODE" in
+  do|--check|--undo) ;;
+  --entry-only) ENTRY_ONLY=1; MODE=do ;;
+  *) echo "usage: $0 [--check|--undo|--entry-only]" >&2; exit 2 ;;
+esac
 step() { printf '\n== %s\n' "$*"; }
 run() { # a root step: shown with --check, done otherwise
   if [ "$MODE" = --check ]; then printf '   would run: %s\n' "$*"; else printf '   running: %s\n' "$*"; sudo "$@"; fi
@@ -39,7 +49,7 @@ if [ "$MODE" = --undo ]; then
   step "the login screen's default back to what it was"
   if [ -f "$BACKUP" ]; then run cp -p "$BACKUP" "$GREETER"; else echo "   no backup ($BACKUP): left as it is"; grep -n '^session' "$GREETER" || true; fi
   step "the files this added"
-  run rm -f "$ENTRY" /usr/local/bin/yggdrasil-compositor-session /usr/local/bin/yggdrasil-compositor
+  run rm -f "$ENTRY" /usr/local/bin/yggdrasil-compositor-session /usr/local/bin/yggdrasil-compositor "$NVPROFILE"
   run rm -rf "$LIB"
   echo; echo "Done. Sign out: the login screen starts the Yggdrasil session on Hyprland again."
   exit 0
@@ -76,16 +86,25 @@ step "the session's start and the login screen's entry"
 run install -m755 "$HERE/yggdrasil-compositor-session" /usr/local/bin/yggdrasil-compositor-session
 run install -m644 "$HERE/yggdrasil-compositor.desktop" "$ENTRY"
 
+if [ -d /proc/driver/nvidia ]; then
+  step "NVIDIA's driver: the compositor's profile"
+  run install -Dm644 "$HERE/nvidia-application-profile.json" "$NVPROFILE"
+fi
+
 step "the panel"
 echo "   $LIB/yggdrasil-panel runs only in the own compositor's session (its start swaps it in); the Hyprland session keeps the packaged panel"
 
 step "the login screen's default session ($GREETER)"
 echo "   now: $(grep '^session' "$GREETER" || echo 'no session line')"
-[ -f "$BACKUP" ] && echo "   a backup is there already: $BACKUP (kept)" || run cp -p "$GREETER" "$BACKUP"
-if grep -q '^session *=' "$GREETER"; then
-  run sed -i 's/^session *=.*/session = yggdrasil-compositor/' "$GREETER"
+if [ "$ENTRY_ONLY" = 1 ]; then
+  echo "   left as it is (--entry-only): choose \"Yggdrasil (own compositor)\" with F2 on the login screen"
 else
-  run sh -c "echo 'session = yggdrasil-compositor' >> '$GREETER'"
+  [ -f "$BACKUP" ] && echo "   a backup is there already: $BACKUP (kept)" || run cp -p "$GREETER" "$BACKUP"
+  if grep -q '^session *=' "$GREETER"; then
+    run sed -i 's/^session *=.*/session = yggdrasil-compositor/' "$GREETER"
+  else
+    run sh -c "echo 'session = yggdrasil-compositor' >> '$GREETER'"
+  fi
 fi
 
 step "after"
@@ -93,6 +112,17 @@ if [ "$MODE" = --check ]; then
   echo "   nothing was changed. Run it without --check to do it."
 else
   echo "   now: $(grep '^session' "$GREETER")"
+  if [ "$ENTRY_ONLY" = 1 ]; then
+    cat <<'EOF'
+
+What to do now:
+  1. Save your work, then sign out of Hyprland (the panel's power menu, Sign out). This ends the Claude Code session in it.
+  2. On the login screen press F2 until the line under the password reads "Yggdrasil (own compositor) session", then sign in.
+     If the compositor fails within its first 15 seconds you land in Hyprland's session by itself.
+  3. Back: sign out there; the next sign-in is Hyprland's again (the default was not changed).
+  4. Taken out again: run this script with --undo.
+EOF
+  else
   cat <<'EOF'
 
 What to do now:
@@ -102,4 +132,5 @@ What to do now:
   3. Sign in. If the compositor fails within its first 15 seconds you land in Hyprland's session by itself.
   4. Back to Hyprland for good: run this script with --undo and sign out.
 EOF
+  fi
 fi

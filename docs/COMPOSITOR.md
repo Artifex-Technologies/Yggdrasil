@@ -374,9 +374,9 @@ Known limitations (2026-11-19): it does not run the real session; Hyprland does.
 X11 programs (xterm, Steam, a Proton game), a full screen window covering the top bar and dock, GPU clients (linux-dmabuf), idle
 inhibit, primary selection, cursor shapes and xdg-activation are built but not yet tried by hand. Other programs cannot see its
 workspaces through `ext-workspace` (the panel follows them through yggdrasil-wm), and it has four workspaces. On the hardware
-backend, hotplug has not been tried on real hardware, and there is no direct scanout, no relative pointer motion or pointer
-constraints, nothing NVIDIA needs (explicit sync, a machine with two GPUs), no VRR, tearing control or gamma (night light), and no
-screen recording or screenshots through the portal. It is developed in a virtual machine, never on the live session, and the
+backend, hotplug has not been tried on real hardware; explicit sync for NVIDIA is built and checked nested on an RTX 2080 Ti
+but not yet on the hardware backend, and a machine with two GPUs picks the one with the screens (not tried on two cards);
+there is no direct scanout, no VRR or tearing control, and no screen recording or screenshots through the portal. It is developed in a virtual machine, never on the live session, and the
 headless tests run in CI the whole time.
 
 Debugging: `YGGDRASIL_COMPOSITOR_DEBUG=1` prints pointer positions, button presses and move requests. To drive it from a script, move the host pointer
