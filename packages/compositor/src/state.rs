@@ -1941,9 +1941,21 @@ impl App {
                     .collect();
                 let (title, app_id) = windows.first().map(|(w, _)| title_app(w)).unwrap_or_default();
                 let title = if windows.len() > 1 { switcher::group_title(&title, windows.len() - 1) } else { title };
-                switcher::Card { windows, title, app_id }
+                // a native Steam game names its window after itself: its program's SteamAppId says which game it is
+                let steam = windows.first().and_then(|(w, _)| self.window_pid(w)).and_then(crate::icons::steam_game_of);
+                switcher::Card { windows, title, app_id, steam }
             })
             .collect()
+    }
+
+    /// The process a window belongs to: an X11 window's _NET_WM_PID, a Wayland one's client.
+    fn window_pid(&self, w: &Window) -> Option<u32> {
+        if let Some(x) = w.x11_surface() {
+            return x.pid();
+        }
+        let s = w.toplevel()?.wl_surface().clone();
+        let c = self.display_handle.get_client(s.id()).ok()?;
+        c.get_credentials(&self.display_handle).ok().map(|cr| cr.pid as u32)
     }
 
     /// An arrow key in the switcher.

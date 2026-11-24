@@ -611,3 +611,42 @@ fn the_switcher_draws_only_when_something_changes_and_nothing_once_closed() {
     std::thread::sleep(Duration::from_millis(1000));
     assert_eq!(frames_drawn(&comp), closed, "nothing drawn once closed");
 }
+
+#[test]
+fn a_steam_games_card_shows_its_shortcuts_icon() {
+    let _l = limit(60, "a Steam game's card");
+    let fonts = std::env::temp_dir().join(format!("ygg-keys-nofonts-steam-{}.conf", std::process::id()));
+    std::fs::write(&fonts, "<?xml version=\"1.0\"?><fontconfig></fontconfig>\n").unwrap();
+    // the shortcut Steam makes for a game, and the game's icon Steam saves (magenta here)
+    let comp = Compositor::start_env(&["--size", "1280x720"], &[("FONTCONFIG_FILE", fonts.to_str().unwrap())], |dir| {
+        let apps = dir.join("home/.local/share/applications");
+        std::fs::create_dir_all(&apps).unwrap();
+        std::fs::write(
+            apps.join("Fallout 4.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Fallout 4\nExec=steam steam://rungameid/377160\nIcon=steam_icon_377160\n",
+        )
+        .unwrap();
+        let icons = dir.join("home/.local/share/icons/hicolor/scalable/apps");
+        std::fs::create_dir_all(&icons).unwrap();
+        std::fs::write(
+            icons.join("steam_icon_377160.svg"),
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" fill="magenta"/></svg>"#,
+        )
+        .unwrap();
+    });
+    let mut c = comp.connect();
+    let _input = c.input();
+    // a game under Proton: its window class is steam_app_<number>
+    let game = c.window("steam_app_377160", "Fallout4");
+    c.draw(&game, (400, 300), BLUE);
+    let other = c.window("test.a", "A");
+    c.draw(&other, (400, 300), GREEN);
+    comp.wait(10, "A has the keyboard", |c| focused_app(c) == "test.a");
+    comp.must("key-down alt");
+    comp.must("key Tab");
+    assert_eq!(order(&comp).0, ["test.a", "steam_app_377160"]);
+    let pic = comp.screenshot("HEADLESS-1");
+    let all = (0, 0, pic.w as i32, pic.h as i32);
+    assert!(pic.count(all, (255, 0, 255)) > 100, "the game's card has the shortcut's icon");
+    comp.must("key-up alt");
+}

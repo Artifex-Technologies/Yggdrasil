@@ -205,6 +205,8 @@ pub struct Card {
     pub windows: Vec<(Window, Point<i32, Logical>)>,
     pub title: String,
     pub app_id: String,
+    /// the Steam game its first window's program belongs to (SteamAppId), for its icon
+    pub steam: Option<String>,
 }
 
 impl Card {
@@ -255,12 +257,12 @@ impl Switcher {
         self.art.retain(|(x, _, _)| x != s);
     }
 
-    fn icon(&mut self, app_id: &str, px: u32) -> Option<&Pixmap> {
-        let key = (app_id.to_string(), px);
+    fn icon(&mut self, app_id: &str, steam: Option<&str>, px: u32) -> Option<&Pixmap> {
+        let key = (format!("{app_id}\0{}", steam.unwrap_or("")), px);
         let i = match self.icons.iter().position(|(k, _)| *k == key) {
             Some(i) => i,
             None => {
-                self.icons.push((key, crate::icons::for_app(app_id, px)));
+                self.icons.push((key, crate::icons::for_app(app_id, steam, px)));
                 self.icons.len() - 1
             }
         };
@@ -430,7 +432,7 @@ where
             Some(j) => j,
             None => {
                 let px = (ICON as f64 * s).round() as u32;
-                let icon = sw.icon(&card.app_id, px).cloned();
+                let icon = sw.icon(&card.app_id, card.steam.as_deref(), px).cloned();
                 let buf = card_art(fonts, &key, icon.as_ref(), sw.accent);
                 sw.art.retain(|(x, _, _)| *x != first);
                 sw.art.push((first, key, buf));

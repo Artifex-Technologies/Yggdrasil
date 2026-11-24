@@ -1,5 +1,8 @@
 //! An app's icon for the window switcher's cards: the icon its desktop entry names (found from the window's app id the way the
-//! dock finds it: the entry's file name, then its StartupWMClass), else an icon named after the app id; looked up in the icon
+//! dock finds it: the entry's file name, then its StartupWMClass); for a Steam game, the icon of the shortcut Steam made for it
+//! (its `Exec` starts `steam://rungameid/N`), else Steam's own `steam_icon_N`, as the dock does (packages/panel, apps.rs): a
+//! game under Proton has the window class `steam_app_N`, a native one its own class and `SteamAppId=N` in its environment;
+//! else an icon named after the app id; looked up in the icon
 //! pack chosen in Settings, then hicolor and Liki (docs/ICONS.md), then the loose pictures in /usr/share/pixmaps. Read only while
 //! the switcher is open, once per app (switcher.rs keeps them until it closes).
 
@@ -40,16 +43,52 @@ fn entry_fields(text: &str) -> (Option<String>, Option<String>) {
     (icon, class)
 }
 
-/// The icon name for a window's app id: its desktop entry's (by file name, then by StartupWMClass, case not minded), else the
-/// app id itself (icon packs name many icons after it).
-pub fn icon_name(app_id: &str) -> Option<String> {
-    if app_id.is_empty() || app_id.contains('/') {
-        return None;
+/// The game number of a Steam game's window under Proton (`steam_app_242760`).
+pub fn steam_game(app_id: &str) -> Option<&str> {
+    let n = app_id.strip_prefix("steam_app_").or_else(|| app_id.strip_prefix("STEAM_APP_"))?;
+    (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then_some(n)
+}
+
+/// The Steam game a program belongs to: Steam starts every game, native or not, with `SteamAppId` set to its number. Only
+/// that one variable of the program's environment is looked at, and nothing is kept.
+pub fn steam_game_of(pid: u32) -> Option<String> {
+    steam_game_in(&std::fs::read(format!("/proc/{pid}/environ")).ok()?)
+}
+
+fn steam_game_in(environ: &[u8]) -> Option<String> {
+    let v = environ.split(|b| *b == 0).find_map(|kv| kv.strip_prefix(b"SteamAppId="))?;
+    (!v.is_empty() && v != b"0" && v.iter().all(u8::is_ascii_digit)).then(|| String::from_utf8_lossy(v).into_owned())
+}
+
+/// A Steam game's icon name: its shortcut's (the entry whose Exec starts `steam://rungameid/N`), else `steam_icon_N` (Steam
+/// saves it in the icon theme folder whether or not it made a shortcut).
+fn steam_icon(dirs: &[PathBuf], n: &str) -> String {
+    let url = format!("steam://rungameid/{n}");
+    for d in dirs {
+        let Ok(rd) = std::fs::read_dir(d) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().is_none_or(|x| x != "desktop") {
+                continue;
+            }
+            let Ok(t) = std::fs::read_to_string(&p) else { continue };
+            let starts =
+                t.lines().any(|l| l.strip_prefix("Exec=").is_some_and(|x| x.split_whitespace().any(|w| w.trim_matches('"') == url)));
+            if starts {
+                if let (Some(i), _) = entry_fields(&t) {
+                    return i;
+                }
+            }
+        }
     }
-    let dirs = app_dirs();
+    format!("steam_icon_{n}")
+}
+
+/// The icon a desktop entry for this app id names (by its file name, then by StartupWMClass).
+fn entry_icon(dirs: &[PathBuf], app_id: &str) -> Option<String> {
     let lower = app_id.to_lowercase();
     for name in [app_id.to_string(), lower.clone()] {
-        for d in &dirs {
+        for d in dirs {
             if let Ok(t) = std::fs::read_to_string(d.join(format!("{name}.desktop"))) {
                 if let (Some(i), _) = entry_fields(&t) {
                     return Some(i);
@@ -57,7 +96,7 @@ pub fn icon_name(app_id: &str) -> Option<String> {
             }
         }
     }
-    for d in &dirs {
+    for d in dirs {
         let Ok(rd) = std::fs::read_dir(d) else { continue };
         for e in rd.flatten() {
             let p = e.path();
@@ -72,7 +111,7 @@ pub fn icon_name(app_id: &str) -> Option<String> {
             }
         }
     }
-    Some(app_id.to_string())
+    None
 }
 
 /// Where icon packs are (the user's, then the system's).
@@ -157,9 +196,20 @@ pub fn draw(path: &Path, size: u32) -> Option<Pixmap> {
     Some(pm)
 }
 
-/// An app's icon `size` pixels square, if it has one.
-pub fn for_app(app_id: &str, size: u32) -> Option<Pixmap> {
-    draw(&find(&icon_name(app_id)?)?, size)
+/// An app's icon `size` pixels square, if it has one. `steam`: the Steam game its program belongs to (from its environment),
+/// for a native game whose own class no desktop entry knows.
+pub fn for_app(app_id: &str, steam: Option<&str>, size: u32) -> Option<Pixmap> {
+    if app_id.is_empty() || app_id.contains('/') {
+        return None;
+    }
+    let dirs = app_dirs();
+    let game = steam_game(app_id).or(steam);
+    let name = match (entry_icon(&dirs, app_id), game) {
+        (Some(i), _) => i,
+        (None, Some(n)) => steam_icon(&dirs, n),
+        (None, None) => app_id.to_string(),
+    };
+    draw(&find(&name)?, size)
 }
 
 #[cfg(test)]
@@ -171,6 +221,38 @@ mod tests {
         let t = "[Desktop Entry]\nName=Calc\nIcon=accessories-calculator\nStartupWMClass=Calc\n[Desktop Action new]\nIcon=other\n";
         assert_eq!(entry_fields(t), (Some("accessories-calculator".into()), Some("Calc".into())));
         assert_eq!(entry_fields("[Other]\nIcon=x\n"), (None, None));
+    }
+
+    #[test]
+    fn a_steam_game_takes_its_shortcuts_icon() {
+        let dir = std::env::temp_dir().join(format!("ygg-steamicon-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("Fallout 4.desktop"),
+            "[Desktop Entry]\nName=Fallout 4\nExec=steam steam://rungameid/377160\nIcon=steam_icon_377160\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("steam.desktop"), "[Desktop Entry]\nName=Steam\nExec=/usr/bin/steam %U\nIcon=steam\n").unwrap();
+        let dirs = [dir.clone()];
+        let got = (steam_icon(&dirs, "377160"), steam_icon(&dirs, "246620"), entry_icon(&dirs, "steam_app_377160"));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(got, ("steam_icon_377160".into(), "steam_icon_246620".into(), None));
+        assert_eq!((steam_game("steam_app_377160"), steam_game("steam_app_"), steam_game("steam")), (Some("377160"), None, None));
+        assert_eq!(steam_game_in(b"HOME=/h\0SteamAppId=1332010\0X=1\0"), Some("1332010".into()));
+        assert_eq!(steam_game_in(b"SteamAppId=0\0"), None);
+        // a program's own environment, as the switcher reads it
+        let mut child = std::process::Command::new("sleep").arg("5").env("SteamAppId", "242760").spawn().unwrap();
+        // until the program has started (right after the fork its environment is still the test's)
+        let start = std::time::Instant::now();
+        while std::fs::read_to_string(format!("/proc/{}/cmdline", child.id())).is_ok_and(|c| !c.starts_with("sleep"))
+            && start.elapsed() < std::time::Duration::from_secs(5)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let read = steam_game_of(child.id());
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(read, Some("242760".into()));
     }
 
     #[test]
