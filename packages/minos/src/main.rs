@@ -3467,8 +3467,11 @@ impl App {
                 Action::OpenFile(p) => match archive::split(&p) {
                     None => open_with_system(&p),
                     Some((arc, inner)) => {
-                        let tmp = std::env::temp_dir().join(format!("minos-open-{}", std::process::id()));
-                        match archive::extract_file_flat(&arc, &inner, &tmp) {
+                        // on disk, not in /tmp (memory here): what is opened may be large
+                        let base = yggdrasil_conf::dirs::cache().join("minos-open");
+                        archive::clear_stale_open_dirs(&base);
+                        let tmp = base.join(std::process::id().to_string());
+                        match archive::open_inner(&arc, &inner, &tmp) {
                             Ok(file) => open_with_system(&file),
                             Err(e) => self.status = format!("Could not open {inner}: {e}"),
                         }

@@ -380,6 +380,48 @@ pub fn extract_file_flat(archive: &Path, inner: &str, dest: &Path) -> Result<Pat
     Ok(dest.join(name))
 }
 
+/// The most a file may unpack to when it is opened from inside an archive (a double-click): more is refused before anything is
+/// unpacked. Extract has the file guard's own limits.
+pub const OPEN_LIMIT: u64 = 256 << 20;
+
+fn open_too_large(size: u64, inner: &str) -> Result<(), String> {
+    if size > OPEN_LIMIT {
+        return Err(format!(
+            "{inner} unpacks to {} MB: too large to open from inside the archive (Extract checks it and unpacks it)",
+            size >> 20
+        ));
+    }
+    Ok(())
+}
+
+/// Removes the folders under `base` that Minos processes no longer running unpacked files into (named by their process id).
+pub fn clear_stale_open_dirs(base: &Path) {
+    let Ok(rd) = std::fs::read_dir(base) else { return };
+    for e in rd.filter_map(|e| e.ok()) {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.parse::<u32>().is_ok_and(|pid| pid != std::process::id() && !Path::new("/proc").join(&name).exists()) {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+}
+
+/// Unpacks one file of an archive into `dest` to open it: refused when the listing says it is larger than `OPEN_LIMIT`, and
+/// removed again when what came out is (a header can lie).
+pub fn open_inner(archive: &Path, inner: &str, dest: &Path) -> Result<PathBuf, String> {
+    let want = inner.trim_start_matches("./");
+    let list = list_cached(archive)?;
+    let e = list.iter().find(|e| e.path == want && !e.is_dir).ok_or_else(|| format!("{inner} is not in the archive"))?;
+    open_too_large(e.size, inner)?;
+    let file = extract_file_flat(archive, inner, dest)?;
+    if let Ok(m) = std::fs::metadata(&file) {
+        if m.len() > OPEN_LIMIT {
+            let _ = std::fs::remove_file(&file);
+            return open_too_large(m.len(), inner).map(|_| file);
+        }
+    }
+    Ok(file)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     Zip,
@@ -436,6 +478,83 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         p
+    }
+
+    /// A ZIP with one stored file whose headers say it unpacks to `claimed` bytes (the bytes are only `data`).
+    fn zip_claiming(name: &str, data: &[u8], claimed: u32) -> Vec<u8> {
+        let (n, len) = (name.as_bytes(), data.len() as u32);
+        // CRC-32 (IEEE), bit by bit
+        let crc = !data.iter().fold(!0u32, |mut c, &b| {
+            c ^= u32::from(b);
+            for _ in 0..8 {
+                c = if c & 1 == 1 { (c >> 1) ^ 0xEDB8_8320 } else { c >> 1 };
+            }
+            c
+        });
+        let mut z = vec![];
+        let u16le = |v: u16| v.to_le_bytes();
+        let u32le = |v: u32| v.to_le_bytes();
+        z.extend(u32le(0x0403_4b50));
+        for v in [20u16, 0, 0, 0, 0x21] {
+            z.extend(u16le(v));
+        }
+        for v in [crc, len, claimed] {
+            z.extend(u32le(v));
+        }
+        z.extend(u16le(n.len() as u16));
+        z.extend(u16le(0));
+        z.extend(n);
+        z.extend(data);
+        let cd = z.len() as u32;
+        z.extend(u32le(0x0201_4b50));
+        for v in [20u16, 20, 0, 0, 0, 0x21] {
+            z.extend(u16le(v));
+        }
+        for v in [crc, len, claimed] {
+            z.extend(u32le(v));
+        }
+        for v in [n.len() as u16, 0, 0, 0, 0] {
+            z.extend(u16le(v));
+        }
+        z.extend(u32le(0));
+        z.extend(u32le(0));
+        z.extend(n);
+        let cd_size = z.len() as u32 - cd;
+        z.extend(u32le(0x0605_4b50));
+        for v in [0u16, 0, 1, 1] {
+            z.extend(u16le(v));
+        }
+        z.extend(u32le(cd_size));
+        z.extend(u32le(cd));
+        z.extend(u16le(0));
+        z
+    }
+
+    #[test]
+    fn a_file_too_large_to_open_from_inside_an_archive_is_refused_before_unpacking() {
+        assert!(open_too_large(OPEN_LIMIT, "a").is_ok());
+        assert!(open_too_large(OPEN_LIMIT + 1, "a").unwrap_err().contains("too large"));
+        if find_7z().is_none() {
+            return;
+        }
+        let d = std::env::temp_dir().join(format!("minos-open-limit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let big = d.join("big.zip");
+        std::fs::write(&big, zip_claiming("huge.bin", b"hello", 1 << 30)).unwrap();
+        // a folder of a process that is gone is cleared; this process's is kept
+        std::fs::create_dir_all(d.join("opened/4000000000")).unwrap();
+        std::fs::create_dir_all(d.join("opened").join(std::process::id().to_string())).unwrap();
+        clear_stale_open_dirs(&d.join("opened"));
+        assert_eq!(std::fs::read_dir(d.join("opened")).unwrap().count(), 1);
+        let e = open_inner(&big, "huge.bin", &d.join("out")).unwrap_err();
+        assert!(e.contains("1024 MB") && e.contains("too large"), "{e}");
+        assert!(!d.join("out/huge.bin").exists(), "nothing unpacked");
+        let small = d.join("small.zip");
+        std::fs::write(&small, zip_claiming("note.txt", b"hello", 5)).unwrap();
+        let f = open_inner(&small, "note.txt", &d.join("out")).unwrap();
+        assert_eq!(std::fs::read(&f).unwrap(), b"hello");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
