@@ -372,9 +372,13 @@ and given to the programs it starts), and nothing of XWayland runs until a progr
 those sockets and accepts the program once its window manager is ready, so even a window mapped at once is managed
 (`tests/x11.rs`). This needs a change to Smithay 0.7 (`X11Sockets` and `XWayland::spawn_with_sockets`: the sockets bound apart
 from starting XWayland), carried in our fork (github.com/Artifex-Technologies/smithay, branch yggdrasil/lazy-xwayland, pinned
-by commit in packages/compositor/Cargo.toml) and offered to Smithay. Still missing for X11: drag and drop between X11 and Wayland
-programs; X11 window icons for programs with no desktop entry (`_NET_WM_ICON`); XSETTINGS; and XWayland started again after
-it crashed (until then X11 programs need the compositor started again).
+by commit in packages/compositor/Cargo.toml) and offered to Smithay. An X11 program's own icon (`_NET_WM_ICON`) shows in the
+dock when no desktop entry matches its window (a Windows program through Wine, say; since 2026-11-24): the compositor keeps the
+best size of it as a PNG for each window class in the runtime folder's `yggdrasil-window-icons` (read on a thread of its own
+when the window shows, and again when its title changes), and the panel looks there for an icon its theme does not have and
+watches the folder, so the icon shows a moment after the window (`tests/x11.rs`, `tests/apps.rs`). Still missing for X11: drag
+and drop between X11 and Wayland programs; XSETTINGS; and XWayland started again after it crashed (until then X11 programs need
+the compositor started again).
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton

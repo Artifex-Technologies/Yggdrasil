@@ -351,7 +351,10 @@ impl Icons {
                 return Some(p);
             }
         }
-        None
+        // an X11 program's own icon, kept by Yggdrasil's compositor for its window class (a window no desktop entry matches
+        // is drawn with its class as the icon name)
+        let own = yggdrasil_conf::dirs::window_icons().zip(yggdrasil_conf::dirs::window_icon_file(name)).map(|(d, f)| d.join(f));
+        own.filter(|p| p.is_file())
     }
 
     fn render(&self, name: &str, size: u32) -> Option<Pixmap> {

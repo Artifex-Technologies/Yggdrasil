@@ -896,6 +896,59 @@ fn the_docks_window_list_goes_when_an_x11_game_goes_full_screen() {
     assert!(p.running(), "the panel is still running: {}", p.log());
 }
 
+/// An X11 program no desktop entry matches shows its own icon in the dock (_NET_WM_ICON, kept by the compositor a moment after
+/// its window shows; the panel watches where it is kept).
+#[test]
+fn the_dock_shows_an_x11_programs_own_icon() {
+    let Some(panel) = program("YGGDRASIL_TEST_PANEL") else { return };
+    if !std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("Xwayland").is_file())) {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(150, "an X11 program's own icon in the dock");
+    let comp = Compositor::start_env(&["--size", "1600x900"], &[("YGGDRASIL_COMPOSITOR_XWAYLAND", "1")], |_| {});
+    let bus = Bus::start(&comp.dir);
+    std::fs::write(comp.dir.join("home/.config/yggdrasil/dock"), NOTHING_PINNED).unwrap();
+    let display = comp.log.lock().unwrap().iter().find_map(|l| l.strip_prefix("DISPLAY=").map(str::to_string)).expect("DISPLAY");
+    let mut p = App::start(&comp, &panel, Some(&bus), &[("YGGDRASIL_A11Y", "off"), ("XDG_CURRENT_DESKTOP", "Yggdrasil")]);
+    wait_for(&comp, &mut p, 60, "the bar and the dock", |c| {
+        let l = c.layers();
+        ["yggdrasil-panel", "yggdrasil-dock"].iter().all(|ns| layer(&l, ns).is_some_and(|x| x.size.0 > 0))
+    });
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, CreateWindowAux, PropMode, WindowClass};
+    use x11rb::wrapper::ConnectionExt as _;
+    let (x, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = x.setup().roots[screen].root;
+    let icon_atom = x.intern_atom(false, b"_NET_WM_ICON").unwrap().reply().unwrap().atom;
+    let mut icon = vec![64u32, 64];
+    icon.extend(std::iter::repeat_n(0xffff00ffu32, 64 * 64));
+    let win = x.generate_id().unwrap();
+    x.create_window(0, win, root, 0, 0, 400, 300, 0, WindowClass::INPUT_OUTPUT, 0, &CreateWindowAux::new().background_pixel(0x202020))
+        .unwrap();
+    x.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"ownicon\0Ownicon\0").unwrap();
+    x.change_property32(PropMode::REPLACE, win, icon_atom, AtomEnum::CARDINAL, &icon).unwrap();
+    x.map_window(win).unwrap();
+    x.flush().unwrap();
+    wait_for(&comp, &mut p, 10, "the program in the dock", |c| {
+        layer(&c.layers(), "yggdrasil-dock").is_some_and(|d| d.size.0 == 28 + 2 * (d.size.1 - 24) + 10)
+    });
+    let dock = layer(&comp.layers(), "yggdrasil-dock").cloned().unwrap();
+    let slot = (dock.at.0 + 14, dock.at.1 + 9, dock.size.1 - 24, dock.size.1 - 24);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let pic = comp.screenshot("HEADLESS-1");
+        let magenta = pic.count(slot, (255, 0, 255));
+        if magenta > (slot.2 * slot.3 / 2) as usize {
+            keep_shot(&pic, "dock-x11-own-icon");
+            break;
+        }
+        assert!(Instant::now() < deadline, "the program's own icon in its dock slot: {magenta} magenta pixels\npanel: {}", p.log());
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(p.running(), "the panel is still running: {}", p.log());
+}
+
 /// How often the panel's event loop woke (its main thread's voluntary context switches, from /proc) over `ms`.
 fn wakeups(p: &App, ms: u64) -> u64 {
     let pid = p.child.id();

@@ -414,6 +414,8 @@ impl XwmHandler for App {
         // What it asked for before it was shown (full screen, maximized) is read on another thread: x11_asked acts on it.
         if let Some(r) = &self.x11_reader {
             r.ask(window.window_id());
+            // its own icon, for the dock (x11asked.rs)
+            r.icon(window.window_id(), &window.class());
         }
         // A game the size of the screen that did not say so is taken as going full screen (a guess, so only for games).
         if game_full {
@@ -503,6 +505,12 @@ impl XwmHandler for App {
     fn property_notify(&mut self, _xwm: XwmId, window: X11Surface, property: WmWindowProperty) {
         // a new title or class reaches the panel with the next frame
         self.wake();
+        // a program that sets its icon after its window shows has usually set it by its first new title
+        if property == WmWindowProperty::Title && window.is_mapped() {
+            if let Some(r) = &self.x11_reader {
+                r.icon(window.window_id(), &window.class());
+            }
+        }
         if property == WmWindowProperty::MotifHints && !self.decorates_all() {
             if let Some(s) = window.wl_surface() {
                 self.set_decorated(&s, !window.is_decorated());

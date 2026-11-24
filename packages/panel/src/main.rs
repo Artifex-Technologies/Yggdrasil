@@ -5353,8 +5353,9 @@ fn main() {
     }
     // apps installed or removed, and icon files added or replaced: their folders are watched, and a package's burst of files is
     // taken up once it has settled
-    let places =
-        appwatch::Places { apps: apps::app_dirs(), themes: state.assets.icons.theme_dirs(), icons: vec![paint::LOOSE_ICONS.into()] };
+    // (and the X11 programs' own icons Yggdrasil's compositor keeps: one appears a moment after its window)
+    let loose = std::iter::once(std::path::PathBuf::from(paint::LOOSE_ICONS)).chain(yggdrasil_conf::dirs::window_icons()).collect();
+    let places = appwatch::Places { apps: apps::app_dirs(), themes: state.assets.icons.theme_dirs(), icons: loose };
     let h = event_loop.handle();
     state.appwatch =
         appwatch::start(&event_loop.handle(), places, |st: &mut State, c| st.apps_or_icons_changed(c), move |e| look_every_4s(&h, e));

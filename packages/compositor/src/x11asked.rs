@@ -16,6 +16,12 @@
 //! Wine waits for the window manager to mark its window active first, so neither moved: Fallout 4 through Proton got no keys
 //! at all (found 2026-11-23). Hyprland and KWin set both themselves.
 //!
+//! It also keeps each X11 program's own icon (`_NET_WM_ICON`) for the dock, whose windows no desktop entry matches (a Windows
+//! program through Wine, an X11 program that installed none): the best size of it is written as a PNG, one for each window
+//! class, in the runtime folder's `yggdrasil-window-icons` (yggdrasil_conf::dirs::window_icons), where the panel looks for an
+//! icon its theme does not have. The first window of a class gives it; it is read when the window is shown and again when its
+//! title changes (a program that sets its icon after its window shows).
+//!
 //! It also keeps ICCCM's WM_STATE in step with minimizing: Iconic when a window is minimized, Normal when it is shown again.
 //! Smithay only writes it when a window is mapped or unmapped. Wine watches it: a game that minimized itself (old DirectX 9
 //! games do when they lose the focus) is restored only when WM_STATE goes back to Normal. Without that Wine kept the game at
@@ -54,11 +60,54 @@ pub fn read(window: u32, states: &[u32], a: &Atoms) -> Asked {
 
 enum Job {
     Ask(u32),
+    /// this window's own icon, kept for its class (unless the class has one already)
+    Icon(u32, String),
     Close(u32),
     /// this X11 window has the keyboard now (0: none has: a Wayland window or nothing has it)
     Activate(u32),
     /// WM_STATE: Iconic (minimized) or Normal
     Iconic(u32, bool),
+}
+
+/// The icon size the dock wants: the smallest offered that is at least this big, else the biggest.
+const ICON_WANT: u32 = 64;
+/// At most this many 32-bit values of `_NET_WM_ICON` are read (4 MB: a 1024x1024 icon and smaller ones).
+const ICON_LONGS: u32 = 1 << 20;
+
+/// The best icon in a `_NET_WM_ICON` list (width, height, then width x height ARGB pixels, for each size): its size and its
+/// pixels as RGBA bytes. Sizes past the list's end or bigger than 1024 end the list.
+pub fn best_icon(data: &[u32]) -> Option<(u32, u32, Vec<u8>)> {
+    let mut found: Vec<(u32, u32, &[u32])> = vec![];
+    let mut i = 0usize;
+    while i + 2 <= data.len() {
+        let (w, h) = (data[i], data[i + 1]);
+        if w == 0 || h == 0 || w > 1024 || h > 1024 {
+            break;
+        }
+        let n = (w * h) as usize;
+        let Some(px) = data.get(i + 2..i + 2 + n) else { break };
+        found.push((w, h, px));
+        i += 2 + n;
+    }
+    let big_enough = found.iter().filter(|(w, h, _)| (*w).min(*h) >= ICON_WANT).min_by_key(|(w, h, _)| w * h);
+    let (w, h, px) = big_enough.or_else(|| found.iter().max_by_key(|(w, h, _)| w * h))?;
+    let rgba = px.iter().flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, *p as u8, (p >> 24) as u8]).collect();
+    Some((*w, *h, rgba))
+}
+
+/// Writes a class's icon (RGBA pixels) as a PNG in `dir`, whole or not at all (written beside it, then moved into place).
+fn keep_icon(dir: &std::path::Path, file: &str, (w, h, rgba): (u32, u32, Vec<u8>)) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let tmp = dir.join(format!(".{file}.new"));
+    {
+        let f = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
+        let mut enc = png::Encoder::new(f, w, h);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut wr = enc.write_header().map_err(std::io::Error::other)?;
+        wr.write_image_data(&rgba).map_err(std::io::Error::other)?;
+    }
+    std::fs::rename(&tmp, dir.join(file))
 }
 
 /// ICCCM's WM_STATE values.
@@ -133,6 +182,8 @@ impl Reader {
                     return;
                 };
                 let atoms = Atoms { fullscreen, max_vert, max_horz };
+                let net_wm_icon = atom("_NET_WM_ICON");
+                let icons = yggdrasil_conf::dirs::window_icons();
                 // the root's properties are watched: Smithay rewrites _NET_ACTIVE_WINDOW on every focus event, with the window
                 // the event was reported on (the root, for a focus set on a window), so the right one is written again
                 let _ = conn.change_window_attributes(root, &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE));
@@ -178,6 +229,28 @@ impl Reader {
                         };
                         let window = match job {
                             Job::Ask(w) => w,
+                            Job::Icon(w, class) => {
+                                let (Some(dir), Some(file), Some(prop)) =
+                                    (&icons, yggdrasil_conf::dirs::window_icon_file(&class), net_wm_icon)
+                                else {
+                                    continue;
+                                };
+                                if dir.join(&file).exists() {
+                                    continue;
+                                }
+                                let data: Vec<u32> = conn
+                                    .get_property(false, w, prop, AtomEnum::CARDINAL, 0, ICON_LONGS)
+                                    .ok()
+                                    .and_then(|c| c.reply().ok())
+                                    .and_then(|r| r.value32().map(|v| v.collect()))
+                                    .unwrap_or_default();
+                                if let Some(icon) = best_icon(&data) {
+                                    if let Err(e) = keep_icon(dir, &file, icon) {
+                                        eprintln!("yggdrasil-compositor: {class}'s icon could not be kept: {e}");
+                                    }
+                                }
+                                continue;
+                            }
                             Job::Activate(w) => {
                                 want = Some(w);
                                 if w != 0 {
@@ -252,6 +325,11 @@ impl Reader {
         self.send(Job::Ask(window));
     }
 
+    /// Keep this window's own icon for its class (`class`), unless the class has one already.
+    pub fn icon(&self, window: u32, class: &str) {
+        self.send(Job::Icon(window, class.to_string()));
+    }
+
     /// Mark this window minimized (Iconic) or shown again (Normal) in WM_STATE.
     pub fn iconic(&self, window: u32, iconic: bool) {
         self.send(Job::Iconic(window, iconic));
@@ -279,6 +357,27 @@ mod tests {
         assert_eq!(read(5, &[11, 12], &a), Asked { window: 5, fullscreen: false, maximized: true });
         assert_eq!(read(5, &[11], &a), Asked { window: 5, fullscreen: false, maximized: false }, "one direction is not maximized");
         assert_eq!(read(5, &[], &a), Asked { window: 5, fullscreen: false, maximized: false });
+    }
+
+    #[test]
+    fn the_best_icon_is_picked_from_the_list() {
+        // a 2x2 red one, then a 64x64 blue one: the 64 is the dock's
+        let mut data = vec![2, 2];
+        data.extend([0xffff0000u32; 4]);
+        data.extend([64, 64]);
+        data.extend(std::iter::repeat_n(0x800000ffu32, 64 * 64));
+        let (w, h, px) = best_icon(&data).unwrap();
+        assert_eq!((w, h), (64, 64));
+        assert_eq!(&px[..4], &[0, 0, 255, 128], "ARGB to RGBA, alpha kept");
+        // only small ones: the biggest
+        assert_eq!(best_icon(&data[..6]).map(|(w, h, _)| (w, h)), Some((2, 2)));
+        // a list that ends early, or says a size it cannot hold: what came before it, or nothing
+        let mut cut = data.clone();
+        cut.truncate(6 + 2 + 100);
+        assert_eq!(best_icon(&cut).map(|(w, h, _)| (w, h)), Some((2, 2)));
+        assert_eq!(best_icon(&[5000, 5000, 1, 2, 3]), None);
+        assert_eq!(best_icon(&[]), None);
+        assert_eq!(best_icon(&[0, 0]), None);
     }
 
     #[test]

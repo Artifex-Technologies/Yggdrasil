@@ -53,6 +53,24 @@ pub fn system_data() -> PathBuf {
     PathBuf::from("/usr/share").join(NAME)
 }
 
+/// Where Yggdrasil's compositor keeps X11 windows' own icons (`_NET_WM_ICON`), one PNG for each window class, for the dock's
+/// windows that no desktop entry matches: the runtime folder's `yggdrasil-window-icons` (gone at log-out). None without
+/// XDG_RUNTIME_DIR.
+pub fn window_icons() -> Option<PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|p| p.is_absolute()).map(|r| r.join("yggdrasil-window-icons"))
+}
+
+/// The file name of a window class's icon there (`CLASS.png`); None for a class that is not a plain name (empty, a path,
+/// hidden, control characters, longer than 200 bytes): its icon is not kept.
+pub fn window_icon_file(class: &str) -> Option<String> {
+    let plain = !class.is_empty()
+        && class.len() <= 200
+        && !class.starts_with('.')
+        && !class.contains('/')
+        && !class.chars().any(|c| c.is_control());
+    plain.then(|| format!("{class}.png"))
+}
+
 /// The desktop's own files in the old `labyrinth` folders, by folder: (config, data, state, cache).
 const OLD: [(&str, &[&str]); 4] = [
     (
@@ -147,6 +165,15 @@ fn move_one(from: &Path, to: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_class_names_its_icon_only_when_it_is_a_plain_name() {
+        assert_eq!(window_icon_file("winecfg.exe").as_deref(), Some("winecfg.exe.png"));
+        assert_eq!(window_icon_file("Some Program").as_deref(), Some("Some Program.png"));
+        for bad in ["", "../x", "a/b", ".hidden", "tab\there", &"x".repeat(201)] {
+            assert_eq!(window_icon_file(bad), None, "{bad:?}");
+        }
+    }
 
     #[test]
     fn moves_the_desktops_files_once_and_leaves_the_rest() {

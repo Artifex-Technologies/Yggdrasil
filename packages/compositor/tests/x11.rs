@@ -263,3 +263,64 @@ fn xwayland_starts_when_the_first_x11_program_connects() {
     drop(idle);
     assert!(files(&d2).iter().all(|f| !std::path::Path::new(f).exists()), "{d2}'s files removed, XWayland never started");
 }
+
+#[test]
+fn an_x11_programs_own_icon_is_kept_for_the_dock() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "X11 windows' own icons");
+    let (comp, display) = with_xwayland_on(&["--size", "800x600"], |_| {});
+    let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = conn.setup().roots[screen].root;
+    let net_wm_icon = conn.intern_atom(false, b"_NET_WM_ICON").unwrap().reply().unwrap().atom;
+    // a 2x2 red icon and a 64x64 blue one, as programs offer several sizes
+    let mut icon = vec![2u32, 2];
+    icon.extend([0xffff0000u32; 4]);
+    icon.extend([64, 64]);
+    icon.extend(std::iter::repeat_n(0xff0000ffu32, 64 * 64));
+    let window = |class: &[u8], with_icon: bool| {
+        let win = conn.generate_id().unwrap();
+        conn.create_window(0, win, root, 0, 0, 200, 150, 0, WindowClass::INPUT_OUTPUT, 0, &CreateWindowAux::new()).unwrap();
+        conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, class).unwrap();
+        if with_icon {
+            conn.change_property32(PropMode::REPLACE, win, net_wm_icon, AtomEnum::CARDINAL, &icon).unwrap();
+        }
+        conn.map_window(win).unwrap();
+        conn.flush().unwrap();
+        win
+    };
+    let dir = comp.dir.join("run/yggdrasil-window-icons");
+    let read_png = |name: &str| -> Option<(u32, u32, Vec<u8>)> {
+        let f = std::fs::File::open(dir.join(name)).ok()?;
+        let mut r = png::Decoder::new(std::io::BufReader::new(f)).read_info().ok()?;
+        let mut buf = vec![0; r.output_buffer_size()];
+        let info = r.next_frame(&mut buf).ok()?;
+        Some((info.width, info.height, buf[..4].to_vec()))
+    };
+    let wait = |name: &str| {
+        let start = Instant::now();
+        loop {
+            if let Some(got) = read_png(name) {
+                return got;
+            }
+            assert!(start.elapsed() < Duration::from_secs(10), "{name} kept in {}", dir.display());
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    // set before the window shows: kept at once, the 64 one, blue
+    window(b"withicon\0Withicon\0", true);
+    assert_eq!(wait("Withicon.png"), (64, 64, vec![0, 0, 255, 255]));
+    // set after it shows: kept once its title changes
+    let late = window(b"lateicon\0Lateicon\0", false);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(read_png("Lateicon.png").is_none(), "no icon yet");
+    conn.change_property32(PropMode::REPLACE, late, net_wm_icon, AtomEnum::CARDINAL, &icon).unwrap();
+    conn.change_property8(PropMode::REPLACE, late, AtomEnum::WM_NAME, AtomEnum::STRING, b"Now with an icon").unwrap();
+    conn.flush().unwrap();
+    assert_eq!(wait("Lateicon.png").0, 64);
+    // no half-written files left beside them
+    let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert!(names.iter().all(|n| !n.starts_with('.')), "{names:?}");
+}
