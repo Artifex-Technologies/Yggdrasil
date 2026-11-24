@@ -1052,6 +1052,14 @@ impl App {
         }
     }
 
+    /// Whether a full screen window covers `output` now (on the workspace shown, drawn): when variable refresh is for
+    /// (udev.rs).
+    pub fn fullscreen_on(&self, output: &Output) -> bool {
+        self.space.elements().any(|w| {
+            win_has(w, xdg_toplevel::State::Fullscreen) && w.geometry().size.w > 0 && self.space.outputs_for_element(w).contains(output)
+        })
+    }
+
     /// Make a window full screen (the whole output).
     pub fn fullscreen(&mut self, window: &Window) {
         let r = output_rect(&self.window_output(window));

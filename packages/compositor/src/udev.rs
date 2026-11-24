@@ -63,6 +63,7 @@ use smithay::backend::allocator::{Format, Fourcc, Modifier};
 use smithay::backend::drm::compositor::FrameFlags;
 use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
 use smithay::backend::drm::output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements};
+use smithay::backend::drm::VrrSupport;
 use smithay::backend::drm::{DrmDevice, DrmDeviceFd, DrmError, DrmEvent, DrmNode, NodeType};
 use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
 use smithay::backend::input::InputEvent;
@@ -176,6 +177,8 @@ struct Screen {
     /// the tint its CRTC's gamma table has (red, green, blue scale; ctm.rs); None: not set yet, or to be set again (after a
     /// terminal had the screen, which may have reset it)
     gamma: Option<[f64; 3]>,
+    /// variable refresh can be switched on this screen without a modeset (the monitor and the GPU say so)
+    vrr_capable: bool,
 }
 
 struct Device {
@@ -498,6 +501,37 @@ const USAGE: &str = "outputs, scale NAME S, power NAME on|off, switches, lid ope
 fn same_gpu(a: DrmNode, b: DrmNode) -> bool {
     a.dev_id() == b.dev_id()
         || a.node_with_type(NodeType::Render).and_then(|n| n.ok()) == b.node_with_type(NodeType::Render).and_then(|n| n.ok())
+}
+
+/// When variable refresh (VRR) is on: YGGDRASIL_COMPOSITOR_VRR says 0 (never), 1 (always) or 2 (while a full screen window
+/// covers the screen: the default, as the Hyprland session's `vrr = 2`). A desktop at a varying rate makes its animations
+/// uneven and some monitors flicker in their brightness; a game in full screen is what it is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VrrPolicy {
+    Never,
+    Always,
+    FullScreen,
+}
+
+fn parse_vrr(v: Option<&str>) -> VrrPolicy {
+    match v.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("0" | "off" | "no" | "never") => VrrPolicy::Never,
+        Some("1" | "on" | "yes" | "always") => VrrPolicy::Always,
+        _ => VrrPolicy::FullScreen,
+    }
+}
+
+fn vrr_policy() -> VrrPolicy {
+    thread_local!(static P: VrrPolicy = parse_vrr(std::env::var("YGGDRASIL_COMPOSITOR_VRR").ok().as_deref()));
+    P.with(|p| *p)
+}
+
+fn vrr_wanted(policy: VrrPolicy, fullscreen: bool) -> bool {
+    match policy {
+        VrrPolicy::Never => false,
+        VrrPolicy::Always => true,
+        VrrPolicy::FullScreen => fullscreen,
+    }
 }
 
 /// The GPU that draws, and that programs render on: the one YGGDRASIL_COMPOSITOR_GPU names (`/dev/dri/card1`, or `card1`);
@@ -876,6 +910,20 @@ fn scan(
         };
         match made {
             Ok(drm) => {
+                let vrr = match &drm {
+                    Out::Gles(o) => o.with_compositor(|c| c.vrr_supported(conn.handle()).ok()),
+                    Out::Pixman(o) => o.with_compositor(|c| c.vrr_supported(conn.handle()).ok()),
+                };
+                let vrr_capable = matches!(vrr, Some(VrrSupport::Supported));
+                match vrr {
+                    Some(VrrSupport::Supported) => eprintln!("yggdrasil-compositor: {name} can use variable refresh"),
+                    Some(VrrSupport::RequiresModeset) => {
+                        eprintln!(
+                            "yggdrasil-compositor: {name}: variable refresh needs a modeset here: not used (the screen would go dark)"
+                        )
+                    }
+                    _ => {}
+                }
                 eprintln!(
                     "yggdrasil-compositor: {name} ({}x{} at {} Hz) on CRTC {crtc:?}",
                     mode.size.w,
@@ -897,6 +945,7 @@ fn scan(
                         dirty: true,
                         not_before: Instant::now(),
                         gamma: None,
+                        vrr_capable,
                     },
                 );
                 added.push(output);
@@ -1492,6 +1541,31 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
         }
         eprintln!("yggdrasil-compositor: {} switched on", screen.output.name());
     }
+    // variable refresh: on while a full screen window covers the screen (or always, or never: YGGDRASIL_COMPOSITOR_VRR)
+    let want_vrr = screen.vrr_capable && vrr_wanted(vrr_policy(), app.fullscreen_on(&screen.output));
+    let (now_vrr, set) = match &mut screen.drm {
+        Out::Gles(o) => {
+            o.with_compositor(|c| (c.vrr_enabled(), (c.vrr_enabled() != want_vrr).then(|| c.use_vrr(want_vrr).map_err(|e| e.to_string()))))
+        }
+        Out::Pixman(o) => {
+            o.with_compositor(|c| (c.vrr_enabled(), (c.vrr_enabled() != want_vrr).then(|| c.use_vrr(want_vrr).map_err(|e| e.to_string()))))
+        }
+    };
+    match set {
+        Some(Ok(())) => {
+            eprintln!("yggdrasil-compositor: {}: variable refresh {}", screen.output.name(), if want_vrr { "on" } else { "off" })
+        }
+        Some(Err(e)) => {
+            // told once: not tried again on this screen
+            eprintln!(
+                "yggdrasil-compositor: {}: variable refresh not switched {} (was {now_vrr}): {e}",
+                screen.output.name(),
+                if want_vrr { "on" } else { "off" }
+            );
+            screen.vrr_capable = false;
+        }
+        None => {}
+    }
     let result = match (&mut dev.gpu, &mut screen.drm) {
         (Gpu::Gles { renderer, .. }, Out::Gles(out)) => {
             follow_mode!(renderer, out, screen, Elem);
@@ -1561,6 +1635,17 @@ fn frame_shown(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crt
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn variable_refresh_follows_full_screen_unless_told_otherwise() {
+        use super::{parse_vrr, vrr_wanted, VrrPolicy};
+        assert_eq!(parse_vrr(None), VrrPolicy::FullScreen);
+        assert_eq!(parse_vrr(Some("2")), VrrPolicy::FullScreen);
+        assert_eq!(parse_vrr(Some("0")), VrrPolicy::Never);
+        assert_eq!(parse_vrr(Some(" ON ")), VrrPolicy::Always);
+        assert!(vrr_wanted(VrrPolicy::FullScreen, true) && !vrr_wanted(VrrPolicy::FullScreen, false));
+        assert!(vrr_wanted(VrrPolicy::Always, false) && !vrr_wanted(VrrPolicy::Never, true));
+    }
+
     #[test]
     fn the_gpu_with_the_screens_draws_and_the_variable_wins() {
         use std::path::{Path, PathBuf};

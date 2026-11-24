@@ -58,11 +58,12 @@ session() {
       export XDG_CURRENT_DESKTOP=Hyprland
       exec dbus-run-session -- Hyprland --config "$(hypr_conf)" ;;
     yggdrasil)
-      # Yggdrasil's own compositor (packages/compositor), the screen at its fastest mode as Hyprland's highrr above; Steam
-      # alone, and the session ends with it. It has no VRR and no tearing control yet: compare it with the vrr0 runs.
+      # Yggdrasil's own compositor (packages/compositor), the screen at its fastest mode as Hyprland's highrr above, variable
+      # refresh as `vrr` says (as Hyprland's misc.vrr: 1 always, 0 never); Steam alone, and the session ends with it. It has
+      # no tearing control yet (Hyprland's entry lets games tear).
       local mon="$XDG_RUNTIME_DIR/bakeoff-monitors.lua"
       echo 'hl.monitor({ output = "", mode = "highrr", position = "auto", scale = 1 })' >"$mon"
-      export XDG_CURRENT_DESKTOP=Yggdrasil YGGDRASIL_COMPOSITOR_MONITORS=$mon
+      export XDG_CURRENT_DESKTOP=Yggdrasil YGGDRASIL_COMPOSITOR_MONITORS=$mon YGGDRASIL_COMPOSITOR_VRR=$(vrr)
       exec dbus-run-session -- yggdrasil-compositor --drm --run sh -c 'steam; yggdrasil-compositor ctl quit' ;;
     cosmic)
       # cosmic-comp starts no program itself: start it, wait for its Wayland socket, then Steam inside it (Steam ends the session)
