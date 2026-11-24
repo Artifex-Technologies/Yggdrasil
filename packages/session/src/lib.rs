@@ -4,6 +4,7 @@
 
 pub mod hypr_logkeep;
 pub mod hypr_plugin;
+pub mod own_session;
 pub mod run;
 pub mod screen_reader;
 pub mod session;

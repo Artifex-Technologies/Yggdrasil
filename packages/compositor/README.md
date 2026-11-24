@@ -317,8 +317,12 @@ RESOURCE_MANAGER` shows Xft.dpi 120, and a GTK window under X11 drew at its plac
    `packages/session/tests/nested_session.rs` starts it with this compositor, headless, in Hyprland's place (a stand-in
    "Hyprland" on the PATH runs it), with the autostart line of yggdrasil.lua as its `--run` program and stand-ins for systemd and
    D-Bus: the environment arrives with this compositor's display, the session target starts and stops, a compositor killed
-   under the session is started again. Left: the launcher choosing this compositor itself, and the autostart without Hyprland's
-   Lua.
+   under the session is started again. A second step, 2026-11-24: the own session's start is Rust too
+   (`yggdrasil-compositor-session` in `packages/session`, src/own_session.rs; the autostart is its `--autostart` mode, run by
+   this compositor as its first program, with no Hyprland Lua): the same environment, autostart, Restart and Shut down after the
+   compositor, and the way back to the Hyprland session after a failed start as the shell script in `session/`, checked call for
+   call against it with the same stand-ins, and `packages/session/tests/own_session.rs`. The login entry still runs the script
+   until the switch. Left: the switch, and the full session in the test machine with Hyprland not installed.
 11. **The hardware backend** (DRM/KMS), developed in a virtual machine, never on the live session. Milestone 1 done 2026-11-15
    (above, `src/udev.rs`): libseat (logind and seatd), udev GPUs and connectors, GBM/EGL with OpenGL ES or pixman on dumb
    buffers, a DrmCompositor per screen paced by the page flip, libinput, virtual terminals, a clean exit; the panel, Settings and

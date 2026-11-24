@@ -15,6 +15,10 @@ name = "yggdrasil-session"
 path = "src/bin/yggdrasil-session.rs"
 
 [[bin]]
+name = "yggdrasil-compositor-session"
+path = "src/bin/yggdrasil-compositor-session.rs"
+
+[[bin]]
 name = "yggdrasil-zoom"
 path = "src/bin/yggdrasil-zoom.rs"
 
