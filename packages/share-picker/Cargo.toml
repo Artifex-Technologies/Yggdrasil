@@ -1,0 +1,21 @@
+[package]
+name = "yggdrasil-share-picker"
+version = "0.1.0"
+edition = "2021"
+description = "The question before a screen is shared: which screens a program may see (yggdrasil-portal's ScreenCast)"
+license = "MPL-2.0"
+
+[[bin]]
+name = "yggdrasil-share-picker"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.36.2"
+yggdrasil-ui = { path = "../yggdrasil-ui" }
+# the screens, from whichever compositor runs (Hyprland or Yggdrasil's own)
+yggdrasil-wm = { path = "../wm" }
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true

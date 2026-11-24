@@ -377,8 +377,9 @@ when more are used (other programs see, switch and add them through `ext-workspa
 backend, hotplug has not been tried on real hardware; explicit sync for NVIDIA is built and checked nested on an RTX 2080 Ti
 but not yet on the hardware backend, and a machine with two GPUs picks the one with the screens (not tried on two cards);
 VRR (while a full screen window covers the screen) and direct scanout of full screen games are built but not yet seen with a
-game; there is no tearing control (Smithay 0.7 has no asynchronous page flips), and no screen recording or screenshots through
-the portal. It is developed in a virtual machine, never on the live session, and the
+game; there is no tearing control (Smithay 0.7 has no asynchronous page flips). Screen sharing through the portal (ScreenCast:
+yggdrasil-portal, the share picker and yggdrasil-screencast, packages/screencast) is built and tested headless, whole screens in
+shared memory, but not yet tried with a browser or OBS; there are no screenshots through the portal. It is developed in a virtual machine, never on the live session, and the
 headless tests run in CI the whole time.
 
 Debugging: `YGGDRASIL_COMPOSITOR_DEBUG=1` prints pointer positions, button presses and move requests. To drive it from a script, move the host pointer

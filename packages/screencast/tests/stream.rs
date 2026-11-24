@@ -1,137 +1,34 @@
 //! The stream on a real PipeWire: a PipeWire of its own (a minimal configuration: no devices, nothing of the desktop's audio),
 //! the headless compositor, yggdrasil-screencast on its screen, and a viewer here that links itself to the stream's node and
 //! reads the first frame: the screen's size, and the compositor's background colour. Skipped where PipeWire or the compositor's
-//! build (YGGDRASIL_COMPOSITOR, else target/debug/yggdrasil-compositor) is not there, except under
-//! YGGDRASIL_TEST_SCREENCAST_REQUIRED (CI), where that fails.
+//! build is not there (tests/common), except under YGGDRASIL_TEST_SCREENCAST_REQUIRED (CI), where that fails.
 
 use std::cell::RefCell;
-use std::io::{BufRead, BufReader};
-use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 use std::rc::Rc;
-use std::sync::mpsc;
 use std::time::Duration;
 
 use pipewire as pw;
 use pw::{properties::properties, spa, spa::pod::Pod};
 
-const CONF: &str = "context.properties = { core.daemon = true core.name = pipewire-0 support.dbus = false mem.allow-mlock = false }
-context.spa-libs = { support.* = support/libspa-support }
-context.modules = [
-  { name = libpipewire-module-protocol-native }
-  { name = libpipewire-module-access }
-  { name = libpipewire-module-client-node }
-  { name = libpipewire-module-adapter }
-  { name = libpipewire-module-metadata }
-  { name = libpipewire-module-link-factory }
-]
-";
+mod common;
+use common::{line_with, World};
 
 /// The first frame the viewer read: its size in bytes and its first pixels.
 type Got = Rc<RefCell<Option<(usize, Vec<u8>)>>>;
 /// The screen's output port, and the viewer's node with its input port.
 type Ports = Rc<RefCell<(Option<u32>, Option<(u32, u32)>)>>;
 
-struct World {
-    dir: PathBuf,
-    children: Vec<Child>,
-}
-
-impl Drop for World {
-    fn drop(&mut self) {
-        // the last started first: the streamer before its compositor and PipeWire
-        for c in self.children.iter_mut().rev() {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
-fn compositor() -> Option<PathBuf> {
-    let p = std::env::var_os("YGGDRASIL_COMPOSITOR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/yggdrasil-compositor"));
-    p.is_file().then_some(p)
-}
-
-fn on_path(name: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
-}
-
-/// The first line of a child's output that starts with `prefix`, within `secs`.
-fn line_with(child: &mut Child, prefix: &str, secs: u64) -> Option<String> {
-    let out = child.stdout.take()?;
-    let (tx, rx) = mpsc::channel();
-    let prefix = prefix.to_string();
-    std::thread::spawn(move || {
-        for l in BufReader::new(out).lines().map_while(Result::ok) {
-            if let Some(v) = l.strip_prefix(&prefix) {
-                let _ = tx.send(v.to_string());
-            }
-        }
-    });
-    rx.recv_timeout(Duration::from_secs(secs)).ok()
-}
-
 #[test]
 fn a_screen_reaches_a_pipewire_viewer() {
-    // CI sets YGGDRASIL_TEST_SCREENCAST_REQUIRED: there it may not skip
-    let required = std::env::var_os("YGGDRASIL_TEST_SCREENCAST_REQUIRED").is_some();
-    let Some(comp) = compositor() else {
-        assert!(!required, "no compositor build (YGGDRASIL_COMPOSITOR, else target/debug/yggdrasil-compositor)");
-        eprintln!("skipped: no compositor build (YGGDRASIL_COMPOSITOR)");
-        return;
-    };
-    if !on_path("pipewire") {
-        assert!(!required, "PipeWire is not installed");
-        eprintln!("skipped: PipeWire is not installed");
-        return;
-    }
-    // a short folder: the sockets' paths must fit
-    let dir = PathBuf::from(format!("/tmp/ygg-sc-test-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("conf")).unwrap();
-    std::fs::write(dir.join("conf/pipewire.conf"), CONF).unwrap();
-    let mut w = World { dir: dir.clone(), children: vec![] };
-    let env = |c: &mut Command| {
-        // SAFETY: only an async-signal-safe prctl between fork and exec
-        unsafe {
-            c.pre_exec(|| rustix::process::set_parent_process_death_signal(Some(rustix::process::Signal::KILL)).map_err(Into::into));
-        }
-        c.env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .env("HOME", &dir)
-            .env("XDG_RUNTIME_DIR", &dir)
-            .env("PIPEWIRE_RUNTIME_DIR", &dir);
-    };
-    let mut pw_daemon = Command::new("pipewire");
-    env(&mut pw_daemon);
-    pw_daemon.env("PIPEWIRE_CONFIG_DIR", dir.join("conf")).stdout(Stdio::null()).stderr(Stdio::null());
-    w.children.push(pw_daemon.spawn().expect("pipewire starts"));
-
-    let mut c = Command::new(comp);
-    env(&mut c);
-    c.args(["--headless", "--size", "320x240"]).env("YGGDRASIL_COMPOSITOR_XWAYLAND", "0").stdout(Stdio::piped()).stderr(Stdio::null());
-    let mut comp = c.spawn().expect("the compositor starts");
-    let display = line_with(&mut comp, "WAYLAND_DISPLAY=", 20).expect("the compositor's display");
-    w.children.push(comp);
-    // PipeWire's socket is there by now (it started first)
-    let sock = dir.join("pipewire-0");
-    for _ in 0..100 {
-        if sock.exists() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-
-    let mut sc = Command::new(env!("CARGO_BIN_EXE_yggdrasil-screencast"));
-    env(&mut sc);
+    let Some(mut w) = World::new("ygg-sc-stream") else { return };
+    let sock = w.start_pipewire();
+    let (display, _) = w.start_compositor(&["--size", "320x240"]);
+    let mut sc = w.command(env!("CARGO_BIN_EXE_yggdrasil-screencast"));
     sc.args(["--output", "HEADLESS-1"]).env("WAYLAND_DISPLAY", &display).stdout(Stdio::piped()).stderr(Stdio::inherit());
     let mut sc = sc.spawn().expect("yggdrasil-screencast starts");
     let node: u32 = line_with(&mut sc, "node ", 20).expect("the stream's node").parse().expect("a node number");
-    w.children.push(sc);
+    w.keep(sc);
 
     // the viewer: a stream of its own, linked to the screen's node by hand (no session manager here)
     pw::init();

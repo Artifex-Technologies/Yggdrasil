@@ -19,7 +19,9 @@ FALLBACK=${YGGDRASIL_SESSION_FALLBACK:-/usr/bin/yggdrasil-session}
 TEST=${YGGDRASIL_SESSION_TEST:-}
 TAG=yggdrasil-compositor-session
 
-export XDG_CURRENT_DESKTOP=Yggdrasil XDG_SESSION_DESKTOP=yggdrasil XDG_SESSION_TYPE=wayland
+# Yggdrasil-Compositor first: the portal reads its routing from yggdrasil-compositor-portals.conf (screen sharing is
+# Yggdrasil's own here, Hyprland's on Hyprland); programs still find Yggdrasil in the list
+export XDG_CURRENT_DESKTOP=Yggdrasil-Compositor:Yggdrasil XDG_SESSION_DESKTOP=yggdrasil XDG_SESSION_TYPE=wayland
 export QT_QPA_PLATFORM='wayland;xcb' GDK_BACKEND='wayland,x11' MOZ_ENABLE_WAYLAND=1 ELECTRON_OZONE_PLATFORM_HINT=auto
 # NVIDIA's driver: video decoding through it (VA-API's nvidia driver, its direct backend) and GLX through NVIDIA's library, as
 # the Hyprland session sets them (packages/session, session.rs)

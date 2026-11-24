@@ -37,11 +37,12 @@ recipes are parsed. Every program ported from Python was measured against the Py
 | `packages/taskmanager` | `yggdrasil-taskmanager` | the Task Manager (Ctrl + Shift + Esc), laid out like Windows 11's: processes with GPU columns, a Performance page for every graphics card (engines, memory, sensors, the AI models Ollama has loaded), startup apps, users, details and services ([README](packages/taskmanager/README.md)) |
 | `packages/idle` | `yggdrasil-idle` | dims, blacks out the screen (pointer hidden), locks, turns the screen off and sleeps when you are away; keyboard and mouse lights off with the screen ([README](packages/idle/README.md)) |
 | `packages/polkit` | `yggdrasil-polkit` | the password box for administrator actions, Wi-Fi and VPN passwords, and Bluetooth pairing |
-| `packages/portal` | `yggdrasil-portal` | the file chooser portal (Minos) |
+| `packages/portal` | `yggdrasil-portal` | the portal backend: Minos as every program's open and save dialog, dark or light and the accent, and screen sharing on the own compositor |
 | `packages/keyring-sync` | `yggdrasil-keyring-sync` | keeps the keyring and the login password in step ([docs/USERS_KEYRING.md](docs/USERS_KEYRING.md)) |
 | `packages/xmove` | `yggdrasil-xmove` | lets X11 programs that draw their own title bar (Steam) be moved and resized |
 | `packages/compositor` | `yggdrasil-compositor` | Yggdrasil's own compositor (Smithay), in progress |
-| `packages/screencast` | `yggdrasil-screencast` | screen sharing on the own compositor: a screen published as a PipeWire video stream ([README](packages/screencast/README.md)) |
+| `packages/screencast` | `yggdrasil-screencast` | screen sharing on the own compositor: a screen published as a PipeWire video stream, started by the portal ([README](packages/screencast/README.md)) |
+| `packages/share-picker` | `yggdrasil-share-picker` | the question before a screen is shared: which screens a program may see ([README](packages/share-picker/README.md)) |
 | `packages/calculator`, `packages/weather` | | small apps ([docs/WEATHER.md](docs/WEATHER.md)) |
 | `packages/saga-md` | `saga-md` | Saga MD, the Markdown reader: a Markdown or text file formatted, or its source to read and edit; Ctrl + E switches ([README](packages/saga-md/README.md)) |
 | `packages/spell` | `yggdrasil-spell`, `yggdrasil-autocorrect` | spell checking in every app: the Hunspell dictionaries, one word list your apps share, a list shared by the computer, and correct as you type ([README](packages/spell/README.md)) |

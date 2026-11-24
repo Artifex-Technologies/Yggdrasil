@@ -1,37 +1,49 @@
-# Yggdrasil's xdg-desktop-portal backend: Minos as the open/save dialog of every application (built from packages/portal).
+# Yggdrasil's xdg-desktop-portal backend: Minos as the open/save dialog of every application (built from packages/portal), and
+# screen sharing on Yggdrasil's own compositor: its worker (packages/screencast) and its question (packages/share-picker).
 pkgname=yggdrasil-portal
 pkgver=1.0.0
 pkgrel=1
-pkgdesc="Yggdrasil file-chooser portal backend: Minos as the open and save dialog"
+pkgdesc="Yggdrasil portal backend: Minos as the open and save dialog, and screen sharing on the own compositor"
 arch=('x86_64')
 provides=('labyrinth-portal')
 conflicts=('labyrinth-portal')
 replaces=('labyrinth-portal')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
-depends=('gcc-libs' 'xdg-desktop-portal' 'yggdrasil-minos')
-makedepends=('cargo')
+# libpipewire: the screen sharing worker's stream; the rest: the share picker's window
+depends=('gcc-libs' 'xdg-desktop-portal' 'yggdrasil-minos' 'libpipewire' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig')
+# clang: PipeWire's headers through bindgen
+makedepends=('cargo' 'clang')
 options=('!lto')
 
 _src="$startdir/../../portal"
+_cast="$startdir/../../screencast"
+_picker="$startdir/../../share-picker"
 # The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
 # which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
 . "$startdir/../../../scripts/package-version.sh"
-_version "$startdir" "$_src"
+_version "$startdir" "$_src" "$_cast" "$_picker"
 
 build() {
-  cd "$_src"
-  cargo build --release --locked --target-dir "$srcdir/target"
+  local d
+  for d in "$_src" "$_cast" "$_picker"; do
+    (cd "$d" && cargo build --release --locked --target-dir "$srcdir/target") || return 1
+  done
 }
 
 check() {
-  cd "$_src"
-  cargo test --release --locked --target-dir "$srcdir/target"
+  # the unit tests; the worker's tests on a PipeWire and compositor of their own (packages/screencast/tests) run in CI
+  (cd "$_src" && cargo test --release --locked --target-dir "$srcdir/target") || return 1
+  (cd "$_cast" && cargo test --release --locked --target-dir "$srcdir/target" --bins) || return 1
+  (cd "$_picker" && cargo test --release --locked --target-dir "$srcdir/target")
 }
 
 package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-portal" "$pkgdir/usr/bin/yggdrasil-portal"
+  install -Dm755 "$srcdir/target/release/yggdrasil-screencast" "$pkgdir/usr/bin/yggdrasil-screencast"
+  install -Dm755 "$srcdir/target/release/yggdrasil-share-picker" "$pkgdir/usr/bin/yggdrasil-share-picker"
   install -Dm644 "$_src/data/yggdrasil.portal" "$pkgdir/usr/share/xdg-desktop-portal/portals/yggdrasil.portal"
   install -Dm644 "$_src/data/org.freedesktop.impl.portal.desktop.yggdrasil.service" "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.yggdrasil.service"
   install -Dm644 "$_src/data/yggdrasil-portals.conf" "$pkgdir/usr/share/xdg-desktop-portal/yggdrasil-portals.conf"
+  install -Dm644 "$_src/data/yggdrasil-compositor-portals.conf" "$pkgdir/usr/share/xdg-desktop-portal/yggdrasil-compositor-portals.conf"
 }

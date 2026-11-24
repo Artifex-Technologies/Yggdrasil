@@ -26,3 +26,5 @@ strip = true
 [dev-dependencies]
 # the test's PipeWire, compositor and streamer die with the test (parent-death signal), even when the test is killed
 rustix = { version = "1", features = ["process"] }
+# tests/portal.rs: the portal frontend's calls, on the test's own D-Bus
+zbus = "5"

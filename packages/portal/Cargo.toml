@@ -2,7 +2,7 @@
 name = "yggdrasil-portal"
 version = "0.1.0"
 edition = "2021"
-description = "Yggdrasil's xdg-desktop-portal backend: Minos as the open/save dialog for every application"
+description = "Yggdrasil's xdg-desktop-portal backend: Minos as the open/save dialog for every application, and screen sharing on the own compositor"
 license = "MPL-2.0"
 
 [[bin]]
@@ -16,6 +16,8 @@ yggdrasil-conf = { path = "../yggdrasil-conf" }
 # the window in front, when a program does not say who it is (Hyprland or Yggdrasil's own compositor)
 yggdrasil-wm = { path = "../wm" }
 blocking = "1"
+# screen sharing's workers: tied to their thread (parent-death signal) and signalled through a pidfd; already in zbus's tree
+rustix = { version = "1", features = ["process"] }
 
 [profile.release]
 opt-level = 2

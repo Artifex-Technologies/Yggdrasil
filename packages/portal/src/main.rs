@@ -3,13 +3,15 @@
 //! paths Minos prints and answers with file:// URIs. It decides nothing about access itself; the portal frontend and the
 //! sandbox do that. Nothing is logged but errors.
 //!
-//! It also answers `org.freedesktop.impl.portal.Settings` (settings.rs): dark or light, and the accent colour, for every program.
+//! It also answers `org.freedesktop.impl.portal.Settings` (settings.rs): dark or light, and the accent colour, for every program;
+//! and `org.freedesktop.impl.portal.ScreenCast` (screencast.rs): screen sharing on Yggdrasil's own compositor.
 //!
 //! The dialog opens in the folder the same program last picked from (remembered per program in
 //! `~/.local/state/yggdrasil/picker-folders`), unless the program asks for a folder of its own. "The same program" is the
 //! app id the portal gives, else the window with the focus when the dialog is asked for (Hyprland; that is the program
 //! asking), else the dialog's title.
 
+mod screencast;
 mod settings;
 
 use std::collections::HashMap;
@@ -311,9 +313,11 @@ impl Chooser {
 
 fn main() -> zbus::Result<()> {
     let running = Arc::new(Mutex::new(HashMap::new()));
+    let cast = screencast::ScreenCast { sessions: Default::default(), running: running.clone(), next: Default::default() };
     let conn = zbus::blocking::connection::Builder::session()?
         .name("org.freedesktop.impl.portal.desktop.yggdrasil")?
         .serve_at("/org/freedesktop/portal/desktop", Chooser { running })?
+        .serve_at("/org/freedesktop/portal/desktop", cast)?
         .serve_at("/org/freedesktop/portal/desktop", settings::Settings)?
         .build()?;
     settings::watch(conn.clone(), "/org/freedesktop/portal/desktop");
