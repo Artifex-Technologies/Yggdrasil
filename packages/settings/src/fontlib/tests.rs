@@ -39,7 +39,20 @@ fn guard(dir: &Path, font: &Path) -> String {
     let p = dir.join("guard");
     std::fs::write(&p, GUARD_SCRIPT.replace("$FONT", &font.display().to_string())).unwrap();
     std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    settle(&p);
     p.display().to_string()
+}
+
+/// Waits until a script just written can be run. Another test's program started while the script was open for writing holds
+/// that handle for a moment (until its own exec), and running the script then fails with "Text file busy" (ETXTBSY); once
+/// one run gets through, every later one does.
+fn settle(script: &Path) {
+    for _ in 0..200 {
+        match std::process::Command::new(script).arg("--help").stdin(std::process::Stdio::null()).output() {
+            Err(e) if e.raw_os_error() == Some(26) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            _ => return,
+        }
+    }
 }
 
 #[test]
@@ -73,6 +86,7 @@ fn a_guard_without_scan_and_extract_takes_nothing() {
     let old = d.join("old");
     std::fs::write(&old, "#!/bin/bash\nprintf 'heimdall-fileguard check [--json] FILE...\\nheimdall-fileguard watch\\n'\n").unwrap();
     std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
+    settle(&old);
     let old = old.display().to_string();
     assert_eq!(guard_ready(&old), Err(GuardMissing::TooOld));
     let e = bring_in(&old, std::slice::from_ref(&f), &d).unwrap_err();
