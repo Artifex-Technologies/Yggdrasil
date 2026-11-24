@@ -3,8 +3,8 @@
 //! (yggdrasil_conf::fonts) shows here too. egui's own fonts stay behind them for whatever a system font lacks (emoji, symbols).
 //!
 //! - `install(ctx)` at the app's start (in eframe's creation callback, so the first frame already has them);
-//! - `theme::apply_accessibility` calls `refresh` once a second: when the font settings' files changed, the fonts are loaded
-//!   anew, so a new choice shows in open windows within a second;
+//! - `theme::apply_accessibility` calls `refresh` when a font settings folder changes (an inotify watch wakes the window):
+//!   when the font settings' files changed, the fonts are loaded anew, so a new choice shows in open windows at once;
 //! - `FontFamily::Proportional` is the regular face, `FontFamily::Monospace` the monospace one, and `bold()` a bold family that
 //!   always exists: the regular face until an app asks for the real bold one with `want_bold` (no app does yet; loading a bold
 //!   face it never draws would cost every app about 1.4 MB);
@@ -156,7 +156,7 @@ pub fn install(ctx: &egui::Context) {
 }
 
 /// Loads the fonts again when the font settings changed since they were loaded (or were never loaded); cheap otherwise (two
-/// files' metadata). `theme::apply_accessibility` calls it once a second.
+/// files' metadata). `theme::apply_accessibility` calls it when a font settings folder changed.
 pub fn refresh(ctx: &egui::Context) {
     let mut st = state();
     if st.seen != Some(yggdrasil_conf::fonts::signature()) {

@@ -330,6 +330,11 @@ struct FormatForm {
     sure: bool,
 }
 
+/// Whether a folder watch's event is a change to the folder's entries (made, changed, removed, renamed), not a read of it.
+fn folder_changed(kind: &notify::EventKind) -> bool {
+    !matches!(kind, notify::EventKind::Access(_) | notify::EventKind::Other)
+}
+
 struct Watch {
     path: PathBuf,
     _watcher: RecommendedWatcher,
@@ -603,7 +608,9 @@ impl Pane {
         let (tx, rx) = channel();
         let c = ctx.clone();
         let Ok(mut w) = notify::recommended_watcher(move |r: notify::Result<notify::Event>| {
-            if r.is_ok() {
+            // a change only: reading the folder (which every reload does) reports an access, and reacting to that read it
+            // again and again (28 frames a second for as long as Minos was open)
+            if r.is_ok_and(|e| folder_changed(&e.kind)) {
                 let _ = tx.send(());
                 c.request_repaint();
             }
@@ -2249,8 +2256,6 @@ struct App {
     proton_tx: Sender<Result<(), String>>,
     proton_rx: Receiver<Result<(), String>>,
     applied_theme: Option<(bool, Option<[u8; 3]>, u32)>,
-    accent_checked: Instant,
-    conf_checked: Instant,
     pv: PreviewState,
     dnd: Option<dnd::Dnd>,
     dnd_tried: bool,
@@ -2384,8 +2389,6 @@ impl App {
             proton_tx,
             proton_rx,
             applied_theme: None,
-            accent_checked: Instant::now(),
-            conf_checked: Instant::now(),
             pv: PreviewState::new(),
             dnd: None,
             dnd_tried: false,
@@ -4141,12 +4144,13 @@ impl eframe::App for App {
             session::publish(&here);
             self.published = here;
         }
-        // Follow the system accent: read it now and then, so a change in the system settings
-        // shows up without restarting Minos.
-        // light or dark, and the accent, follow the system's setting (Settings, Appearance); hidden items follow Settings, Apps
-        self.st.dark = theme::system_dark();
-        if self.conf_checked.elapsed() >= Duration::from_secs(1) {
-            self.conf_checked = Instant::now();
+        // light or dark and the accent follow the system's setting (Settings, Appearance); hidden items, drive status and
+        // see-through follow Settings, Apps. Read at the start and when the settings folder changes (the watch wakes Minos
+        // then), never on a timer.
+        if theme::settings_changed(&ctx, "minos") {
+            let look = yggdrasil_conf::appearance::load();
+            self.st.dark = look.dark;
+            self.st.system_accent = look.accent;
             let conf = yggdrasil_conf::PanelConf::load();
             self.st.drive_status = conf.drive_status;
             self.st.opacity = if conf.minos_transparent { conf.minos_opacity } else { 100 };
@@ -4155,16 +4159,6 @@ impl eframe::App for App {
                 self.st.show_hidden = show;
                 self.reload_all();
             }
-            ctx.request_repaint_after(Duration::from_secs(1));
-        }
-        if self.st.follow_accent && self.accent_checked.elapsed() >= Duration::from_secs(2) {
-            self.st.system_accent = theme::system_accent();
-            self.accent_checked = Instant::now();
-        } else if !self.st.follow_accent {
-            self.st.system_accent = None;
-        }
-        if self.st.follow_accent {
-            ctx.request_repaint_after(Duration::from_secs(2));
         }
         let want = (self.st.dark, self.st.accent(), self.st.opacity);
         if self.applied_theme != Some(want) {
@@ -5046,6 +5040,17 @@ fn accent_colour() -> Color32 {
 
 #[cfg(test)]
 mod listing_tests {
+    #[test]
+    fn reading_a_folder_is_no_change_to_it() {
+        use notify::event::{AccessKind, AccessMode, CreateKind, ModifyKind, RemoveKind, RenameMode};
+        use notify::EventKind;
+        assert!(!super::folder_changed(&EventKind::Access(AccessKind::Open(AccessMode::Any))));
+        assert!(!super::folder_changed(&EventKind::Access(AccessKind::Close(AccessMode::Read))));
+        assert!(super::folder_changed(&EventKind::Create(CreateKind::File)));
+        assert!(super::folder_changed(&EventKind::Modify(ModifyKind::Name(RenameMode::Both))));
+        assert!(super::folder_changed(&EventKind::Remove(RemoveKind::Any)));
+    }
+
     use super::*;
 
     #[test]

@@ -226,18 +226,20 @@ pub fn apply_opacity(ctx: &egui::Context, dark: bool, accent: Option<[u8; 3]>, p
     });
 }
 
-/// Text size and reduced motion from Settings > Accessibility (read from panel.conf at most once a second, so a change shows without a
-/// restart), and the system font from Settings > Appearance > Fonts (`fonts::refresh`, the same second). Call it at the top of every
-/// frame of every app.
+/// Text size and reduced motion from Settings > Accessibility (panel.conf), and the system font from Settings > Appearance >
+/// Fonts (`fonts::refresh`): read at the first frame, then again only when a file in the settings folder is written (an
+/// inotify watch on a thread of its own wakes the window then). Nothing wakes an idle app for it: a once-a-second look kept
+/// every app waking (YGG-17). Call it at the top of every frame of every app.
 pub fn apply_accessibility(ctx: &egui::Context) {
-    let id = egui::Id::new("yggdrasil-accessibility-checked");
-    let now = ctx.input(|i| i.time);
-    let last: f64 = ctx.data(|d| d.get_temp(id)).unwrap_or(-10.0);
-    if now - last < 1.0 {
+    cursor_rest(ctx);
+    if !settings_changed(ctx, "accessibility") {
         return;
     }
-    ctx.data_mut(|d| d.insert_temp(id, now));
-    let c = yggdrasil_conf::PanelConf::load();
+    apply_settings(ctx, &yggdrasil_conf::PanelConf::load());
+}
+
+/// Text size and reduced motion from `c`, and the system font.
+fn apply_settings(ctx: &egui::Context, c: &yggdrasil_conf::PanelConf) {
     let zoom = f32::from(c.text_scale.clamp(yggdrasil_conf::TEXT_SCALE_MIN, yggdrasil_conf::TEXT_SCALE_MAX)) / 100.0;
     if (ctx.zoom_factor() - zoom).abs() > 0.001 {
         ctx.set_zoom_factor(zoom);
@@ -245,11 +247,176 @@ pub fn apply_accessibility(ctx: &egui::Context) {
     let anim = if c.reduce_motion { 0.0 } else { 1.0 / 12.0 };
     ctx.all_styles_mut(|s| s.animation_time = anim);
     crate::fonts::refresh(ctx);
-    ctx.request_repaint_after(std::time::Duration::from_secs(1));
+}
+
+/// How long a text cursor blinks after the last key, click or pointer move; then it stays lit and the window sleeps (GTK's
+/// `gtk-cursor-blink-timeout`). A blinking cursor wakes the window twice a second for as long as it has the focus.
+const CURSOR_BLINK_FOR: f64 = 10.0;
+
+/// Stops the text cursor blinking once nothing has happened for `CURSOR_BLINK_FOR`, and starts it again at the next input.
+fn cursor_rest(ctx: &egui::Context) {
+    let last_id = egui::Id::new("yggdrasil-last-input");
+    let (now, active) = ctx.input(|i| (i.time, !i.events.is_empty() || i.pointer.is_moving() || i.pointer.any_down()));
+    let last: f64 = if active {
+        ctx.data_mut(|d| d.insert_temp(last_id, now));
+        now
+    } else {
+        ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(last_id, || now))
+    };
+    let blink = now - last < CURSOR_BLINK_FOR;
+    let on_id = egui::Id::new("yggdrasil-cursor-blinks");
+    if ctx.data(|d| d.get_temp::<bool>(on_id)) != Some(blink) {
+        ctx.data_mut(|d| d.insert_temp(on_id, blink));
+        ctx.all_styles_mut(|s| s.visuals.text_cursor.blink = blink);
+    }
+}
+
+/// The settings folder's watch: a count that goes up when a file there is written, made, removed or renamed; the windows
+/// to wake then.
+struct Watch {
+    changes: std::sync::atomic::AtomicU64,
+    windows: std::sync::Mutex<Vec<egui::Context>>,
+}
+
+static WATCH: std::sync::OnceLock<Option<&'static Watch>> = std::sync::OnceLock::new();
+
+/// True at the first call for `who` in a window, and again after a file in the settings folder (`~/.config/yggdrasil`:
+/// panel.conf, appearance.conf, fonts) changed since its last call. The window is woken when one changes, so an app reads
+/// its settings again then, and never on a timer. Each `who` keeps its own count, so several readers in one app all see a
+/// change.
+pub fn settings_changed(ctx: &egui::Context, who: &str) -> bool {
+    changed_on(*WATCH.get_or_init(|| start_watch(&watched())), ctx, who)
+}
+
+fn changed_on(watch: Option<&'static Watch>, ctx: &egui::Context, who: &str) -> bool {
+    let Some(w) = watch else {
+        // no inotify (an odd system): read every frame the app draws anyway, never waking it for this
+        return true;
+    };
+    {
+        let mut windows = w.windows.lock().unwrap_or_else(|e| e.into_inner());
+        if !windows.iter().any(|c| c == ctx) {
+            windows.push(ctx.clone());
+        }
+    }
+    let now = w.changes.load(std::sync::atomic::Ordering::Acquire);
+    let id = egui::Id::new(("yggdrasil-settings-seen", who));
+    let seen: Option<u64> = ctx.data(|d| d.get_temp(id));
+    if seen == Some(now) {
+        return false;
+    }
+    ctx.data_mut(|d| d.insert_temp(id, now));
+    true
+}
+
+/// The folders watched: Yggdrasil's settings, and the system font's file for this user and for all
+/// (`yggdrasil_conf::fonts`).
+fn watched() -> Vec<std::path::PathBuf> {
+    let mut dirs = vec![yggdrasil_conf::dirs::config()];
+    for f in [yggdrasil_conf::fonts::user_path(), std::path::PathBuf::from(yggdrasil_conf::fonts::SYSTEM_PATH)] {
+        dirs.extend(f.parent().map(std::path::Path::to_path_buf));
+    }
+    dirs
+}
+
+/// Watches `dirs` (the user's two are made when missing, as writing a setting would; the system's is not touched).
+fn start_watch(dirs: &[std::path::PathBuf]) -> Option<&'static Watch> {
+    // SAFETY: inotify on a descriptor of our own, read into a buffer of our own
+    let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
+    if fd < 0 {
+        return None;
+    }
+    let mask = libc::IN_CLOSE_WRITE | libc::IN_CREATE | libc::IN_DELETE | libc::IN_MOVED_TO | libc::IN_MOVED_FROM;
+    let mut any = false;
+    for (i, dir) in dirs.iter().enumerate() {
+        if i < 2 {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let Ok(path) = std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(dir.as_os_str())) else { continue };
+        any |= unsafe { libc::inotify_add_watch(fd, path.as_ptr(), mask) } >= 0;
+    }
+    if !any {
+        unsafe { libc::close(fd) };
+        return None;
+    }
+    let w: &'static Watch = Box::leak(Box::new(Watch { changes: 0.into(), windows: std::sync::Mutex::new(vec![]) }));
+    std::thread::Builder::new()
+        .name("settings-watch".into())
+        .spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+                if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                if n <= 0 {
+                    return;
+                }
+                w.changes.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                for c in w.windows.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+                    c.request_repaint();
+                }
+            }
+        })
+        .ok()?;
+    Some(w)
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_text_size_written_in_settings_is_applied_without_polling() {
+        use super::*;
+        // a watch of its own on a folder of its own (the environment is the whole test process's)
+        let dir = std::env::temp_dir().join(format!("ygg-ui-watch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let watch = start_watch(std::slice::from_ref(&dir));
+        assert!(watch.is_some());
+        let ctx = egui::Context::default();
+        assert!(changed_on(watch, &ctx, "accessibility"), "the first frame reads");
+        assert!(!changed_on(watch, &ctx, "accessibility"), "nothing changed: nothing to read again");
+        assert!(changed_on(watch, &ctx, "another reader"), "a reader's first call reads");
+        let conf = dir.join("panel.conf");
+        std::fs::write(&conf, "text_scale = 150\n").unwrap();
+        let start = std::time::Instant::now();
+        while !changed_on(watch, &ctx, "accessibility") {
+            assert!(start.elapsed() < std::time::Duration::from_secs(5), "the watch did not see the write");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // the file is made, then written: read again at each change until the write is in
+        let zoom = loop {
+            apply_settings(&ctx, &yggdrasil_conf::PanelConf::parse(&std::fs::read_to_string(&conf).unwrap()));
+            // egui takes a new zoom at the start of the next frame
+            let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+            out.textures_delta.clear();
+            let zoom = ctx.zoom_factor();
+            if (zoom - 1.5).abs() < 0.001 || start.elapsed() > std::time::Duration::from_secs(5) {
+                break zoom;
+            }
+            while !changed_on(watch, &ctx, "accessibility") && start.elapsed() < std::time::Duration::from_secs(5) {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!((zoom - 1.5).abs() < 0.001, "{zoom}");
+    }
+
+    #[test]
+    fn the_text_cursor_stops_blinking_after_ten_quiet_seconds_and_starts_at_a_key() {
+        use super::*;
+        let ctx = egui::Context::default();
+        let frame = |t: f64, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(egui::RawInput { time: Some(t), events, ..Default::default() }, |_| cursor_rest(&ctx));
+            out.textures_delta.clear();
+            ctx.global_style().visuals.text_cursor.blink
+        };
+        assert!(frame(0.0, vec![]));
+        assert!(frame(9.0, vec![]));
+        assert!(!frame(10.5, vec![]), "ten quiet seconds: the cursor stays lit");
+        assert!(frame(11.0, vec![egui::Event::Text("1".into())]), "a key: it blinks again");
+        assert!(!frame(21.5, vec![]));
+    }
 
     #[test]
     fn a_very_dark_accent_is_lifted_for_text_on_dark() {
