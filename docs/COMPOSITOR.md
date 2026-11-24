@@ -358,8 +358,8 @@ shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
   - Small gaps: the Wine dialogs' class `steam_proton` has no dock icon; the dock's hover card stays over a full screen game while
     the pointer is on it.
 - Not yet: drag and drop, resize from the edges.
-- Small gaps seen: the dock shows a plain icon for xterm (its desktop entry names an XPM picture the panel does not load); the
-  dock's hover preview of an X11 window is empty.
+- Small gaps seen: the dock shows a plain icon for xterm (its desktop entry names an XPM picture the panel does not load). The
+  dock's hover preview of an X11 window, once empty, shows it (tests/x11.rs and tests/apps.rs, 2026-11-24).
 
 X11 programs are told the desktop's pointer theme and size (Xcursor.theme and Xcursor.size in XWayland's X resources, at
 X11's scale, set again when the theme changes; `tests/x11.rs`). X11 programs draw at the screens' resolution (since

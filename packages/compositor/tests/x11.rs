@@ -155,3 +155,50 @@ fn x11_programs_draw_at_the_screens_resolution_unless_stretched() {
     // stretch = true in xwayland.conf: the old way, the scaled-down size stretched to the screen, the DPI of scale 1
     assert_eq!(x11_size_and_dpi(true), ((1536, 960), "96".to_string()));
 }
+
+#[test]
+fn an_x11_windows_picture_is_copied_for_the_docks_preview() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "an X11 window's copy");
+    let (comp, display) = with_xwayland_on(&["--size", "800x600"], |_| {});
+    let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = conn.setup().roots[screen].root;
+    // a red window: the X server paints its background, XWayland hands the picture over
+    let win = conn.generate_id().unwrap();
+    let aux = CreateWindowAux::new().background_pixel(0xff0000).event_mask(EventMask::EXPOSURE);
+    conn.create_window(0, win, root, 0, 0, 300, 200, 0, WindowClass::INPUT_OUTPUT, 0, &aux).unwrap();
+    conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"x11copy\0X11copy\0").unwrap();
+    conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_NAME, AtomEnum::STRING, b"Copied").unwrap();
+    conn.map_window(win).unwrap();
+    conn.flush().unwrap();
+    let start = Instant::now();
+    while comp.window("X11copy").is_none() {
+        assert!(start.elapsed() < Duration::from_secs(10), "the X11 window opens: {:?}", comp.must("windows"));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let on_screen = comp.window("X11copy").unwrap();
+    let shot = comp.screenshot("HEADLESS-1");
+    assert!(shot.count((on_screen.at.0 + 20, on_screen.at.1 + 20, 100, 100), (255, 0, 0)) > 9000, "red on the screen: {on_screen:?}");
+
+    // the dock's way: the window list, then a copy of the window alone
+    let mut p = comp.connect();
+    let _list = p.toplevel_list();
+    let listed = p.listed("X11copy").expect("the X11 window is listed");
+    assert_eq!(listed.title, "Copied");
+    let (i, session) = p.capture_window(&listed.handle);
+    let size = p.state.caps[i].size.expect("a size for the copy");
+    assert_eq!(size, (300, 200), "the window's own size");
+    let f = p.begin_copy(i, &session, size, 0);
+    let (pic, bytes) = p.end_copy(f, 5.0).expect("the X11 window's copy");
+    assert_eq!(pic.count((0, 0, 300, 200), (255, 0, 0)), 300 * 200, "all of it red, as on the screen");
+    let clear = bytes.chunks(4).filter(|px| px[3] != 255).count();
+    assert_eq!(
+        clear,
+        0,
+        "opaque, as the panel draws it (alpha of the first pixels: {:?})",
+        &bytes.chunks(4).take(4).map(|p| p[3]).collect::<Vec<_>>()
+    );
+}
