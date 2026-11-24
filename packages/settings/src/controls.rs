@@ -69,7 +69,6 @@ pub fn act(c: &Control) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     fn control(kind: ControlKind, cmd: &str) -> Control {
         Control { kind, id: "x".into(), label: "X".into(), description: String::new(), command: vec![cmd.to_string()] }
@@ -81,8 +80,7 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         let script = |name: &str, body: &str| {
             let p = d.join(name);
-            std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::testkit::write_script(&p, &format!("#!/bin/sh\n{body}\n"));
             p.to_string_lossy().into_owned()
         };
         let sw = script("sw", r#"case "$1" in status) echo on;; on|off) exit 0;; esac"#);

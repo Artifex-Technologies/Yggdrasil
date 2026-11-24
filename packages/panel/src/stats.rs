@@ -856,25 +856,33 @@ pub fn paint(
 
 #[cfg(test)]
 mod tests {
+    /// Writes an executable script with `install -m 755`, a program of its own, so that no thread of this test process ever holds
+    /// it open for writing: another test's program started meanwhile would inherit that handle until its exec, and running the
+    /// script then fails with "Text file busy" (ETXTBSY).
+    fn write_script(path: &std::path::Path, text: &str) {
+        let src = path.with_extension("script-text");
+        std::fs::write(&src, text).unwrap();
+        let ok = std::process::Command::new("install").args(["-m", "755"]).arg(&src).arg(path).status().is_ok_and(|s| s.success());
+        let _ = std::fs::remove_file(&src);
+        assert!(ok, "install could not write {}", path.display());
+    }
+
     // differential: the shell lines transfer() replaced and transfer() itself, against one stand-in curl that writes down its
     // arguments and how many bytes it was given, and answers with that count
     #[test]
     fn transfers_make_the_calls_the_shell_lines_made() {
-        use std::os::unix::fs::PermissionsExt;
         let d = std::env::temp_dir().join(format!("panel-speed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         let curl = d.join("curl");
         let log = d.join("log");
-        std::fs::write(
+        write_script(
             &curl,
-            format!(
+            &format!(
                 "#!/bin/sh\nn=$(wc -c | tr -d ' ')\nprintf '%s|' \"$@\" >> '{}'\necho \" $n\" >> '{0}'\nprintf '%s' \"$n\"\n",
                 log.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&curl, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let c = curl.to_string_lossy().into_owned();
         let old = |download: bool| {
             let script = if download {

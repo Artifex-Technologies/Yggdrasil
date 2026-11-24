@@ -301,7 +301,6 @@ mod tests {
     }
 
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn passwd_line_is_read() {
@@ -336,7 +335,7 @@ mod tests {
             std::process::id(),
             N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        std::fs::write(
+        crate::testkit::write_script(
             &p,
             r#"#!/bin/bash
 echo "Changing password for tester."
@@ -348,9 +347,7 @@ read -r -s -p "Retype new password: " again; echo
 [ "$new" = "$again" ] || { echo "Sorry, passwords do not match."; exit 10; }
 echo "passwd: password updated successfully"
 "#,
-        )
-        .unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         p
     }
 
