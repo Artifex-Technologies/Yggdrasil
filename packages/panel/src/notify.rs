@@ -448,7 +448,7 @@ struct Server {
 #[zbus::interface(name = "org.freedesktop.Notifications")]
 impl Server {
     fn get_capabilities(&self) -> Vec<String> {
-        ["body", "actions", "icon-static", "persistence", "body-images"].iter().map(|s| s.to_string()).collect()
+        ["body", "actions", "icon-static", "persistence"].iter().map(|s| s.to_string()).collect()
     }
 
     #[allow(clippy::too_many_arguments)]
