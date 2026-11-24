@@ -62,6 +62,8 @@ struct App {
     /// recent searches, and whether the pointer was over their list (so a click on one lands before the field's focus goes)
     recent: recent::Recent,
     recent_hover: bool,
+    /// package operations waiting their turn
+    queue: install::Queue,
     catalogs: Vec<Catalog>,
     repos: Vec<Repo>,
     /// Errors per repository, by index into `repos`.
@@ -132,6 +134,7 @@ impl App {
             search: String::new(),
             recent: recent::Recent::load(recent::Recent::path()),
             recent_hover: false,
+            queue: Default::default(),
             catalogs: vec![],
             repos: catalog::load_repos(),
             repo_status: vec![],
@@ -282,6 +285,10 @@ impl App {
                 }
                 Msg::Finished(id) => {
                     self.busy.remove(&id);
+                    // the next waiting package operation's turn
+                    if let Some(p) = self.queue.next(&self.jobs) {
+                        self.launch(ctx, p);
+                    }
                     self.refresh_installed(ctx);
                     self.last_check = None; // look again soon: what was just installed may change the list
                     self.installs = history::load();
@@ -404,8 +411,14 @@ impl App {
 
     /// The Get / Open / Update pill for an entry. Returns what was asked.
     fn pill(&mut self, ui: &mut egui::Ui, e: &Entry, big: bool) -> Option<&'static str> {
-        let job = self.job_snapshot(&e.id).filter(|j| j.status == install::Status::Running);
-        let running_label = job.as_ref().map(|j| j.frac.map(|f| format!("{}%", (f * 100.0) as u32)).unwrap_or_else(|| "...".into()));
+        let job = self.job_snapshot(&e.id).filter(|j| j.status.active());
+        let running_label = job.as_ref().map(|j| {
+            if j.status == install::Status::Queued {
+                "Waiting".to_string()
+            } else {
+                j.frac.map(|f| format!("{}%", (f * 100.0) as u32)).unwrap_or_else(|| "...".into())
+            }
+        });
         let (label, kind) = if let Some(l) = running_label {
             (l, "busy")
         } else if self.busy.contains(&e.id) {
@@ -450,7 +463,7 @@ impl App {
     }
 
     fn is_running(&self, id: &str) -> bool {
-        self.job_snapshot(id).map(|j| j.status == install::Status::Running).unwrap_or(false)
+        self.job_snapshot(id).map(|j| j.status.active()).unwrap_or(false)
     }
 
     /// Install, reinstall or remove an entry. Reviewed apps run here with progress (the password asked for in the desktop's own box);
@@ -532,32 +545,14 @@ impl App {
         args: Vec<String>,
         undo: install::Undo,
     ) {
-        let (tx, ctx_a, ctx_b, id2, name2) = (self.tx.clone(), ctx.clone(), ctx.clone(), id.to_string(), name.to_string());
-        let job = install::start(
-            id,
-            name,
-            op,
-            prog,
-            args,
-            undo,
-            move || ctx_a.request_repaint(),
-            move |status| {
-                // tell the desktop, and the window (so it looks at what is installed again)
-                let text = match &status {
-                    install::Status::Done => format!("{name2} {}", op.done()),
-                    install::Status::Failed(why) => format!("{name2}: {why}"),
-                    install::Status::Cancelled => format!("{name2}: cancelled, nothing was kept"),
-                    install::Status::Running => String::new(),
-                };
-                // only a finished install goes in the history: not a cancelled or failed one, and not a removal or an update
-                if status == install::Status::Done && matches!(op, install::Op::Install | install::Op::Reinstall) {
-                    history::record(&id2, &name2, op.done());
-                }
-                let _ = std::process::Command::new("notify-send").args(["-a", "Agora", "-i", "agora", &text]).status();
-                let _ = tx.send(Msg::Finished(id2));
-                ctx_b.request_repaint();
-            },
-        );
+        // one package operation at a time: a new one waits its turn (the package database has one lock)
+        let job = install::queued(id, name, op);
+        let pending = install::Pending { job: job.clone(), prog, args, undo };
+        if self.queue.must_wait(&self.jobs) {
+            self.queue.push(pending);
+        } else {
+            self.launch(ctx, pending);
+        }
         self.jobs.push(job);
         // hide the earlier finished jobs of the same entry
         let keep = self.jobs.len() - 1;
@@ -565,13 +560,46 @@ impl App {
         self.jobs.retain(|j| {
             let k = i;
             i += 1;
-            k == keep || j.lock().map(|g| g.id != id || g.status == install::Status::Running).unwrap_or(true)
+            k == keep || j.lock().map(|g| g.id != id || g.status.active()).unwrap_or(true)
         });
+    }
+
+    /// Runs a job whose turn it is: the desktop is told when it ends, and the next waiting one starts then.
+    fn launch(&mut self, ctx: &egui::Context, p: install::Pending) {
+        let (id, name, op) = {
+            let g = p.job.lock().unwrap();
+            (g.id.clone(), g.title.clone(), g.op)
+        };
+        let (tx, ctx_a, ctx_b) = (self.tx.clone(), ctx.clone(), ctx.clone());
+        install::run(
+            p.job,
+            p.prog,
+            p.args,
+            p.undo,
+            move || ctx_a.request_repaint(),
+            move |status| {
+                // tell the desktop, and the window (so it looks at what is installed again)
+                let text = match &status {
+                    install::Status::Done => format!("{name} {}", op.done()),
+                    install::Status::Failed(why) => format!("{name}: {why}"),
+                    install::Status::Cancelled => format!("{name}: cancelled, nothing was kept"),
+                    install::Status::Running | install::Status::Queued => String::new(),
+                };
+                // only a finished install goes in the history: not a cancelled or failed one, and not a removal or an update
+                if status == install::Status::Done && matches!(op, install::Op::Install | install::Op::Reinstall) {
+                    history::record(&id, &name, op.done());
+                }
+                let _ = std::process::Command::new("notify-send").args(["-a", "Agora", "-i", "agora", &text]).status();
+                let _ = tx.send(Msg::Finished(id));
+                ctx_b.request_repaint();
+            },
+        );
     }
 
     /// What an install is doing: its phase, a bar, and (on request) the output.
     fn progress_card(&mut self, ui: &mut egui::Ui, j: &install::Job) {
         let (fill, tone) = match &j.status {
+            install::Status::Queued => (self.pal.field, self.pal.dim),
             install::Status::Running => (self.pal.field, self.pal.accent),
             install::Status::Done => (self.pal.field, self.pal.green),
             install::Status::Failed(_) => (self.pal.red.gamma_multiply(0.15), self.pal.red),
@@ -581,6 +609,7 @@ impl App {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 let head = match &j.status {
+                    install::Status::Queued => format!("{}: waiting its turn", j.title),
                     install::Status::Running => format!("{} {}", j.op.verb(), j.title),
                     install::Status::Done => format!("{} {}", j.title, j.op.done()),
                     install::Status::Failed(_) => format!("{} could not be {}", j.title, j.op.done()),
@@ -588,13 +617,10 @@ impl App {
                 };
                 ui.label(RichText::new(head).strong());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if j.status == install::Status::Running && !j.cancel_requested && j.op != install::Op::UpdateAll {
+                    if j.status.active() && !j.cancel_requested && j.op != install::Op::UpdateAll {
                         if ui.add(egui::Label::new(RichText::new("Cancel").size(12.5).color(self.pal.red)).sense(Sense::click())).clicked()
                         {
-                            if let Some(h) = self
-                                .jobs
-                                .iter()
-                                .find(|h| h.lock().map(|g| g.id == j.id && g.status == install::Status::Running).unwrap_or(false))
+                            if let Some(h) = self.jobs.iter().find(|h| h.lock().map(|g| g.id == j.id && g.status.active()).unwrap_or(false))
                             {
                                 install::request_cancel(h);
                             }
@@ -656,6 +682,7 @@ impl App {
         let target = match &j.status {
             install::Status::Done => 1.0,
             install::Status::Failed(_) | install::Status::Cancelled => j.frac.unwrap_or(0.0),
+            install::Status::Queued => 0.0,
             install::Status::Running => {
                 // before anything is known the bar still starts moving, smoothly, from the moment it is begun
                 let start = if j.frac.is_none() { 0.05 * (1.0 - (-j.started.elapsed().as_secs_f32() / 1.2).exp()) } else { 0.0 };
@@ -754,8 +781,8 @@ impl App {
             self.progress_card(ui, j);
             ui.add_space(8.0);
         }
-        if jobs.iter().any(|j| j.status != install::Status::Running) && ui.button("Clear finished").clicked() {
-            self.jobs.retain(|j| j.lock().map(|g| g.status == install::Status::Running).unwrap_or(false));
+        if jobs.iter().any(|j| !j.status.active()) && ui.button("Clear finished").clicked() {
+            self.jobs.retain(|j| j.lock().map(|g| g.status.active()).unwrap_or(false));
         }
     }
 
@@ -1642,7 +1669,7 @@ impl eframe::App for App {
         // look for updates every half hour while the window is open (and again soon after an install)
         if !self.checking
             && self.last_check.map(|t| t.elapsed() > Duration::from_secs(1800)).unwrap_or(true)
-            && self.jobs.iter().all(|j| j.lock().map(|g| g.status != install::Status::Running).unwrap_or(true))
+            && self.jobs.iter().all(|j| j.lock().map(|g| !g.status.active()).unwrap_or(true))
         {
             self.auto_check(&ctx);
         }
@@ -1730,8 +1757,7 @@ impl eframe::App for App {
                     ("Categories", Page::Categories, None),
                     ("Updates", Page::Updates, if n_up > 0 { Some(n_up) } else { None }),
                     ("Activity", Page::Activity, {
-                        let n =
-                            self.jobs.iter().filter(|j| j.lock().map(|j| j.status == install::Status::Running).unwrap_or(false)).count();
+                        let n = self.jobs.iter().filter(|j| j.lock().map(|j| j.status.active()).unwrap_or(false)).count();
                         if n > 0 {
                             Some(n)
                         } else {

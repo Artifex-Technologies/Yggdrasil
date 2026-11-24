@@ -41,11 +41,20 @@ impl Op {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
+    /// Waiting for the job before it: one package operation runs at a time (they share the package database's lock).
+    Queued,
     Running,
     Done,
     Failed(String),
     /// The user cancelled it; whatever it had downloaded or installed was removed.
     Cancelled,
+}
+
+impl Status {
+    /// Running or waiting to run.
+    pub fn active(&self) -> bool {
+        matches!(self, Status::Queued | Status::Running)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -249,6 +258,12 @@ pub fn read_line(job: &mut Job, raw: &str) {
 /// Ask a running job to stop: the Marketplace's side is signalled, the administrator side is told through its cancel file.
 pub fn request_cancel(job: &Shared) {
     let mut g = job.lock().unwrap();
+    if g.status == Status::Queued {
+        // nothing ran: it just leaves the queue
+        g.status = Status::Cancelled;
+        g.phase = "Cancelled before it started".into();
+        return;
+    }
     if g.status != Status::Running || g.cancel_requested {
         return;
     }
@@ -278,31 +293,21 @@ pub struct Undo {
     pub flatpak: Option<String>,
 }
 
-/// Run the command in the background; the returned job fills in as it goes. `repaint` is called on every change.
-#[allow(clippy::too_many_arguments)]
-pub fn start(
-    id: &str,
-    title: &str,
-    op: Op,
-    prog: String,
-    args: Vec<String>,
-    undo: Undo,
-    repaint: impl Fn() + Send + Sync + 'static,
-    done: impl FnOnce(Status) + Send + 'static,
-) -> Shared {
+/// A job that waits (`Status::Queued`) until `run` starts it.
+pub fn queued(id: &str, title: &str, op: Op) -> Shared {
     let _ = std::fs::create_dir_all(cancel_dir());
     let safe: String = id.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
     let cancel_file = cancel_dir().join(format!("{safe}-{}.cancel", std::process::id()));
     let _ = std::fs::remove_file(&cancel_file);
     let now = Instant::now();
-    let job = Arc::new(Mutex::new(Job {
+    Arc::new(Mutex::new(Job {
         id: id.to_string(),
         title: title.to_string(),
         op,
         log: vec![],
-        phase: format!("{}...", op.verb()),
+        phase: "Waiting until the one before it is done".into(),
         frac: None,
-        status: Status::Running,
+        status: Status::Queued,
         dl: None,
         inst: None,
         dl_files: 1,
@@ -311,10 +316,29 @@ pub fn start(
         started: now,
         moved: now,
         cancel_requested: false,
-        cancel_file: cancel_file.clone(),
+        cancel_file,
         pid: None,
-    }));
-    let j = job.clone();
+    }))
+}
+
+/// Runs a job made by `queued` in the background; it fills in as it goes. `repaint` is called on every change, `done` at the end.
+pub fn run(
+    job: Shared,
+    prog: String,
+    args: Vec<String>,
+    undo: Undo,
+    repaint: impl Fn() + Send + Sync + 'static,
+    done: impl FnOnce(Status) + Send + 'static,
+) {
+    let cancel_file = {
+        let mut g = job.lock().unwrap();
+        g.status = Status::Running;
+        g.phase = format!("{}...", g.op.verb());
+        g.started = Instant::now();
+        g.moved = g.started;
+        g.cancel_file.clone()
+    };
+    let j = job;
     let repaint = Arc::new(repaint);
     let args: Vec<String> = args.into_iter().map(|a| if a == CANCEL { cancel_file.to_string_lossy().into_owned() } else { a }).collect();
     std::thread::spawn(move || {
@@ -408,12 +432,71 @@ pub fn start(
         repaint();
         done(status);
     });
-    job
+}
+
+/// A job waiting to run, with what it runs.
+pub struct Pending {
+    pub job: Shared,
+    pub prog: String,
+    pub args: Vec<String>,
+    pub undo: Undo,
+}
+
+/// The jobs waiting their turn: one package operation at a time.
+#[derive(Default)]
+pub struct Queue {
+    waiting: std::collections::VecDeque<Pending>,
+}
+
+fn running(jobs: &[Shared]) -> bool {
+    jobs.iter().any(|j| j.lock().map(|g| g.status == Status::Running).unwrap_or(false))
+}
+
+impl Queue {
+    /// Whether a new job has to wait: one runs, or others wait already.
+    pub fn must_wait(&self, jobs: &[Shared]) -> bool {
+        !self.waiting.is_empty() || running(jobs)
+    }
+
+    pub fn push(&mut self, p: Pending) {
+        self.waiting.push_back(p);
+    }
+
+    /// The next job to run once none runs (those cancelled while waiting are dropped).
+    pub fn next(&mut self, jobs: &[Shared]) -> Option<Pending> {
+        if running(jobs) {
+            return None;
+        }
+        while let Some(p) = self.waiting.pop_front() {
+            if p.job.lock().map(|g| g.status == Status::Queued).unwrap_or(false) {
+                return Some(p);
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A job made and run at once (the tests' shorthand for `queued` and `run`).
+    #[allow(clippy::too_many_arguments)]
+    fn start(
+        id: &str,
+        title: &str,
+        op: Op,
+        prog: String,
+        args: Vec<String>,
+        undo: Undo,
+        repaint: impl Fn() + Send + Sync + 'static,
+        done: impl FnOnce(Status) + Send + 'static,
+    ) -> Shared {
+        let job = queued(id, title, op);
+        run(job.clone(), prog, args, undo, repaint, done);
+        job
+    }
+
     use crate::catalog::{parse_catalog, SAMPLE};
 
     fn job() -> Job {
@@ -495,6 +578,39 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         panic!("the job did not finish");
+    }
+
+    #[test]
+    fn a_second_install_waits_for_the_first_and_both_finish() {
+        let log = std::env::temp_dir().join(format!("agora-queue-{}", std::process::id()));
+        let _ = std::fs::remove_file(&log);
+        let cmd =
+            |name: &str| vec!["-c".to_string(), format!("echo start-{name} >> '{0}'; sleep 0.3; echo end-{name} >> '{0}'", log.display())];
+        let mut q = Queue::default();
+        let mut jobs: Vec<Shared> = vec![];
+        let first = queued("a", "A", Op::Install);
+        jobs.push(first.clone());
+        assert!(!q.must_wait(&jobs));
+        run(first.clone(), "sh".into(), cmd("a"), Undo::default(), || {}, |_| {});
+        let second = queued("b", "B", Op::Install);
+        jobs.push(second.clone());
+        assert!(q.must_wait(&jobs), "the first runs");
+        q.push(Pending { job: second.clone(), prog: "sh".into(), args: cmd("b"), undo: Undo::default() });
+        let third = queued("c", "C", Op::Install);
+        jobs.push(third.clone());
+        q.push(Pending { job: third.clone(), prog: "sh".into(), args: cmd("c"), undo: Undo::default() });
+        request_cancel(&third);
+        assert_eq!(third.lock().unwrap().status, Status::Cancelled, "cancelled while it waited: nothing ran");
+        assert_eq!(second.lock().unwrap().status, Status::Queued);
+        assert!(q.next(&jobs).is_none(), "not while the first runs");
+        assert_eq!(wait(&first).status, Status::Done);
+        let p = q.next(&jobs).expect("the second's turn");
+        run(p.job, p.prog, p.args, p.undo, || {}, |_| {});
+        assert_eq!(wait(&second).status, Status::Done);
+        assert!(q.next(&jobs).is_none(), "the cancelled one is dropped");
+        let lines = std::fs::read_to_string(&log).unwrap();
+        let _ = std::fs::remove_file(&log);
+        assert_eq!(lines.lines().collect::<Vec<_>>(), ["start-a", "end-a", "start-b", "end-b"], "one after the other");
     }
 
     #[test]
