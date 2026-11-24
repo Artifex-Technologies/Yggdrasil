@@ -415,6 +415,7 @@ The table is round 1 as it was set up:
 | --- | --- | --- |
 | Bake-off: KWin alone | `kwin_wayland --xwayland --exit-with-session=steam` | KDE's compositor without Plasma; removed with KDE |
 | Bake-off: Hyprland | Hyprland (0.56 then), a generated Lua config | games may tear (`immediate` rule), VRR per `yggdrasil-bakeoff vrr` |
+| Bake-off: Yggdrasil's own compositor | `yggdrasil-compositor --drm --run steam` (added 2026-11-23), the screen at `highrr` through `YGGDRASIL_COMPOSITOR_MONITORS` | no VRR or tearing control yet: compare with Hyprland's vrr0 runs; the session ends when Steam does |
 | Bake-off: COSMIC compositor | cosmic-comp 1.0 (Smithay, Rust) | Steam is started into it once its Wayland and X sockets exist |
 | Bake-off: gamescope | Valve's, `gamescope -e -f -- steam -gamepadui` | the Steam Deck way; a candidate for a game session, not for the desktop |
 | Bake-off: Plasma | the full KDE desktop | baseline; removed with KDE |

@@ -965,7 +965,9 @@ fn lid_plan(udev: &Rc<RefCell<Udev>>, app: &App) -> Vec<String> {
             let name = connector_name(&c);
             let on = match app.head(&name) {
                 Some(h) => h.enabled,
-                None => crate::outputs::want_from_rules(&app.heads.rules, &name, Mode { size: (1, 1).into(), refresh: 0 }, 1.0).enabled,
+                None => {
+                    crate::outputs::want_from_rules(&app.heads.rules, &name, Mode { size: (1, 1).into(), refresh: 0 }, &[], 1.0).enabled
+                }
             };
             (name, on)
         })

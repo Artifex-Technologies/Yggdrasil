@@ -3,7 +3,7 @@
 #
 #   yggdrasil-bakeoff install            add one login entry per compositor (needs root: run with sudo)
 #   yggdrasil-bakeoff uninstall          remove them again (sudo)
-#   yggdrasil-bakeoff session NAME       what a login entry runs (hyprland, cosmic, gamescope)
+#   yggdrasil-bakeoff session NAME       what a login entry runs (hyprland, yggdrasil, cosmic, gamescope)
 #   yggdrasil-bakeoff vrr on|off         the next sessions use variable refresh or not (default: off)
 #   yggdrasil-bakeoff report             compare every run so far
 #
@@ -13,7 +13,7 @@
 # frame times are written to ~/bakeoff/NAME-vrrX/. Nothing is shown on screen, so the measuring costs nothing that would differ
 # between compositors.
 set -u
-NAMES="hyprland cosmic gamescope"
+NAMES="hyprland yggdrasil cosmic gamescope"
 out_root=${BAKEOFF_DIR:-$HOME/bakeoff}
 vrr_file=${XDG_CONFIG_HOME:-$HOME/.config}/yggdrasil/bakeoff-vrr
 
@@ -57,6 +57,13 @@ session() {
     hyprland)
       export XDG_CURRENT_DESKTOP=Hyprland
       exec dbus-run-session -- Hyprland --config "$(hypr_conf)" ;;
+    yggdrasil)
+      # Yggdrasil's own compositor (packages/compositor), the screen at its fastest mode as Hyprland's highrr above; Steam
+      # alone, and the session ends with it. It has no VRR and no tearing control yet: compare it with the vrr0 runs.
+      local mon="$XDG_RUNTIME_DIR/bakeoff-monitors.lua"
+      echo 'hl.monitor({ output = "", mode = "highrr", position = "auto", scale = 1 })' >"$mon"
+      export XDG_CURRENT_DESKTOP=Yggdrasil YGGDRASIL_COMPOSITOR_MONITORS=$mon
+      exec dbus-run-session -- yggdrasil-compositor --drm --run sh -c 'steam; yggdrasil-compositor ctl quit' ;;
     cosmic)
       # cosmic-comp starts no program itself: start it, wait for its Wayland socket, then Steam inside it (Steam ends the session)
       export XDG_CURRENT_DESKTOP=COSMIC
@@ -87,7 +94,7 @@ install_sessions() {
   install -Dm755 "$(dirname "$self")/bakeoff-report" /usr/local/bin/yggdrasil-bakeoff-report
   for n in $NAMES; do
     local label=$n
-    case $n in hyprland) label=Hyprland;; cosmic) label="COSMIC compositor";; gamescope) label="gamescope (Steam big screen)";; esac
+    case $n in hyprland) label=Hyprland;; yggdrasil) label="Yggdrasil's own compositor";; cosmic) label="COSMIC compositor";; gamescope) label="gamescope (Steam big screen)";; esac
     cat >/usr/share/wayland-sessions/bakeoff-$n.desktop <<EOF
 [Desktop Entry]
 Name=Bake-off: $label

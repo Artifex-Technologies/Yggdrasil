@@ -63,10 +63,28 @@ pub struct Rule {
     /// empty: every screen no other rule names
     pub output: String,
     pub mode: Option<Mode>,
+    /// Hyprland's words for a mode ("highrr", "highres"): chosen from the screen's own modes
+    pub pick: Option<Pick>,
     pub at: Option<Point<i32, Logical>>,
     pub scale: Option<f64>,
     pub transform: Option<Transform>,
     pub disabled: bool,
+}
+
+/// Hyprland's words for a mode: the fastest (then the largest), or the largest (then the fastest).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    HighRr,
+    HighRes,
+}
+
+/// The mode of `modes` that `pick` asks for.
+pub fn pick_mode(modes: &[Mode], pick: Pick) -> Option<Mode> {
+    let area = |m: &Mode| i64::from(m.size.w) * i64::from(m.size.h);
+    match pick {
+        Pick::HighRr => modes.iter().copied().max_by_key(|m| (m.refresh, area(m))),
+        Pick::HighRes => modes.iter().copied().max_by_key(|m| (area(m), m.refresh)),
+    }
 }
 
 /// A turn by wl_output's number (0 to 7).
@@ -106,8 +124,11 @@ pub fn closest_mode(modes: &[Mode], want: Mode) -> Option<Mode> {
         .copied()
 }
 
+/// Settings > Displays' file; YGGDRASIL_COMPOSITOR_MONITORS names another (the bake-off's session gives its own).
 pub fn monitors_path() -> PathBuf {
-    yggdrasil_conf::dirs::config().join("monitors.lua")
+    std::env::var_os("YGGDRASIL_COMPOSITOR_MONITORS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| yggdrasil_conf::dirs::config().join("monitors.lua"))
 }
 
 /// A Lua line without its `--` comment (one inside a string stays).
@@ -193,7 +214,14 @@ pub fn parse_rules(text: &str) -> Vec<Rule> {
         for (k, v) in pairs(&rest[open + 1..close]) {
             match k.as_str() {
                 "output" => r.output = v,
-                "mode" => r.mode = parse_mode(&v),
+                "mode" => {
+                    r.mode = parse_mode(&v);
+                    r.pick = match v.trim() {
+                        "highrr" => Some(Pick::HighRr),
+                        "highres" => Some(Pick::HighRes),
+                        _ => None,
+                    };
+                }
                 "position" => r.at = parse_at(&v),
                 "scale" => r.scale = crate::headless::parse_scale(&v),
                 "transform" => r.transform = v.trim().parse().ok().and_then(transform_from),
@@ -208,13 +236,14 @@ pub fn parse_rules(text: &str) -> Vec<Rule> {
 }
 
 /// What the rules say a screen is to be: the last rule naming it, else the last for every screen, else what it has by itself.
-pub fn want_from_rules(rules: &[Rule], name: &str, preferred: Mode, default_scale: f64) -> Want {
+/// `modes` are the screen's own (for "highrr" and "highres").
+pub fn want_from_rules(rules: &[Rule], name: &str, preferred: Mode, modes: &[Mode], default_scale: f64) -> Want {
     let rule = rules.iter().rev().find(|r| r.output == name).or_else(|| rules.iter().rev().find(|r| r.output.is_empty()));
     match rule {
         None => Want { enabled: true, mode: preferred, scale: default_scale, at: None, transform: None },
         Some(r) => Want {
             enabled: !r.disabled,
-            mode: r.mode.unwrap_or(preferred),
+            mode: r.mode.or_else(|| r.pick.and_then(|p| pick_mode(modes, p))).unwrap_or(preferred),
             scale: r.scale.unwrap_or(default_scale),
             at: r.at,
             transform: r.transform,
@@ -265,7 +294,8 @@ impl App {
         };
         self.heads.list.insert(at, Head { output, enabled: false, global: None, default_scale, fixed_at: None });
         let preferred = self.heads.list[at].preferred();
-        let want = want_from_rules(&self.heads.rules, &name, preferred, default_scale);
+        let modes = self.heads.list[at].output.modes();
+        let want = want_from_rules(&self.heads.rules, &name, preferred, &modes, default_scale);
         // the rules may not switch the only screen off
         let want = if self.heads.list.iter().any(|h| h.enabled) { want } else { Want { enabled: true, ..want } };
         if let Err(e) = self.configure_outputs(vec![(name.clone(), want.clone())], false) {
@@ -453,7 +483,9 @@ impl App {
             .heads
             .list
             .iter()
-            .map(|h| (h.output.name(), want_from_rules(&self.heads.rules, &h.output.name(), h.preferred(), h.default_scale)))
+            .map(|h| {
+                (h.output.name(), want_from_rules(&self.heads.rules, &h.output.name(), h.preferred(), &h.output.modes(), h.default_scale))
+            })
             .collect();
         if let Err(e) = self.configure_outputs(changes, false) {
             eprintln!("yggdrasil-compositor: monitors.lua: {e}; the screens stay as they are");
@@ -508,6 +540,7 @@ mod tests {
             Rule {
                 output: "DP-1".into(),
                 mode: Some(mode(3440, 1440, 174_960)),
+                pick: None,
                 at: Some((0, 0).into()),
                 scale: Some(1.0),
                 transform: None,
@@ -556,14 +589,38 @@ mod tests {
             parse_rules("hl.monitor({ output = \"A\", scale = 2 })\nhl.monitor({ output = \"A\", scale = 1.5, position = \"100x0\" })\n");
         let pref = mode(1600, 900, 60_000);
         assert_eq!(
-            want_from_rules(&rules, "A", pref, 1.0),
+            want_from_rules(&rules, "A", pref, &[], 1.0),
             Want { enabled: true, mode: pref, scale: 1.5, at: Some((100, 0).into()), transform: None }
         );
-        assert_eq!(want_from_rules(&rules, "B", pref, 1.25), Want { enabled: true, mode: pref, scale: 1.25, at: None, transform: None });
+        assert_eq!(
+            want_from_rules(&rules, "B", pref, &[], 1.25),
+            Want { enabled: true, mode: pref, scale: 1.25, at: None, transform: None }
+        );
         let all = parse_rules("hl.monitor({ output = \"\", disabled = true })\nhl.monitor({ output = \"B\", scale = 2 })\n");
-        assert!(!want_from_rules(&all, "A", pref, 1.0).enabled, "the rule for every screen");
-        assert!(want_from_rules(&all, "B", pref, 1.0).enabled, "a rule of its own comes first");
+        assert!(!want_from_rules(&all, "A", pref, &[], 1.0).enabled, "the rule for every screen");
+        assert!(want_from_rules(&all, "B", pref, &[], 1.0).enabled, "a rule of its own comes first");
         assert_eq!(parse_mode("2560x1440@143.97Hz"), Some(mode(2560, 1440, 143_970)));
         assert_eq!((parse_mode("preferred"), parse_mode("0x10"), parse_mode("10x10@-1")), (None, None, None));
+    }
+
+    #[test]
+    fn highrr_takes_the_fastest_mode_and_highres_the_largest() {
+        // an ultrawide's list: 60 Hz first (the EDID's preferred), the fast modes later
+        let modes = [
+            mode(3440, 1440, 59_999),
+            mode(3440, 1440, 143_855),
+            mode(3440, 1440, 180_000),
+            mode(2560, 1080, 119_880),
+            mode(5120, 1440, 30_000),
+        ];
+        let rules = parse_rules("hl.monitor({ output = \"\", mode = \"highrr\", position = \"auto\", scale = 1 })\n");
+        assert_eq!(rules[0].pick, Some(Pick::HighRr));
+        assert_eq!(want_from_rules(&rules, "DP-1", modes[0], &modes, 1.0).mode, mode(3440, 1440, 180_000));
+        let res = parse_rules("hl.monitor({ output = \"DP-1\", mode = \"highres\" })\n");
+        assert_eq!(want_from_rules(&res, "DP-1", modes[0], &modes, 1.0).mode, mode(5120, 1440, 30_000));
+        // no modes known (headless), or a word it does not know: the screen's own
+        assert_eq!(want_from_rules(&rules, "DP-1", modes[0], &[], 1.0).mode, modes[0]);
+        let other = parse_rules("hl.monitor({ output = \"DP-1\", mode = \"preferred\" })\n");
+        assert_eq!(want_from_rules(&other, "DP-1", modes[0], &modes, 1.0).mode, modes[0]);
     }
 }
