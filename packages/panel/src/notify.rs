@@ -623,6 +623,21 @@ fn http_get(addr: &str, path: &str) -> Option<String> {
     head.starts_with("HTTP/1.0 200").then(|| body.to_string()).or_else(|| head.starts_with("HTTP/1.1 200").then(|| body.to_string()))
 }
 
+/// What makes two alerts the same one: everything but the time. The time is when the monitor saw it, so an alert it
+/// replays from its session after a restart comes back with a new time, and must not be announced again (YGG-22).
+fn alert_key(a: &serde_json::Value) -> String {
+    let f = |k: &str| a.get(k).and_then(|x| x.as_str()).unwrap_or("");
+    format!("{}|{}|{}|{}|{}", f("detector_id"), f("event_kind"), f("summary"), f("event_text"), f("session_id"))
+}
+
+/// The alerts of one poll not seen before, oldest first (each marked seen). On the first poll nothing is new: what is there
+/// when the panel starts was there before it.
+fn fresh_alerts(list: &[serde_json::Value], seen: &mut HashSet<String>, first: bool) -> Vec<serde_json::Value> {
+    let mut fresh: Vec<serde_json::Value> = list.iter().filter(|a| seen.insert(alert_key(a)) && !first).cloned().collect();
+    fresh.sort_by(|a, b| a.get("time").and_then(|x| x.as_str()).cmp(&b.get("time").and_then(|x| x.as_str())));
+    fresh
+}
+
 /// Polls the security monitor's local API (its integration's `api`) for alerts. What is already there when the panel starts is not
 /// announced. Nothing runs when the operating system has no security monitor.
 pub fn spawn_security_alerts(tx: calloop::channel::Sender<NMsg>) {
@@ -638,19 +653,7 @@ pub fn spawn_security_alerts(tx: calloop::channel::Sender<NMsg>) {
                         let list =
                             v.as_array().cloned().or_else(|| v.get("alerts").and_then(|a| a.as_array()).cloned()).unwrap_or_default();
                         // oldest first, so they arrive in order
-                        let mut fresh = vec![];
-                        for a in &list {
-                            let key = format!(
-                                "{}|{}|{}",
-                                a.get("time").and_then(|x| x.as_str()).unwrap_or(""),
-                                a.get("detector_id").and_then(|x| x.as_str()).unwrap_or(""),
-                                a.get("summary").and_then(|x| x.as_str()).unwrap_or("")
-                            );
-                            if seen.insert(key) && !first {
-                                fresh.push(a.clone());
-                            }
-                        }
-                        fresh.sort_by(|a, b| a.get("time").and_then(|x| x.as_str()).cmp(&b.get("time").and_then(|x| x.as_str())));
+                        let fresh = fresh_alerts(&list, &mut seen, first);
                         for a in fresh.iter().take(5) {
                             if let Some(n) = from_alert(a, min, next_id()) {
                                 let _ = tx.send(NMsg::New(n));
@@ -1113,6 +1116,29 @@ mod tests {
             actions: vec![],
             link: String::new(),
         }
+    }
+
+    #[test]
+    fn an_alert_replayed_after_the_monitor_restarts_is_not_announced_again() {
+        let alert = |time: &str, summary: &str| {
+            serde_json::json!({"time": time, "detector_id": "file-watch", "severity": "warning", "summary": summary,
+                "event_kind": "file_created", "event_text": "x", "session_id": "s1"})
+        };
+        let mut seen = HashSet::new();
+        assert!(fresh_alerts(&[alert("2026-11-24T01:00:00Z", "old")], &mut seen, true).is_empty(), "there before the panel");
+        let new = fresh_alerts(&[alert("2026-11-24T01:00:00Z", "old"), alert("2026-11-24T02:00:00Z", "A")], &mut seen, false);
+        assert_eq!(new.len(), 1);
+        let shown = from_alert(&new[0], "warning", 1).unwrap();
+        // the monitor restarts: its session's alerts come back with the times of the replay
+        let replay = [alert("2026-11-24T03:00:00Z", "old"), alert("2026-11-24T03:00:01Z", "A")];
+        assert!(fresh_alerts(&replay, &mut seen, false).is_empty(), "nothing announced twice");
+        let mut store = Store::load(None);
+        store.add(shown);
+        assert_eq!(store.len(), 1, "one notification kept");
+        // a different alert after the replay is new
+        let b = fresh_alerts(&[replay[0].clone(), replay[1].clone(), alert("2026-11-24T03:05:00Z", "B")], &mut seen, false);
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0]["summary"], "B");
     }
 
     #[test]
