@@ -68,6 +68,25 @@ impl Settings {
     }
 }
 
+/// The file names in what inotify read (a run of events: each a header, then its name padded with NULs). The buffer is plain
+/// bytes with no alignment, so each header is copied out rather than referenced in place: a reference to an unaligned header
+/// is undefined behaviour, and debug builds stop on it (the portal ended so in CI, 2026-11-24). An event that runs past the end
+/// ends the list.
+fn event_names(buf: &[u8]) -> Vec<&[u8]> {
+    let head = std::mem::size_of::<libc::inotify_event>();
+    let mut names = vec![];
+    let mut off = 0usize;
+    while off + head <= buf.len() {
+        // SAFETY: `head` bytes are there (checked above); read_unaligned needs no alignment
+        let ev: libc::inotify_event = unsafe { std::ptr::read_unaligned(buf[off..].as_ptr().cast()) };
+        let start = off + head;
+        let Some(raw) = buf.get(start..start + ev.len as usize) else { break };
+        names.push(&raw[..raw.iter().position(|&c| c == 0).unwrap_or(raw.len())]);
+        off = start + ev.len as usize;
+    }
+    names
+}
+
 /// Watches the appearance file and tells programs what changed. Runs on its own thread; returns at once.
 pub fn watch(conn: zbus::blocking::Connection, path: &'static str) {
     std::thread::spawn(move || {
@@ -88,16 +107,7 @@ pub fn watch(conn: zbus::blocking::Connection, path: &'static str) {
                 return;
             }
             // only our file matters (the folder holds the desktop's other settings too)
-            let mut ours = false;
-            let mut off = 0usize;
-            while off + std::mem::size_of::<libc::inotify_event>() <= n as usize {
-                let ev = unsafe { &*(buf.as_ptr().add(off) as *const libc::inotify_event) };
-                let start = off + std::mem::size_of::<libc::inotify_event>();
-                let raw = &buf[start..start + ev.len as usize];
-                let nm = &raw[..raw.iter().position(|&c| c == 0).unwrap_or(raw.len())];
-                ours |= nm == name.as_encoded_bytes();
-                off = start + ev.len as usize;
-            }
+            let ours = event_names(&buf[..n as usize]).contains(&name.as_encoded_bytes());
             if !ours {
                 continue;
             }
@@ -138,5 +148,27 @@ mod tests {
         assert!(wanted(&["org.freedesktop.*".into()], NAMESPACE));
         assert!(wanted(&[NAMESPACE.into()], NAMESPACE));
         assert!(!wanted(&["org.gnome.*".into()], NAMESPACE));
+    }
+
+    #[test]
+    fn inotify_events_are_read_from_an_unaligned_buffer() {
+        // two events, "appearance.conf" and "other", as the kernel lays them out
+        let event = |name: &str| {
+            let mut padded = name.as_bytes().to_vec();
+            padded.resize(name.len().div_ceil(4) * 4 + 4, 0);
+            let mut b = vec![0u8; std::mem::size_of::<libc::inotify_event>()];
+            b[12..16].copy_from_slice(&(padded.len() as u32).to_ne_bytes());
+            b.extend(padded);
+            b
+        };
+        let mut bytes = event("appearance.conf");
+        bytes.extend(event("other"));
+        // one byte in, so the headers are not 4-byte aligned (as read() into a byte buffer may leave them)
+        let mut buf = vec![0u8; 1];
+        buf.extend(&bytes);
+        let names = super::event_names(&buf[1..]);
+        assert_eq!(names, vec![b"appearance.conf".as_slice(), b"other".as_slice()]);
+        // an event cut short ends the list instead of reading past the end
+        assert_eq!(super::event_names(&buf[1..buf.len() - 3]), vec![b"appearance.conf".as_slice()]);
     }
 }
