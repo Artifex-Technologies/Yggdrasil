@@ -13,8 +13,9 @@ jobs:
     steps:
       - name: Tools
         # pixman: the compositor's software renderer (its headless tests run a compositor in the container); seatd: libseat, which
-        # the compositor's hardware backend links (it is never started here); xorg-xwayland: its X11 tests (tests/x11.rs)
-        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig pam dbus libxcrypt libinput mesa libvlc pixman seatd xorg-xwayland
+        # the compositor's hardware backend links (it is never started here); xorg-xwayland: its X11 tests (tests/x11.rs);
+        # pipewire and clang: yggdrasil-screencast (PipeWire's headers through bindgen, and a PipeWire of its own in its test)
+        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig pam dbus libxcrypt libinput mesa libvlc pixman seatd xorg-xwayland pipewire clang
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
         with:
           persist-credentials: false
@@ -26,6 +27,8 @@ jobs:
           # the session's nested test (packages/session/tests/nested_session.rs) runs the launcher with the compositor that
           # packages/compositor's tests built just before it (target/debug): it may not skip for want of one
           export YGGDRASIL_TEST_NESTED_REQUIRED=1
+          # likewise yggdrasil-screencast's stream test (packages/screencast/tests/stream.rs): the compositor and PipeWire are here
+          export YGGDRASIL_TEST_SCREENCAST_REQUIRED=1
           for d in packages/*/; do
             [ -f "$d/Cargo.toml" ] || continue
             # formatting (rustfmt.toml at the top) and lints: the debt cleared on 2026-11-11 must not come back

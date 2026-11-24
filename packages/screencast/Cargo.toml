@@ -1,0 +1,28 @@
+[package]
+name = "yggdrasil-screencast"
+version = "0.1.0"
+edition = "2021"
+description = "Screen sharing on Yggdrasil's own compositor: a screen or a window copied through ext-image-copy-capture and published as a PipeWire video stream, for yggdrasil-portal's ScreenCast"
+license = "MPL-2.0"
+
+[[bin]]
+name = "yggdrasil-screencast"
+path = "src/main.rs"
+
+[dependencies]
+pipewire = { version = "0.10", features = ["v0_3_34"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+memmap2 = "0.9"
+rustix = { version = "1", features = ["fs", "event"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[dev-dependencies]
+# the test's PipeWire, compositor and streamer die with the test (parent-death signal), even when the test is killed
+rustix = { version = "1", features = ["process"] }
