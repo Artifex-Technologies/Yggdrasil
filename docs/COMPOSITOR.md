@@ -359,12 +359,15 @@ shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
     the pointer is on it.
 - Not yet: drag and drop, resize from the edges.
 - Small gaps seen: the dock shows a plain icon for xterm (its desktop entry names an XPM picture the panel does not load); the
-  dock's hover preview of an X11 window is empty; a compositor ended with SIGTERM leaves its `wayland-N` socket file behind.
+  dock's hover preview of an X11 window is empty.
 
 X11 programs are told the desktop's pointer theme and size (Xcursor.theme and Xcursor.size in XWayland's X resources, at
-X11's scale, set again when the theme changes; `tests/x11.rs`). Still missing for X11: XWayland always runs (about 20 to 40 MB)
-instead of starting on the first X11 program; no HiDPI scaling for X11 programs; drag and drop between X11 and Wayland
-programs; X11 window icons for programs with no desktop entry (`_NET_WM_ICON`); and XSETTINGS.
+X11's scale, set again when the theme changes; `tests/x11.rs`). X11 programs draw at the screens' resolution (since
+2026-11-22): XWayland is told the screens in pixels and Xft.dpi to match, so on a 1920x1200 screen at 125 % a game is offered
+1920x1200 and a GTK program keeps its size; `stretch = true` in `~/.config/yggdrasil/xwayland.conf` keeps the old way (the
+scaled-down 1536x960 stretched, Xft.dpi 96); `tests/x11.rs` checks both. Still missing for X11: XWayland always runs (about 20
+to 40 MB) instead of starting on the first X11 program; drag and drop between X11 and Wayland programs; X11 window icons for
+programs with no desktop entry (`_NET_WM_ICON`); and XSETTINGS.
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton

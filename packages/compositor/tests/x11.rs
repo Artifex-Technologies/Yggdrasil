@@ -16,7 +16,12 @@ fn xwayland_installed() -> bool {
 
 /// The compositor with XWayland, and the X display it printed.
 fn with_xwayland() -> (Compositor, String) {
-    let comp = Compositor::start_env(&["--size", "640x480"], &[("YGGDRASIL_COMPOSITOR_XWAYLAND", "1")], |_| {});
+    with_xwayland_on(&["--size", "640x480"], |_| {})
+}
+
+/// The same, on the screens of `args`, with `setup` run on the test's folder first.
+fn with_xwayland_on(args: &[&str], setup: impl FnOnce(&std::path::Path)) -> (Compositor, String) {
+    let comp = Compositor::start_env(args, &[("YGGDRASIL_COMPOSITOR_XWAYLAND", "1")], setup);
     let start = Instant::now();
     loop {
         let found = comp.log.lock().unwrap().iter().find_map(|l| l.strip_prefix("DISPLAY=").map(str::to_string));
@@ -114,4 +119,39 @@ fn x11_programs_are_told_the_pointers_theme_and_size() {
     let r = wait_for(&["Xcursor.theme:\tAdwaita", "Xcursor.size:\t32"]);
     assert_eq!(r.lines().filter(|l| l.starts_with("Xcursor.theme:")).count(), 1, "{r:?}");
     assert!(r.lines().any(|l| l == "Xft.dpi:\t96"), "{r:?}");
+}
+
+/// The X screen's size and the Xft.dpi X11 programs are told, on a 1920x1200 screen at 125 %.
+fn x11_size_and_dpi(stretch: bool) -> ((u16, u16), String) {
+    let (_comp, display) = with_xwayland_on(&["--output", "1920x1200@1.25"], |dir| {
+        if stretch {
+            std::fs::write(dir.join("home/.config/yggdrasil/xwayland.conf"), "stretch = true\n").unwrap();
+        }
+    });
+    let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = &conn.setup().roots[screen];
+    let size = (root.width_in_pixels, root.height_in_pixels);
+    let start = Instant::now();
+    loop {
+        let r = conn.get_property(false, root.root, AtomEnum::RESOURCE_MANAGER, AtomEnum::STRING, 0, 1 << 16).unwrap().reply().unwrap();
+        let text = String::from_utf8_lossy(&r.value).into_owned();
+        if let Some(dpi) = text.lines().find_map(|l| l.strip_prefix("Xft.dpi:\t")) {
+            return (size, dpi.to_string());
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "no Xft.dpi in {text:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn x11_programs_draw_at_the_screens_resolution_unless_stretched() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(90, "X11 at the screen's resolution");
+    // XWayland is told the screen in pixels and the DPI of 125 %: a game is offered 1920x1200, a GTK program keeps its size
+    assert_eq!(x11_size_and_dpi(false), ((1920, 1200), "120".to_string()));
+    // stretch = true in xwayland.conf: the old way, the scaled-down size stretched to the screen, the DPI of scale 1
+    assert_eq!(x11_size_and_dpi(true), ((1536, 960), "96".to_string()));
 }
