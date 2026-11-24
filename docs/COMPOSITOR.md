@@ -355,8 +355,9 @@ shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
     learns a window was restored from ICCCM's WM_STATE going from Iconic back to Normal, and Smithay writes WM_STATE only on
     map and unmap. **Fixed:** minimizing sets WM_STATE to Iconic and restoring sets it to Normal (`x11asked.rs`); the game now
     comes back whole, and keys reach it.
-  - Small gaps: the Wine dialogs' class `steam_proton` has no dock icon; the dock's hover card stays over a full screen game while
-    the pointer is on it.
+  - Two small gaps, closed 2026-11-24: Proton's own dialogs (class `steam_proton`) go with Steam in the dock, with Steam's icon
+    (`packages/panel`, apps.rs); and the dock's window list, with the pointer on it, goes when a game goes full screen
+    (`tests/apps.rs`, with an X11 window asking through `_NET_WM_STATE` as games do).
 - Not yet: drag and drop, resize from the edges.
 - Small gaps seen: the dock shows a plain icon for xterm (its desktop entry names an XPM picture the panel does not load). The
   dock's hover preview of an X11 window, once empty, shows it (tests/x11.rs and tests/apps.rs, 2026-11-24).

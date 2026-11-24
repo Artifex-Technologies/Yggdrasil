@@ -836,6 +836,66 @@ fn the_docks_window_list_shows_an_x11_windows_picture() {
     assert!(p.running(), "the panel is still running: {}", p.log());
 }
 
+/// A game going full screen while the dock's window list is open: the list goes with the dock (it does not stay over the game).
+#[test]
+fn the_docks_window_list_goes_when_an_x11_game_goes_full_screen() {
+    let Some(panel) = program("YGGDRASIL_TEST_PANEL") else { return };
+    if !std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("Xwayland").is_file())) {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(150, "the window list over a full-screen game");
+    let comp = Compositor::start_env(&["--size", "1600x900"], &[("YGGDRASIL_COMPOSITOR_XWAYLAND", "1")], |_| {});
+    let bus = Bus::start(&comp.dir);
+    std::fs::write(comp.dir.join("home/.config/yggdrasil/dock"), NOTHING_PINNED).unwrap();
+    let display = comp.log.lock().unwrap().iter().find_map(|l| l.strip_prefix("DISPLAY=").map(str::to_string)).expect("DISPLAY");
+    let mut p = App::start(&comp, &panel, Some(&bus), &[("YGGDRASIL_A11Y", "off"), ("XDG_CURRENT_DESKTOP", "Yggdrasil")]);
+    wait_for(&comp, &mut p, 60, "the bar and the dock", |c| {
+        let l = c.layers();
+        ["yggdrasil-panel", "yggdrasil-dock"].iter().all(|ns| layer(&l, ns).is_some_and(|x| x.size.0 > 0))
+    });
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, WindowClass};
+    use x11rb::wrapper::ConnectionExt as _;
+    let (x, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = x.setup().roots[screen].root;
+    let win = x.generate_id().unwrap();
+    x.create_window(0, win, root, 0, 0, 640, 400, 0, WindowClass::INPUT_OUTPUT, 0, &CreateWindowAux::new().background_pixel(0x0000ff))
+        .unwrap();
+    x.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"steam_app_1\0steam_app_1\0").unwrap();
+    x.change_property8(PropMode::REPLACE, win, AtomEnum::WM_NAME, AtomEnum::STRING, b"A game").unwrap();
+    x.map_window(win).unwrap();
+    x.flush().unwrap();
+    wait_for(&comp, &mut p, 10, "the game's icon in the dock", |c| {
+        layer(&c.layers(), "yggdrasil-dock").is_some_and(|d| d.size.0 == 28 + 2 * (d.size.1 - 24) + 10)
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    let dock = layer(&comp.layers(), "yggdrasil-dock").cloned().unwrap();
+    let icon = dock.size.1 - 24;
+    let (px, py) = (dock.at.0 + 14 + icon / 2, dock.at.1 + 9 + icon / 2);
+    comp.must(&format!("pointer {} {}", px - 3, py));
+    comp.must(&format!("pointer {px} {py}"));
+    wait_for(&comp, &mut p, 10, "the window list over the dock", |c| layer(&c.layers(), "yggdrasil-popup").is_some_and(|l| l.size.0 > 0));
+    // the pointer on the list itself (as it was when it stayed over a game)
+    // (the list's layer covers the screen above the dock; the card itself is just above the icon)
+    comp.must(&format!("pointer {px} {}", dock.at.1 - 40));
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(layer(&comp.layers(), "yggdrasil-popup").is_some_and(|l| l.size.0 > 0), "the list stays while the pointer is on it");
+    // the game asks for full screen as games do (_NET_WM_STATE add _NET_WM_STATE_FULLSCREEN, to the root window)
+    let atom = |n: &[u8]| x.intern_atom(false, n).unwrap().reply().unwrap().atom;
+    let (state, full) = (atom(b"_NET_WM_STATE"), atom(b"_NET_WM_STATE_FULLSCREEN"));
+    let ev = ClientMessageEvent::new(32, win, state, [1, full, 0, 1, 0]);
+    x.send_event(false, root, EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY, ev).unwrap();
+    x.flush().unwrap();
+    wait_for(&comp, &mut p, 10, "the game full screen", |c| c.window("steam_app_1").is_some_and(|w| w.has("fullscreen")));
+    // the pointer is still on the list: it goes all the same, and the bar and the dock step aside
+    wait_for(&comp, &mut p, 10, "the window list gone over the full-screen game", |c| {
+        let l = c.layers();
+        layer(&l, "yggdrasil-popup").is_none_or(|x| x.size.0 == 0) && layer(&l, "yggdrasil-panel").is_none_or(|x| x.size.0 == 0)
+    });
+    assert!(p.running(), "the panel is still running: {}", p.log());
+}
+
 /// How often the panel's event loop woke (its main thread's voluntary context switches, from /proc) over `ms`.
 fn wakeups(p: &App, ms: u64) -> u64 {
     let pid = p.child.id();

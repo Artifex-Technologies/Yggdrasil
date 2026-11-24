@@ -192,7 +192,12 @@ pub fn for_app_id<'a>(apps: &'a [App], app_id: &str) -> Option<&'a App> {
             let url = format!("steam://rungameid/{n}");
             apps.iter().find(|a| a.icon == format!("steam_icon_{n}") || a.exec.split_whitespace().any(|w| w.trim_matches('"') == url))
         })
+        // Proton's own dialogs (shaders being processed, a game's first start) are Steam's
+        .or_else(|| (lower == PROTON).then(|| apps.iter().find(|a| a.id == "steam")).flatten())
 }
+
+/// The X11 class of Proton's own dialogs.
+const PROTON: &str = "steam_proton";
 
 /// The game number of a Steam game's window (`steam_app_242760`), if it is one.
 pub fn steam_game(app_id: &str) -> Option<&str> {
@@ -214,6 +219,8 @@ pub fn steam_game_in(environ: &[u8]) -> Option<String> {
 pub fn fallback_icon(app_id: &str) -> String {
     match steam_game(app_id) {
         Some(n) => format!("steam_icon_{n}"),
+        // Proton's dialogs, where Steam has no desktop entry: Steam's icon all the same
+        None if app_id.eq_ignore_ascii_case(PROTON) => "steam".into(),
         None => app_id.to_string(),
     }
 }
@@ -455,7 +462,16 @@ OnlyShowIn=KDE;GNOME;
         assert_eq!(for_app_id(&games, "steam_app_242760").unwrap().name, "The Forest");
         assert_eq!(for_app_id(&games, "steam_app_24276").unwrap().name, "Other");
         assert!(for_app_id(&games, "steam_app_1").is_none());
+        // Proton's dialogs go with Steam's entry when there is one
+        assert!(for_app_id(&games, "steam_proton").is_none(), "no Steam entry: none");
+        let with_steam: Vec<App> = games
+            .iter()
+            .cloned()
+            .chain([App { id: "steam".into(), name: "Steam".into(), icon: "steam".into(), ..Default::default() }])
+            .collect();
+        assert_eq!(for_app_id(&with_steam, "steam_proton").unwrap().name, "Steam");
         assert_eq!(fallback_icon("steam_app_1"), "steam_icon_1");
+        assert_eq!(fallback_icon("steam_proton"), "steam", "Proton's dialogs: Steam's icon");
         assert_eq!(fallback_icon("steam_app_x"), "steam_app_x");
         assert_eq!(fallback_icon("xterm"), "xterm");
         assert!(for_app_id(&apps, "").is_none());
