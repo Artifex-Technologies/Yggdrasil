@@ -199,6 +199,6 @@ fn an_x11_windows_picture_is_copied_for_the_docks_preview() {
         clear,
         0,
         "opaque, as the panel draws it (alpha of the first pixels: {:?})",
-        &bytes.chunks(4).take(4).map(|p| p[3]).collect::<Vec<_>>()
+        bytes.chunks(4).take(4).map(|p| p[3]).collect::<Vec<_>>()
     );
 }
