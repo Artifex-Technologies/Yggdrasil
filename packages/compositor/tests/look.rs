@@ -12,9 +12,12 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::*;
+use wayland_client::protocol::wl_shm;
 use wayland_client::Proxy;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::ResizeEdge;
 
+const RED: u32 = 0xffff0000;
+const GREEN: u32 = 0xff00ff00;
 const BLUE: u32 = 0xff0000ff;
 const YELLOW: u32 = 0xffffff00;
 const RGB_BLUE: (u8, u8, u8) = (0, 0, 255);
@@ -186,6 +189,53 @@ fn gaps_around_maximized_and_tiled_windows_and_nothing_in_full_screen() {
         let p = pic.at(gx, 200);
         assert!(p != RGB_BLUE && p != RGB_YELLOW, "the gap at {gx}: {p:?}");
     }
+}
+
+/// A full screen window is drawn exactly as the program made it, pixel for pixel: that is when its buffer may go to the screen
+/// directly on the hardware backend (look::Change), so the composited frame and the direct one show the same. Four quarters of
+/// different colours show a picture moved, stretched, rounded or cut by a pixel. Nothing is drawn again while it does not
+/// change.
+#[test]
+fn a_full_screen_window_is_drawn_as_the_program_made_it_and_then_rests() {
+    let _l = limit(60, "full screen as made");
+    let comp = Compositor::start(&["--size", "640x400"]);
+    let mut c = comp.connect();
+    let w = c.window("test.game", "Game");
+    c.draw(&w, (200, 100), BLUE);
+    w.toplevel.set_fullscreen(None);
+    c.until("the full screen size", |s| s.wins[w.index].size == (640, 400));
+    let quarters = [((0, 0, 320, 200), RED), ((320, 0, 320, 200), GREEN), ((0, 200, 320, 200), BLUE), ((320, 200, 320, 200), YELLOW)];
+    let (pool, file) = c.pool(640 * 400 * 4);
+    let mut data = vec![0u8; 640 * 400 * 4];
+    for ((x, y, qw, qh), argb) in quarters {
+        for row in y..y + qh {
+            for col in x..x + qw {
+                let at = ((row * 640 + col) * 4) as usize;
+                data[at..at + 4].copy_from_slice(&argb.to_le_bytes());
+            }
+        }
+    }
+    use std::io::Write;
+    (&file).write_all(&data).unwrap();
+    let buffer = pool.create_buffer(0, 640, 400, 640 * 4, wl_shm::Format::Argb8888, &c.qh, ());
+    w.surface.attach(Some(&buffer), 0, 0);
+    w.surface.damage_buffer(0, 0, 640, 400);
+    w.surface.commit();
+    c.roundtrip();
+    comp.wait(10, "the window in full screen", |comp| {
+        comp.window("test.game").is_some_and(|i| i.has("fullscreen") && i.rect() == (0, 0, 640, 400))
+    });
+    let pic = comp.screenshot("HEADLESS-1");
+    for ((x, y, qw, qh), argb) in quarters {
+        let [b, g, r, _] = argb.to_le_bytes();
+        assert_eq!(pic.count((x, y, qw, qh), (r, g, b)), (qw * qh) as usize, "the quarter at {x},{y}, its corner pixels too");
+    }
+    // at rest: no pass over the screen in a second
+    let passes = || -> u64 { comp.must("frames")[1].strip_prefix("passes ").unwrap().parse().unwrap() };
+    std::thread::sleep(Duration::from_millis(300));
+    let before = passes();
+    std::thread::sleep(Duration::from_millis(1000));
+    assert_eq!(passes(), before, "nothing drawn while the full screen window does not change");
 }
 
 /// A compositor with the animations on (no "reduce motion") and its clock stopped.

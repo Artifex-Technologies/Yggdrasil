@@ -46,9 +46,15 @@
 //! - **Waiting for programs' GPUs** (sync.rs): a commit with a GPU buffer is applied once the buffer is drawn, through
 //!   explicit sync (linux-drm-syncobj-v1, which NVIDIA needs) where the GPU can, the buffer's own fences otherwise.
 //!
+//! - **Direct scanout**: a full screen window drawn exactly as the program made it offers its buffer (look::Clipped,
+//!   xwayland::OpaqueElement), and Smithay's DrmCompositor puts it on the primary plane when nothing is drawn over it and the
+//!   GPU takes it; while a full screen window covers a screen, a buffer of any format is tried there (`frame_flags`;
+//!   `YGGDRASIL_COMPOSITOR_SCANOUT=0` keeps every picture composited). The log says when a screen's picture starts going out
+//!   directly and why it is composited again (`why_composited`).
+//!
 //! Known limitations (docs/COMPOSITOR.md): each GPU draws only its own screens (none draws for another, as a laptop's NVIDIA
-//! GPU behind the Intel one would need); no window goes to a plane, so a full screen game is always composited
-//! (`App::send_dmabuf_feedback` says why); no tearing control (Smithay's DRM compositor has no asynchronous page flips).
+//! GPU behind the Intel one would need); only the primary plane takes a window, the overlay planes only the pointer; no
+//! tearing control (Smithay's DRM compositor has no asynchronous page flips).
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -71,7 +77,7 @@ use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
 use smithay::backend::input::InputEvent;
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
 use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
-use smithay::backend::renderer::element::Kind;
+use smithay::backend::renderer::element::{Element, Id, Kind, RenderElementPresentationState, RenderElementState, RenderingReason};
 use smithay::backend::renderer::gles::{GlesRenderbuffer, GlesRenderer};
 use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::{ImportDma, ImportEgl, ImportMemWl};
@@ -183,11 +189,11 @@ struct Screen {
     /// variable refresh can be switched on this screen without a modeset (the monitor and the GPU say so)
     vrr_capable: bool,
     /// what programs on this screen are told to allocate their GPU buffers as (linux-dmabuf feedback): the renderer's
-    /// formats, and for a window the screen tried to show directly the formats its planes scan out first (no window is tried:
-    /// `App::send_dmabuf_feedback`)
+    /// formats, and for a window the screen tried to show directly the formats its planes scan out first
+    /// (`App::send_dmabuf_feedback`)
     feedback: Option<Feedback>,
-    /// the last frame's picture went to the screen as it is, a program's buffer on the primary plane (direct scanout)
-    direct: bool,
+    /// the element whose buffer went to the screen as it is in the last frame, on the primary plane (direct scanout)
+    direct: Option<Id>,
 }
 
 /// A screen's two dmabuf feedbacks: the renderer's (the default), and the one with the planes' scanout formats first.
@@ -992,7 +998,7 @@ fn scan(
                         gamma: None,
                         vrr_capable,
                         feedback,
-                        direct: false,
+                        direct: None,
                     },
                 );
                 added.push(output);
@@ -1458,9 +1464,11 @@ macro_rules! pointer_element {
     }};
 }
 
-/// One screen's frame: its mode as Settings set it, its elements, drawn and queued for the page flip.
+/// One screen's frame: its mode as Settings set it, its elements, drawn and queued for the page flip. Gives whether a frame was
+/// queued, the elements' states, the element that went to the screen directly, and, when the one that did in the last frame
+/// no longer does, why.
 macro_rules! frame {
-    ($cache:expr, $app:expr, $renderer:expr, $out:expr, $screen:expr, $elem:ty) => {{
+    ($cache:expr, $app:expr, $renderer:expr, $out:expr, $screen:expr, $elem:ty, $flags:expr) => {{
         let output = $screen.output.clone();
         let mut elements: Vec<$elem> = vec![];
         if let Some(p) = pointer_element!($cache, $app, $renderer, &output) {
@@ -1473,14 +1481,24 @@ macro_rules! frame {
             elements.extend($app.scene(&mut **$renderer, &output));
             BACKGROUND
         };
-        match $out.render_frame(&mut **$renderer, &elements, clear, FrameFlags::DEFAULT) {
+        match $out.render_frame(&mut **$renderer, &elements, clear, $flags) {
             Ok(r) => {
-                let direct = matches!(r.primary_element, PrimaryPlaneElement::Element(_));
+                let direct = match &r.primary_element {
+                    PrimaryPlaneElement::Element(e) => Some(e.id().clone()),
+                    PrimaryPlaneElement::Swapchain(_) => None,
+                };
+                let why = match (&direct, &$screen.direct) {
+                    (None, Some(was)) => Some(why_composited(
+                        elements.iter().find(|e| e.id() == was).and_then(|e| e.change()),
+                        r.states.element_render_state(was.clone()),
+                    )),
+                    _ => None,
+                };
                 let (empty, states) = (r.is_empty, r.states);
                 if empty {
-                    Ok((false, states, direct))
+                    Ok((false, states, direct, why))
                 } else {
-                    $out.queue_frame(()).map(|_| (true, states, direct)).map_err(|e| e.to_string())
+                    $out.queue_frame(()).map(|_| (true, states, direct, why)).map_err(|e| e.to_string())
                 }
             }
             Err(e) => Err(e.to_string()),
@@ -1606,8 +1624,9 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
         }
         eprintln!("yggdrasil-compositor: {} switched on", screen.output.name());
     }
+    let full = app.fullscreen_on(&screen.output);
     // variable refresh: on while a full screen window covers the screen (or always, or never: YGGDRASIL_COMPOSITOR_VRR)
-    let want_vrr = screen.vrr_capable && vrr_wanted(vrr_policy(), app.fullscreen_on(&screen.output));
+    let want_vrr = screen.vrr_capable && vrr_wanted(vrr_policy(), full);
     let (now_vrr, set) = match &mut screen.drm {
         Out::Gles(o) => {
             o.with_compositor(|c| (c.vrr_enabled(), (c.vrr_enabled() != want_vrr).then(|| c.use_vrr(want_vrr).map_err(|e| e.to_string()))))
@@ -1634,32 +1653,32 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
     let result = match (&mut dev.gpu, &mut screen.drm) {
         (Gpu::Gles { renderer, .. }, Out::Gles(out)) => {
             follow_mode!(renderer, out, screen, Elem);
-            frame!(b.pointer, app, renderer, out, screen, Elem)
+            frame!(b.pointer, app, renderer, out, screen, Elem, frame_flags(scanout_allowed(), full))
         }
         (Gpu::Pixman { renderer, .. }, Out::Pixman(out)) => {
             follow_mode!(renderer, out, screen, PixElem);
-            frame!(b.pointer, app, renderer, out, screen, PixElem)
+            frame!(b.pointer, app, renderer, out, screen, PixElem, frame_flags(scanout_allowed(), full))
         }
         _ => Err("the screen and its GPU do not match".into()),
     };
     let Some(dev) = b.devices.get_mut(&node) else { return };
     let Some(screen) = dev.screens.get_mut(&crtc) else { return };
     if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
-        eprintln!("frame {} at {:?}: {:?}", screen.output.name(), b.start.elapsed(), result.as_ref().map(|(q, _, d)| (q, d)));
+        eprintln!("frame {} at {:?}: {:?}", screen.output.name(), b.start.elapsed(), result.as_ref().map(|(q, _, d, _)| (q, d.is_some())));
     }
     let result = match result {
-        Ok((queued, states, direct)) => {
+        Ok((queued, states, direct, why)) => {
             if let Some(f) = &screen.feedback {
                 app.send_dmabuf_feedback(&screen.output, &f.render, &f.scanout, &states);
             }
-            if direct != screen.direct {
-                screen.direct = direct;
-                eprintln!(
-                    "yggdrasil-compositor: {}: {}",
-                    screen.output.name(),
-                    if direct { "a full screen picture goes to the screen directly (scanout, no copy)" } else { "composited again" }
-                );
+            if direct.is_some() != screen.direct.is_some() {
+                let name = screen.output.name();
+                match &why {
+                    None => eprintln!("yggdrasil-compositor: {name}: a full screen picture goes to the screen directly (scanout, no copy)"),
+                    Some(why) => eprintln!("yggdrasil-compositor: {name}: composited again: {why}"),
+                }
             }
+            screen.direct = direct;
             Ok(queued)
         }
         Err(e) => Err(e),
@@ -1684,6 +1703,53 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
                 eprintln!("yggdrasil-compositor: {}: {e}", screen.output.name());
             }
             screen.not_before = Instant::now() + refresh_of(&screen.mode);
+        }
+    }
+}
+
+/// Whether a program's buffer may go to the screen directly: `YGGDRASIL_COMPOSITOR_SCANOUT` 0 (no, off, false) keeps every
+/// picture composited, for a driver that shows the switch badly and to measure the difference with one restart.
+fn scanout_wanted(v: Option<&str>) -> bool {
+    !matches!(v.map(|v| v.trim().to_ascii_lowercase()).as_deref(), Some("0" | "no" | "off" | "false"))
+}
+
+fn scanout_allowed() -> bool {
+    thread_local!(static A: bool = scanout_wanted(std::env::var("YGGDRASIL_COMPOSITOR_SCANOUT").ok().as_deref()));
+    A.with(|a| *a)
+}
+
+/// What a frame may do with the planes: Smithay's default (the primary plane takes a program's buffer of the screen's own
+/// format, the overlay planes scanout candidates, the cursor plane the pointer); while a full screen window covers the
+/// screen, the primary plane takes a buffer of any format the plane lists (a game's 10-bit or ABGR one): the GPU's test decides.
+/// Without direct scanout only the pointer keeps a plane of its own.
+fn frame_flags(scanout: bool, full: bool) -> FrameFlags {
+    match (scanout, full) {
+        (false, _) => FrameFlags::ALLOW_OVERLAY_PLANE_SCANOUT | FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT,
+        (true, true) => FrameFlags::DEFAULT | FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY,
+        (true, false) => FrameFlags::DEFAULT,
+    }
+}
+
+/// Why the picture that went to the screen directly is composited again, from the compositor's change to it (look::Change)
+/// and Smithay's state for it in this frame.
+fn why_composited(change: Option<crate::look::Change>, state: Option<RenderElementState>) -> String {
+    if let Some(c) = change {
+        return c.to_string();
+    }
+    match state.map(|s| s.presentation_state) {
+        None => "it is no longer drawn".into(),
+        Some(RenderElementPresentationState::Skipped) => "it is hidden".into(),
+        Some(RenderElementPresentationState::ZeroCopy) => "it went to another plane".into(),
+        Some(RenderElementPresentationState::Rendering { reason: Some(RenderingReason::FormatUnsupported) }) => {
+            "the primary plane does not take its buffer's format".into()
+        }
+        Some(RenderElementPresentationState::Rendering { reason: Some(RenderingReason::ScanoutFailed) }) => {
+            "the GPU refused its buffer on the primary plane".into()
+        }
+        Some(RenderElementPresentationState::Rendering { reason: None }) => {
+            "something is drawn over it (the pointer without a cursor plane, a menu, a notification), or its new buffer cannot go \
+             to a plane (shared memory, another size)"
+                .into()
         }
     }
 }
@@ -1726,6 +1792,34 @@ mod tests {
         assert_eq!(parse_vrr(Some(" ON ")), VrrPolicy::Always);
         assert!(vrr_wanted(VrrPolicy::FullScreen, true) && !vrr_wanted(VrrPolicy::FullScreen, false));
         assert!(vrr_wanted(VrrPolicy::Always, false) && !vrr_wanted(VrrPolicy::Never, true));
+    }
+
+    #[test]
+    fn a_full_screen_window_may_go_out_in_any_format_and_the_log_says_why_it_stops() {
+        use super::{frame_flags, scanout_wanted, why_composited};
+        use crate::look::Change;
+        use smithay::backend::drm::compositor::FrameFlags;
+        use smithay::backend::renderer::element::{RenderElementPresentationState as P, RenderElementState, RenderingReason};
+        // the primary plane takes a program's buffer in its own format always, in any format while a window is full screen
+        assert_eq!(frame_flags(true, false), FrameFlags::DEFAULT);
+        assert!(frame_flags(true, true).contains(FrameFlags::DEFAULT | FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY));
+        assert!(!frame_flags(true, true).contains(FrameFlags::SKIP_CURSOR_ONLY_UPDATES));
+        // YGGDRASIL_COMPOSITOR_SCANOUT=0: no primary plane for any picture, the pointer still on its plane
+        assert!(scanout_wanted(None) && scanout_wanted(Some("1")) && scanout_wanted(Some("")));
+        assert!(["0", "no", " Off ", "false"].into_iter().all(|v| !scanout_wanted(Some(v))));
+        for full in [false, true] {
+            let f = frame_flags(false, full);
+            assert!(!f.intersects(FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT | FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY));
+            assert!(f.contains(FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT));
+        }
+        let state = |presentation_state| Some(RenderElementState { visible_area: 1, presentation_state, needs_capture: false });
+        // the compositor's own reason first, then the frame's
+        assert_eq!(why_composited(Some(Change::Stretched), state(P::Rendering { reason: None })), Change::Stretched.to_string());
+        assert_eq!(why_composited(None, None), "it is no longer drawn");
+        assert_eq!(why_composited(None, state(P::Skipped)), "it is hidden");
+        assert!(why_composited(None, state(P::Rendering { reason: Some(RenderingReason::FormatUnsupported) })).contains("format"));
+        assert!(why_composited(None, state(P::Rendering { reason: Some(RenderingReason::ScanoutFailed) })).contains("GPU refused"));
+        assert!(why_composited(None, state(P::Rendering { reason: None })).starts_with("something is drawn over it"));
     }
 
     #[test]

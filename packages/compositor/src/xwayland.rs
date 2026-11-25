@@ -898,8 +898,17 @@ impl Element for OpaqueElement {
     fn alpha(&self) -> f32 {
         self.inner.alpha()
     }
+    // never a scanout candidate: an overlay plane would show the buffer's alpha channel (see underlying_storage)
     fn kind(&self) -> Kind {
-        self.inner.kind()
+        Kind::Unspecified
+    }
+}
+
+impl OpaqueElement {
+    /// How the compositor changes the picture beyond ignoring its alpha channel: it draws it as it is (neither rounded nor
+    /// stretched), only faded by an animation.
+    pub fn change(&self) -> Option<crate::look::Change> {
+        (self.inner.alpha() < 1.0).then_some(crate::look::Change::Faded)
     }
 }
 
@@ -919,10 +928,14 @@ impl RenderElement<GlesRenderer> for OpaqueElement {
         r
     }
 
-    // No underlying buffer is offered (that would let a hardware backend show it directly, alpha and all); a hardware backend
-    // that wants to scan full screen games out directly must put them on a plane that ignores alpha.
-    fn underlying_storage(&self, _renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
-        None
+    // The program's buffer, for direct scanout of a full screen game: Smithay puts a buffer on the primary plane only as its
+    // twin without alpha (Argb8888 as Xrgb8888), which ignores the alpha channel as OPAQUE_SHADER does, and the kind keeps it
+    // off the overlay planes, which would show the alpha channel. Not while an animation fades it.
+    fn underlying_storage(&self, renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
+        match self.change() {
+            None => self.inner.underlying_storage(renderer),
+            Some(_) => None,
+        }
     }
 }
 
