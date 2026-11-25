@@ -133,9 +133,9 @@ against the one Rust `power run`. The Python crash watch's RSS includes its jour
 | bootscreen get | wall (median; p10–p90) | 28.3 ms (28.1 ms–28.8 ms) | 3.00 ms (2.88 ms–3.08 ms) | −89 %, 25.3 ms faster |
 | | CPU time | 28.3 ms | 3.08 ms | −89 %, 25.2 ms less |
 | | peak RSS | 14.6 MB | 4.2 MB | −71 %, 10.4 MB less |
-| bootscreen set picture (12 MP photo) | wall (median; p10–p90) | 1132 ms (1110 ms–1147 ms) | 815 ms (809 ms–820 ms) | −28 %, 317 ms faster |
-| | CPU time | 1129 ms | 812 ms | −28 %, 317 ms less |
-| | peak RSS | 129.8 MB | 189.3 MB | +46 %, 59.5 MB more |
+| bootscreen set picture (12 MP photo; 2026-11-25) | wall (median; p10–p90) | 1100 ms (1096 ms–1110 ms) | 492 ms (484 ms–493 ms) | −55 %, 608 ms faster |
+| | CPU time | 1097 ms | 490 ms | −55 %, 607 ms less |
+| | peak RSS | 129.7 MB | 69.9 MB | −46 %, 59.8 MB less |
 | game-fix list --json | wall (median; p10–p90) | 26.7 ms (26.5 ms–27.0 ms) | 1.73 ms (1.68 ms–1.79 ms) | −94 %, 25.0 ms faster |
 | | CPU time | 26.5 ms | 1.65 ms | −94 %, 24.8 ms less |
 | | peak RSS | 15.0 MB | 3.9 MB | −74 %, 11.1 MB less |
@@ -149,6 +149,12 @@ against the one Rust `power run`. The Python crash watch's RSS includes its jour
 | | CPU time | 31.8 ms | 12.4 ms | −61 %, 19.4 ms less |
 | | peak RSS | 13.6 MB | 4.6 MB | −66 %, 9.0 MB less |
 | on disk | | account 14.9 KB, bootscreen 9.1 KB, game-fix 12.4 KB, gpu-run 10.1 KB (scripts; the interpreter is shared) | account 454 KB, bootscreen 951 KB, game-fix 1285 KB, gpu-run 1228 KB (binaries) | |
+
+`bootscreen set picture` was measured again on 2026-11-25, both sides, after its resize became one output row at a time
+(YGG-73): a made-up 12-megapixel photo (Pillow's noise, JPEG quality 90), 10 runs each after two unmeasured, alternating,
+at nice 19, through the same kind of launcher, in a user namespace with stand-ins for plymouth-set-default-theme,
+mkinitcpio and grub-mkconfig (parity/sandbox.sh). The Rust before the change peaked at 195.8 MB on that photo (image's
+resize kept a whole intermediate picture in floats); the first run's 189.3 MB was on another photo.
 
 ### labyrinth-appusage ([packages/appusage](../packages/appusage/README.md))
 

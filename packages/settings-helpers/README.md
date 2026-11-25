@@ -94,15 +94,18 @@ Method and every case: [docs/PORT_NUMBERS.md](../../docs/PORT_NUMBERS.md).
 | `account add` (stand-in useradd and chpasswd), wall time | 31.3 ms | 6.91 ms | −78 %, 24.3 ms faster |
 | `bootscreen get`, wall time | 28.3 ms | 3.00 ms | −89 %, 25.3 ms faster |
 | `game-fix apply` (Dead Space 2), wall time | 27.4 ms | 1.76 ms | −94 %, 25.6 ms faster |
-| `bootscreen set picture` (a 12-megapixel photo), wall time | 1132 ms | 815 ms | −28 %, 317 ms faster |
-| `bootscreen set picture`, peak memory | 129.8 MB | 189.3 MB | **+46 %, 59.5 MB more** |
+| `bootscreen set picture` (a 12-megapixel photo), wall time | 1100 ms | 492 ms | −55 %, 608 ms faster |
+| `bootscreen set picture`, peak memory | 129.7 MB | 69.9 MB | −46 %, 59.8 MB less |
 | `gpu-run list --json`, wall time | 32.1 ms | 9.14 ms | −72 %, 23.0 ms faster |
 | `gpu-run 2 PROGRAM`, wall time | 30.3 ms | 10.5 ms | −65 %, 19.8 ms faster |
 | a command's peak memory (the others) | 13.5–15.0 MB | 2.5–4.6 MB | −66 to −82 % |
 | on disk | 46 KB of scripts (+ Python, 75 MB, and python-pillow, 4.9 MB) | 3.8 MB (four binaries) | +3.8 MB, python-pillow no longer needed |
 
-Where Rust is worse: `bootscreen` decodes and scales the whole photo in memory at once, so its peak is higher than
-Pillow's. Until 2026-11-11 `gpu-run` was slower too (32.1 and 33.6 ms): it looked every 10 ms whether lspci and
+Until 2026-11-25 `bootscreen set picture` peaked higher than Pillow (189.3 MB against 129.8 MB that day): image's resize
+kept a whole intermediate picture in floats (138 MB for a 12-megapixel photo). It now scales one output row at a time with
+the same Catmull-Rom filter (`shrink` in src/bootscreen.rs: image's own result to one level, and the same pictures as
+Pillow's in the parity run), so only the photo and the result are in memory; the two picture rows above are from that day,
+measured again for both sides on one made-up 12-megapixel photo. Until 2026-11-11 `gpu-run` was slower too (32.1 and 33.6 ms): it looked every 10 ms whether lspci and
 vulkaninfo had ended, as `game-fix` did for the screen query (not part of these runs: they give the screen size). Both now
 go on the moment the program ends; the `gpu-run` numbers above are from a run that day after the change, the rest from
 the first run.

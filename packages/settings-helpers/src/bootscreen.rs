@@ -255,6 +255,78 @@ pub fn thumbnail_size(w: u32, h: u32, bw: u32, bh: u32) -> Option<(u32, u32)> {
     }
 }
 
+/// image's Catmull-Rom cubic (`FilterType::CatmullRom`: B 0, C 0.5, support 2).
+fn catmull_rom(x: f32) -> f32 {
+    let x = x.abs();
+    if x < 1.0 {
+        (1.5 * x - 2.5) * x * x + 1.0
+    } else if x < 2.0 {
+        ((-0.5 * x + 2.5) * x - 4.0) * x + 2.0
+    } else {
+        0.0
+    }
+}
+
+/// For each of `dst` output pixels along one side, the first of the `src` input pixels it takes from and their weights
+/// (summing to 1), as image's resize works them out: the filter stretched by the ratio when shrinking.
+fn weights(src: u32, dst: u32) -> Vec<(usize, Vec<f32>)> {
+    let ratio = src as f32 / dst as f32;
+    let scale = ratio.max(1.0);
+    let support = 2.0 * scale;
+    (0..dst)
+        .map(|i| {
+            let center = (i as f32 + 0.5) * ratio;
+            let left = ((center - support).floor() as i64).clamp(0, src as i64 - 1) as usize;
+            let right = ((center + support).ceil() as i64).clamp(left as i64 + 1, src as i64) as usize;
+            let mut w: Vec<f32> = (left..right).map(|j| catmull_rom((j as f32 + 0.5 - center) / scale)).collect();
+            let sum: f32 = w.iter().sum();
+            if sum != 0.0 {
+                w.iter_mut().for_each(|x| *x /= sum);
+            }
+            (left, w)
+        })
+        .collect()
+}
+
+/// The picture resized to `w` x `h` (RGBA) with image's Catmull-Rom filter, one output row at a time: the input rows a
+/// row needs are combined into one row of floats, then that row is resampled across. Nothing the size of the picture is
+/// kept besides the input and the result; image's own resize keeps a whole intermediate picture in floats (138 MB for a
+/// 12 MP photo, YGG-73).
+pub fn shrink(img: image::DynamicImage, w: u32, h: u32) -> image::RgbaImage {
+    let (sw, sh) = (img.width(), img.height());
+    let (src, ch): (Vec<u8>, usize) = match img {
+        image::DynamicImage::ImageRgb8(b) => (b.into_raw(), 3),
+        image::DynamicImage::ImageRgba8(b) => (b.into_raw(), 4),
+        other => (other.into_rgba8().into_raw(), 4),
+    };
+    let (wx, wy) = (weights(sw, w), weights(sh, h));
+    let stride = sw as usize * ch;
+    let mut out = image::RgbaImage::new(w, h);
+    let mut row = vec![0f32; stride];
+    let px = |v: f32| v.clamp(0.0, 255.0).round() as u8;
+    for (y, (top, ws)) in wy.iter().enumerate() {
+        row.fill(0.0);
+        for (k, wt) in ws.iter().enumerate() {
+            for (acc, &v) in row.iter_mut().zip(&src[(top + k) * stride..][..stride]) {
+                *acc += wt * v as f32;
+            }
+        }
+        let line = &mut out.as_mut()[y * w as usize * 4..][..w as usize * 4];
+        for (x, (left, ws)) in wx.iter().enumerate() {
+            let mut p = [0f32; 4];
+            for (k, wt) in ws.iter().enumerate() {
+                let b = (left + k) * ch;
+                for c in 0..ch {
+                    p[c] += wt * row[b + c];
+                }
+            }
+            let a = if ch == 4 { px(p[3]) } else { 255 };
+            line[x * 4..x * 4 + 4].copy_from_slice(&[px(p[0]), px(p[1]), px(p[2]), a]);
+        }
+    }
+    out
+}
+
 /// Pillow refused a picture of more than twice Image.MAX_IMAGE_PIXELS (64 000 000) pixels before decoding it (and only
 /// warned above once that).
 pub const MAX_PIXELS: u64 = 2 * 64_000_000;
@@ -283,12 +355,13 @@ pub fn make_picture_theme(p: &Paths, src: &str) -> R<()> {
         )));
     }
     let img = reader.decode().map_err(|e| Crash(format!("OSError: {e}")))?;
+    // the source is gone before the PNG is written (YGG-73: peak memory)
     let img = match thumbnail_size(img.width(), img.height(), 3840, 2160) {
-        Some((nw, nh)) => img.resize_exact(nw, nh, image::imageops::FilterType::CatmullRom),
-        None => img,
+        Some((nw, nh)) => shrink(img, nw, nh),
+        None => img.into_rgba8(),
     };
     let out = py::join(&d, "picture.png");
-    img.to_rgba8().save_with_format(&out, image::ImageFormat::Png).map_err(|e| Crash(format!("OSError: {e}")))?;
+    img.save_with_format(&out, image::ImageFormat::Png).map_err(|e| Crash(format!("OSError: {e}")))?;
     let script = py::join(&d, &format!("{PICTURE_THEME}.script"));
     fs::write(&script, PICTURE_SCRIPT).map_err(|e| Crash(py::oserror(&e, Some(&script))))?;
     let theme = py::join(&d, &format!("{PICTURE_THEME}.plymouth"));

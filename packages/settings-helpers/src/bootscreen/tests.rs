@@ -171,3 +171,54 @@ fn only_a_branding_file_names_the_animation() {
     std::fs::write(d.0.join("int/c.conf"), b"kind = branding\xff\n").unwrap();
     assert!(os_theme(&p).is_err());
 }
+
+/// YGG-73, run by hand (`cargo test --release --lib -- --ignored a_12_mp_photo_peak --nocapture`): the peak memory of
+/// making the picture theme from a 12 MP photo (4000 x 3000 JPEG), from a peak reset just before it (/proc/self/clear_refs);
+/// the bar is the Python's 129.8 MB for the whole program (docs/PORT_NUMBERS.md).
+#[test]
+#[ignore = "a measurement: run by hand, in release"]
+fn a_12_mp_photo_peak() {
+    let d = std::env::temp_dir().join(format!("bootscreen-peak-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join("themes")).unwrap();
+    let photo = d.join("photo.jpg");
+    {
+        let img =
+            image::RgbImage::from_fn(4000, 3000, |x, y| image::Rgb([(x * 7 + y) as u8, ((y * 5) ^ x) as u8, ((x / 9) * (y / 7)) as u8]));
+        img.save_with_format(&photo, image::ImageFormat::Jpeg).unwrap();
+    }
+    let p = Paths {
+        themes: d.join("themes").to_string_lossy().into_owned(),
+        integrations: String::new(),
+        dropin: String::new(),
+        nvidia_dropin: String::new(),
+        grub_default: String::new(),
+    };
+    let hwm = || std::fs::read_to_string("/proc/self/status").unwrap().lines().find(|l| l.starts_with("VmHWM")).unwrap().to_string();
+    std::fs::write("/proc/self/clear_refs", "5").unwrap();
+    let before = hwm();
+    make_picture_theme(&p, &photo.to_string_lossy()).unwrap();
+    let after = hwm();
+    let out = image::open(d.join("themes/yggdrasil-picture/picture.png")).unwrap();
+    eprintln!("PEAK before {before} | after {after} | picture {}x{} {:?}", out.width(), out.height(), out.color());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// YGG-73: the row-at-a-time resize gives image's Catmull-Rom resize, to one level (float sums in another order), for an RGB
+/// and an RGBA picture, shrinking both ways and one way only.
+#[test]
+fn the_shrink_matches_images_resize() {
+    let rgb = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(301, 199, |x, y| {
+        image::Rgb([(x * 13 + y * 3) as u8, (x ^ y) as u8, ((x * y) % 251) as u8])
+    }));
+    let rgba = image::DynamicImage::ImageRgba8(image::RgbaImage::from_fn(120, 333, |x, y| {
+        image::Rgba([(x * 5) as u8, (y * 7) as u8, ((x + y) * 3) as u8, ((x * y) % 256) as u8])
+    }));
+    for (img, w, h) in [(&rgb, 97, 64), (&rgb, 301, 50), (&rgba, 31, 87), (&rgba, 40, 333)] {
+        let ours = shrink(img.clone(), w, h);
+        let theirs = img.resize_exact(w, h, image::imageops::FilterType::CatmullRom).into_rgba8();
+        assert_eq!(ours.dimensions(), theirs.dimensions());
+        let worst = ours.as_raw().iter().zip(theirs.as_raw()).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
+        assert!(worst <= 1, "{w}x{h}: off by {worst}");
+    }
+}
