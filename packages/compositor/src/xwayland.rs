@@ -415,15 +415,14 @@ impl App {
         self.overlays.iter().any(|x| x.geometry().to_f64().contains(pos))
     }
 
-    /// The surface of an X11 menu or tooltip under the point, and where that surface's origin is on screen.
-    pub fn overlay_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+    /// The X11 menu or tooltip under the point: its window, its surface and where that surface's origin is on screen. While an
+    /// X11 program drags, the icon it moves under the pointer (a window like these) is passed over (Smithay's surface_under), so
+    /// the window beneath it is where the drag goes.
+    pub fn overlay_under(&self, pos: Point<f64, Logical>) -> Option<(X11Surface, WlSurface, Point<f64, Logical>)> {
         for x in self.overlays.iter().rev() {
-            let Some(s) = x.wl_surface() else { continue };
             let loc = x.geometry().loc;
-            if let Some((s, p)) =
-                smithay::desktop::utils::under_from_surface_tree(&s, pos - loc.to_f64(), (0, 0), smithay::desktop::WindowSurfaceType::ALL)
-            {
-                return Some((s, (p + loc).to_f64()));
+            if let Some((s, p)) = x.surface_under(pos - loc.to_f64(), (0, 0), smithay::desktop::WindowSurfaceType::ALL) {
+                return Some((x.clone(), s, (p + loc).to_f64()));
             }
         }
         None

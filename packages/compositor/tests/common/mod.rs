@@ -308,6 +308,28 @@ impl Drop for Compositor {
     }
 }
 
+// ------------------------------------------------------------------ X11 programs
+
+/// Whether XWayland is installed: the X11 tests are skipped where it is not.
+pub fn xwayland_installed() -> bool {
+    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("Xwayland").is_file()))
+}
+
+/// The compositor with XWayland, on the screens of `args` and with `setup` run on the test's folder first, and the X display
+/// it printed.
+pub fn with_xwayland_on(args: &[&str], setup: impl FnOnce(&Path)) -> (Compositor, String) {
+    let comp = Compositor::start_env(args, &[("YGGDRASIL_COMPOSITOR_XWAYLAND", "1")], setup);
+    let start = Instant::now();
+    loop {
+        let found = comp.log.lock().unwrap().iter().find_map(|l| l.strip_prefix("DISPLAY=").map(str::to_string));
+        if let Some(d) = found {
+            return (comp, d);
+        }
+        assert!(start.elapsed() < Duration::from_secs(20), "XWayland did not start: {}", comp.log_tail(20));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// A line of `windows`: app id, title, place, size, workspace (1-based), states.
 #[derive(Debug, Clone)]
 pub struct WinInfo {

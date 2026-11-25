@@ -389,8 +389,12 @@ watches the folder, so the icon shows a moment after the window (`tests/x11.rs`,
 told DISPLAY reach it (since 2026-11-24, `tests/x11.rs`). The compositor is the X11 display's XSETTINGS manager (since
 2026-11-24): GTK programs under X11 get their DPI (Xft/DPI, matching Xft.dpi), the pointer's theme and size, and GTK's theme,
 icon theme, font and font settings from GTK's settings.ini, and follow a change at once (a new pointer theme, or settings.ini
-rewritten by ygg-theme or Settings, seen within the compositor's two-second look at its files; `tests/x11.rs`). Still missing
-for X11: drag and drop between X11 and Wayland programs.
+rewritten by ygg-theme or Settings, seen within the compositor's two-second look at its files; `tests/x11.rs`). Drag and drop
+works between X11 and Wayland programs, both ways (since 2026-11-24, with Smithay main's XDND): a Wayland program's drag over
+an X11 window is told to it in XDND by Smithay's window manager, which asks the Wayland program for the data when the X11 one
+does; while an X11 program drags, the window manager covers the screen with a window of its own that takes XDND and stands in
+for the Wayland windows, and steps aside over X11 windows, so two X11 programs still speak XDND to each other. An X11
+program's drag icon under the pointer is passed over (`tests/dnd.rs`).
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton

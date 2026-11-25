@@ -79,7 +79,7 @@ impl App {
         };
         let serial = SERIAL_COUNTER.next_serial();
         self.focus_at(pos, serial);
-        let under = self.surface_under(pos);
+        let under = self.target_under(pos);
         if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
             eprintln!("touch down {slot:?} at {:.0},{:.0}", pos.x, pos.y);
         }
@@ -92,7 +92,7 @@ impl App {
             return;
         }
         let Some(touch) = self.seat.get_touch() else { return };
-        let under = self.surface_under(pos);
+        let under = self.target_under(pos);
         touch.motion(self, under, &MotionEvent { slot, location: pos, time });
     }
 

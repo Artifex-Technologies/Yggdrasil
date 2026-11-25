@@ -10,7 +10,7 @@
 //!
 //! The hardware backend moves the pointer through `pointer_moved_by`; the headless backend's `pointer-move DX DY` (its virtual
 //! mouse) does the same, for the tests.
-use crate::state::App;
+use crate::state::{App, PtrFocus};
 use smithay::input::pointer::{PointerHandle, RelativeMotionEvent};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point};
@@ -31,7 +31,7 @@ impl App {
     /// program under the pointer is told the relative motion, and the pointer moves unless a constraint holds it.
     pub fn pointer_moved_by(&mut self, delta: Point<f64, Logical>, raw: Point<f64, Logical>, time: smithay::backend::input::InputTime) {
         let pointer = self.pointer.clone();
-        let under = self.surface_under(self.pointer_location);
+        let under = self.target_under(self.pointer_location);
         pointer.relative_motion(self, under.clone(), &RelativeMotionEvent { delta, delta_unaccel: raw, time });
         let to = self.pointer_location + delta;
         let to = self.nearest_on_screens(to).unwrap_or(to);
@@ -52,9 +52,8 @@ impl App {
     }
 
     /// The constraint active on the surface under the pointer, if the pointer is inside its region.
-    fn hold(&self, pointer: &PointerHandle<App>, under: Option<&(WlSurface, Point<f64, Logical>)>) -> Hold {
-        let Some((surface, origin)) = under else { return Hold::Free };
-        let (surface, origin) = (surface.clone(), *origin);
+    fn hold(&self, pointer: &PointerHandle<App>, under: Option<&(PtrFocus, Point<f64, Logical>)>) -> Hold {
+        let Some((surface, origin)) = under.and_then(|(f, origin)| Some((f.surface()?, *origin))) else { return Hold::Free };
         let at = self.pointer_location - origin;
         // read before the constraint is (with_pointer_constraint holds the surface's state, which this takes too)
         let size =
