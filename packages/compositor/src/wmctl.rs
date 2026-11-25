@@ -330,7 +330,7 @@ fn clients(app: &App) -> Vec<(Window, String)> {
         .into_iter()
         .map(|i| {
             let (title, app_id) = state::title_app(&i.window);
-            let size = i.window.geometry().size;
+            let size = state::window_size(&i.window);
             let output = state::surface_of(&i.window).map(|s| app.output_of(&s)).unwrap_or_else(|| app.output.clone());
             let line = format!(
                 "{}\t{}\t{}\t{},{}\t{}x{}\t{}\t{}\t{}\t{}",

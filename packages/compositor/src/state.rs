@@ -36,7 +36,7 @@ use smithay::reexports::wayland_server::backend::{ClientData, ClientId, Disconne
 use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_output::WlOutput, wl_seat, wl_surface::WlSurface};
 use smithay::reexports::wayland_server::{Client, DisplayHandle, Resource};
 use smithay::utils::Rectangle;
-use smithay::utils::{IsAlive, Scale};
+use smithay::utils::{FrameExtents, IsAlive, Scale};
 use smithay::utils::{Logical, Point, Serial, SERIAL_COUNTER};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
@@ -517,7 +517,6 @@ pub fn ignores_maximize(w: &Window) -> bool {
     title_app(w).1 == "steam"
 }
 
-/// Tell an X11 window where it is and how big (X11 programs place their menus from it). Wayland windows are left alone.
 /// The size the compositor asked a window for while the program has not drawn it at that size yet.
 pub fn asked_size(w: &Window) -> Option<smithay::utils::Size<i32, Logical>> {
     let t = w.toplevel()?;
@@ -527,12 +526,41 @@ pub fn asked_size(w: &Window) -> Option<smithay::utils::Size<i32, Logical>> {
 
 /// A window's size as it will be: the one asked for while the program has not drawn it yet, else its own.
 fn size_to_be(w: &Window) -> smithay::utils::Size<i32, Logical> {
-    asked_size(w).unwrap_or_else(|| w.geometry().size)
+    asked_size(w).unwrap_or_else(|| window_size(w))
 }
 
+/// A window's size as the compositor holds it: a Wayland window's own (its geometry), an X11 window's as its X window was last
+/// given, less its shadow (the X server has that size at once; the picture follows).
+pub fn window_size(w: &Window) -> smithay::utils::Size<i32, Logical> {
+    match w.x11_surface() {
+        Some(x) => x11_rect(x).size,
+        None => w.geometry().size,
+    }
+}
+
+/// The shadow `x11_place` last placed an X11 window's X window around.
+struct PlacedShadow(std::cell::Cell<FrameExtents<i32, Logical>>);
+
+/// The client-side shadow an X11 window was last placed with (its present one before it was placed): `_GTK_FRAME_EXTENTS`,
+/// which GTK and Chromium draw inside their X window once the window manager says it reads it, as Smithay's does.
+pub fn placed_shadow(x: &X11Surface) -> FrameExtents<i32, Logical> {
+    x.user_data().get::<PlacedShadow>().map(|s| s.0.get()).unwrap_or_else(|| x.frame_extents())
+}
+
+/// An X11 window's place and size as the compositor keeps them: its X window less the shadow it was placed with, as a Wayland
+/// window's geometry leaves its shadow out. Smithay's `Space` holds X11 windows there too (its geometry is the same part).
+pub fn x11_rect(x: &X11Surface) -> Rectangle<i32, Logical> {
+    x.last_configure() - placed_shadow(x)
+}
+
+/// Tell an X11 window where it is and how big (X11 programs place their menus from it). Wayland windows are left alone.
+/// `loc` and `size` are the window's as for any window: the X window is that with its client-side shadow around it (and the
+/// shadow is kept: `placed_shadow`).
 pub fn x11_place(w: &Window, loc: Point<i32, Logical>, size: smithay::utils::Size<i32, Logical>) {
     if let Some(x) = w.x11_surface() {
-        let _ = x.configure(Rectangle::new(loc, size));
+        let shadow = x.frame_extents();
+        x.user_data().get_or_insert(|| PlacedShadow(std::cell::Cell::new(shadow))).0.set(shadow);
+        let _ = x.configure(Rectangle::new(loc, size) + shadow);
     }
 }
 
@@ -746,7 +774,7 @@ impl App {
         if let Some(s) = &surface {
             if !self.saved.iter().any(|(x, _)| x == s) {
                 let loc = self.space.element_location(window).unwrap_or_default();
-                self.saved.push((s.clone(), Rectangle::new(loc, window.geometry().size)));
+                self.saved.push((s.clone(), Rectangle::new(loc, window_size(window))));
             }
         }
         if let Some(t) = window.toplevel() {
@@ -771,7 +799,7 @@ impl App {
                     }
                 }
             }
-            let _ = x.configure(area);
+            x11_place(window, area.loc, area.size);
         }
         // in place in the stack: a window made full screen or maximized from behind (a game asking again, a tool) stays behind
         self.relocate(window, area.loc);
@@ -808,7 +836,7 @@ impl App {
             let _ = x.set_fullscreen(false);
             self.x11_snapped.retain(|s| Some(s) != surface.as_ref());
             if let Some(r) = back {
-                let _ = x.configure(r);
+                x11_place(window, r.loc, r.size);
             }
         }
         if let Some(r) = back {
@@ -860,7 +888,7 @@ impl App {
             let _ = x.set_maximized(false);
             let _ = x.set_fullscreen(false);
             self.x11_snapped.retain(|s| s != &surface);
-            let _ = x.configure(rect);
+            x11_place(window, rect.loc, rect.size);
         }
         self.relocate(window, rect.loc);
         self.retile();
@@ -878,7 +906,7 @@ impl App {
     pub fn window_output(&self, w: &Window) -> Output {
         match self.space.element_location(w) {
             Some(loc) => {
-                let size = w.geometry().size;
+                let size = window_size(w);
                 self.output_at(Point::from(((loc.x + size.w / 2) as f64, (loc.y + size.h / 2) as f64)))
             }
             None => self.output.clone(),
@@ -926,8 +954,8 @@ impl App {
                 t.with_pending_state(|s| s.size = Some(r.size));
                 t.send_pending_configure();
             }
-        } else if let Some(x) = w.x11_surface() {
-            let _ = x.configure(r);
+        } else {
+            x11_place(w, r.loc, r.size);
         }
         self.relocate(w, r.loc);
     }
@@ -996,7 +1024,7 @@ impl App {
         let Some(loc) = self.space.element_location(w).or_else(|| self.parked.iter().find(|(x, _, _)| x == w).map(|(_, _, at)| *at)) else {
             return;
         };
-        let r = Rectangle::new(loc, w.geometry().size);
+        let r = Rectangle::new(loc, window_size(w));
         if !crate::places::worth_keeping(r) || self.places.get(&class) == Some(&r) {
             return;
         }
@@ -1307,7 +1335,7 @@ impl App {
                 r.iconic(x.window_id(), false);
             }
         }
-        x11_place(&w, at, w.geometry().size);
+        x11_place(&w, at, window_size(&w));
         self.space.map_element(w.clone(), at, true);
         self.retile();
         w
@@ -1382,7 +1410,7 @@ impl App {
         let Some(window) = self.shown_window(surface) else { return };
         let loc = self.space.element_location(&window).unwrap_or_default();
         self.saved.retain(|(s, _)| s != surface);
-        self.saved.push((surface.clone(), Rectangle::new(loc, window.geometry().size)));
+        self.saved.push((surface.clone(), Rectangle::new(loc, window_size(&window))));
         self.space.unmap_elem(&window);
         // an X11 program is told it is hidden (_NET_WM_STATE_HIDDEN), so a game may stop drawing
         if let Some(x) = window.x11_surface() {
@@ -1724,8 +1752,8 @@ impl App {
             if let Some(t) = w.toplevel() {
                 t.with_pending_state(|s| s.size = Some(r.size));
                 t.send_pending_configure();
-            } else if let Some(x) = w.x11_surface() {
-                let _ = x.configure(r);
+            } else if w.x11_surface().is_some() {
+                x11_place(w, r.loc, r.size);
             } else {
                 continue;
             }
@@ -2155,7 +2183,7 @@ impl App {
         let pointer = self.pointer.clone();
         let start = smithay::input::pointer::GrabStartData { focus: None, button, location: pos };
         self.activate_surface(&surface);
-        let size = window.geometry().size;
+        let size = window_size(&window);
         if button == 0x110 {
             pointer.set_grab(self, MoveGrab { start, window, origin: loc }, serial, Focus::Clear);
         } else {
@@ -2184,7 +2212,7 @@ impl App {
             let Some(surface) = surface_of(&window) else { return false };
             self.activate_surface(&surface);
             let origin = self.space.element_location(&window).unwrap_or_default();
-            let size = window.geometry().size;
+            let size = window_size(&window);
             pointer.set_grab(self, ResizeGrab { start, window, edges, origin, size }, serial, Focus::Clear);
             return true;
         }
@@ -2299,9 +2327,10 @@ impl App {
                 out.extend(switcher::elements(renderer, sw, &cards, self.fonts.as_ref()));
             }
         }
-        // X11 menus and tooltips, last shown in front, over everything but the switcher and the profile question
+        // X11 menus and tooltips, last shown in front, over everything but the switcher and the profile question; each where its
+        // X window is (its surface is all of the X window, a shadow drawn into it included)
         for x in self.overlays.iter().rev() {
-            let loc = cam.point(x.geometry().loc.to_f64()).to_i32_round();
+            let loc = cam.point(x.last_configure().loc.to_f64()).to_i32_round();
             out.extend(lift(x.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, loc, scale, 1.0), loc));
         }
         // A full screen window in front (a game, a video) covers the top bar and the dock: the Top layer then goes behind the
