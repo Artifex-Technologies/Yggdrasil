@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 
 use common::*;
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{AtomEnum, ConfigureWindowAux, ConnectionExt, CreateWindowAux, EventMask, PropMode, WindowClass};
+use x11rb::protocol::xproto::{
+    AtomEnum, ConfigureWindowAux, ConnectionExt, CreateWindowAux, EventMask, ImageFormat, PropMode, WindowClass,
+};
 use x11rb::wrapper::ConnectionExt as _;
 
 /// The compositor with XWayland (tests/common), and the X display it printed.
@@ -704,10 +706,42 @@ fn an_x11_menu_is_drawn_where_it_was_made_at_a_fractional_scale() {
             }
             // and what X and the compositor know of it: mapped for X (a map_state of 2 is Viewable), the windows listed
             let state = conn.get_window_attributes(menu).ok().and_then(|c| c.reply().ok()).map(|a| a.map_state);
+            // the X server's own view (YGG-115): the root's and the menu's size, and the menu's middle pixel as X holds it
+            // (red: XWayland painted it and did not send it; anything else: it was never painted)
+            let geometry = |w| conn.get_geometry(w).ok().and_then(|c| c.reply().ok()).map(|g| (g.x, g.y, g.width, g.height));
+            let pixel = conn
+                .get_image(ImageFormat::Z_PIXMAP, menu, 62, 62, 1, 1, !0)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .map(|i| i.data.iter().take(4).map(|b| format!("{b:02x}")).collect::<String>());
+            // XWayland's process: what it waits on, and its Unix sockets' queues (Send-Q left: the compositor does not read
+            // what XWayland sent; both empty: XWayland never sent it, or holds it in its own buffer)
+            let xwayland = xwayland_of(&comp);
+            let process = xwayland.as_ref().map(|p| {
+                let wchan = std::fs::read_to_string(format!("/proc/{p}/wchan")).unwrap_or_default();
+                let state = std::fs::read_to_string(format!("/proc/{p}/stat")).unwrap_or_default();
+                let state = state.rsplit(')').next().and_then(|r| r.split_whitespace().next()).unwrap_or("?").to_string();
+                let sockets = std::process::Command::new("ss")
+                    .args(["-xpn"])
+                    .output()
+                    .map(|o| {
+                        String::from_utf8_lossy(&o.stdout)
+                            .lines()
+                            .filter(|l| l.contains(&format!("pid={p},")))
+                            .map(|l| l.split_whitespace().take(5).collect::<Vec<_>>().join(" "))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    })
+                    .unwrap_or_default();
+                format!("Xwayland {p} state {state} waiting in {wchan:?}, sockets: {sockets}")
+            });
             panic!(
                 "the menu where it was made: {inside} red pixels of {}; red on the screen: {n} pixels in {x0},{y0} to {x1},{y1}; \
-                 X's map state of it: {state:?}; windows: {:?}\n{}",
+                 X's map state of it: {state:?}; X's root {:?} and menu {:?}, the menu's middle pixel in X {pixel:?}; {process:?}; \
+                 windows: {:?}\n{}",
                 115 * 115,
+                geometry(root),
+                geometry(menu),
                 comp.ctl("windows"),
                 comp.log_tail(60)
             );
