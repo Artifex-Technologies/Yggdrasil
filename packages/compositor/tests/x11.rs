@@ -640,7 +640,9 @@ fn an_x11_menu_is_drawn_where_it_was_made_at_a_fractional_scale() {
     }
     let _l = limit(60, "an X11 menu at 125 %");
     // at 125 % X11 programs draw in the screen's pixels: a menu made at (500, 250), 125 x 125, is there on the screen
-    let (comp, display) = with_xwayland_on(&["--output", "1600x900@1.25"], |_| {});
+    // the compositor's debug lines and XWayland's own messages go into its log, for the report of a failure (YGG-115: it has
+    // failed in CI with the menu never drawn, and only there)
+    let (comp, display) = with_xwayland_env(&["--output", "1600x900@1.25"], &[("YGGDRASIL_COMPOSITOR_DEBUG", "1")], |_| {});
     let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
     let root = conn.setup().roots[screen].root;
     let menu = conn.generate_id().unwrap();
@@ -667,10 +669,14 @@ fn an_x11_menu_is_drawn_where_it_was_made_at_a_fractional_scale() {
                     }
                 }
             }
+            // and what X and the compositor know of it: mapped for X (a map_state of 2 is Viewable), the windows listed
+            let state = conn.get_window_attributes(menu).ok().and_then(|c| c.reply().ok()).map(|a| a.map_state);
             panic!(
-                "the menu where it was made: {inside} red pixels of {}; red on the screen: {n} pixels in {x0},{y0} to {x1},{y1}\n{}",
+                "the menu where it was made: {inside} red pixels of {}; red on the screen: {n} pixels in {x0},{y0} to {x1},{y1}; \
+                 X's map state of it: {state:?}; windows: {:?}\n{}",
                 115 * 115,
-                comp.log_tail(20)
+                comp.ctl("windows"),
+                comp.log_tail(60)
             );
         }
         std::thread::sleep(Duration::from_millis(50));

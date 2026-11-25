@@ -332,7 +332,15 @@ pub fn xwayland_of(comp: &Compositor) -> Option<u32> {
 /// The compositor with XWayland, on the screens of `args` and with `setup` run on the test's folder first, and the X display
 /// it printed.
 pub fn with_xwayland_on(args: &[&str], setup: impl FnOnce(&Path)) -> (Compositor, String) {
-    let comp = Compositor::start_env(args, &[("YGGDRASIL_COMPOSITOR_XWAYLAND", "1")], setup);
+    with_xwayland_env(args, &[], setup)
+}
+
+/// As `with_xwayland_on`, with more environment for the compositor (YGGDRASIL_COMPOSITOR_DEBUG=1 puts XWayland's own messages
+/// and the compositor's debug lines in its log, for a failure's report).
+pub fn with_xwayland_env(args: &[&str], env: &[(&str, &str)], setup: impl FnOnce(&Path)) -> (Compositor, String) {
+    let mut all = vec![("YGGDRASIL_COMPOSITOR_XWAYLAND", "1")];
+    all.extend_from_slice(env);
+    let comp = Compositor::start_env(args, &all, setup);
     let start = Instant::now();
     loop {
         let found = comp.log.lock().unwrap().iter().find_map(|l| l.strip_prefix("DISPLAY=").map(str::to_string));
