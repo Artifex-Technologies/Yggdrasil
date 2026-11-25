@@ -14,7 +14,7 @@
 //! locked. Both taps are the gesture and reach no program. A suspend is different: the touchscreen wakes the laptop by itself.
 //!
 //! The hardware backend gives these from libinput (udev.rs); the headless backend from its control socket (`touch-down`,
-//! `touch-move`, `touch-up`), for the tests.
+//! `touch-move`, `touch-up`, `touch-cancel`), for the tests.
 
 use smithay::backend::input::InputTime;
 use smithay::backend::input::{
