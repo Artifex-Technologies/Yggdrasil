@@ -257,10 +257,10 @@ fn ring(c: &mut Canvas, cx: f64, cy: f64, r: f64, f: i32, w: f64) -> R<()> {
     disc(c, r + w / 2.0 + OUT / 2.0, DARK)?;
     disc(c, r + w / 2.0, WHITE)?;
     disc(c, r - w / 2.0, DARK)?;
-    let mut hole = Img::new(c.img.w, c.img.h, 1, [0; 4]);
-    let rad = r - w / 2.0 - OUT / 2.0;
-    d_ellipse_fill(&mut hole, [(cx - rad) * k, (cy - rad) * k, (cx + rad) * k, (cy + rad) * k], &[255, 0, 0, 0])?;
-    fill_mask(&mut c.img, &[0, 0, 0, 0], &hole, 0, 0);
+    // the hole: the script pasted transparent through a mask of a filled disc, which makes every pixel under the disc
+    // (0, 0, 0, 0) and leaves every other pixel as it is (the blend with a mask of 0 is the pixel itself; tests below), so
+    // it is the disc drawn in transparent ink
+    disc(c, r - w / 2.0 - OUT / 2.0, [0, 0, 0, 0])?;
     let a0 = (f * 360) as f64 / frames as f64 - 90.0;
     d_arc(&mut c.img, [(cx - r) * k, (cy - r) * k, (cx + r) * k, (cy + r) * k], a0, a0 + 100.0, &PURPLE, (w * k) as i32)
 }
@@ -573,4 +573,25 @@ pub fn main(argv0: &str, args: &[String]) -> i32 {
     let names: usize = SHAPES.iter().map(|s| s.2.len()).sum();
     println!("{names} cursor names, {} shapes, in {}", SHAPES.len(), cur.display());
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The ring's hole: a paste of transparent through a mask of 0 and 255 is the same as drawing the 255s in transparent
+    #[test]
+    fn a_transparent_paste_through_a_mask_is_a_transparent_drawing() {
+        let mut im = Img::new(256, 256, 4, [0; 4]);
+        for (i, p) in im.px.chunks_mut(4).enumerate() {
+            p.copy_from_slice(&[(i % 256) as u8, (255 - i % 256) as u8, (i / 256) as u8, (i / 256) as u8]);
+        }
+        let before = im.clone();
+        let mut mask = Img::new(256, 256, 1, [0; 4]);
+        fill_mask(&mut im, &[0; 4], &mask, 0, 0);
+        assert!(im.px == before.px, "a mask of 0 changed a pixel");
+        mask.px.fill(255);
+        fill_mask(&mut im, &[0; 4], &mask, 0, 0);
+        assert!(im.px.iter().all(|&v| v == 0), "a mask of 255 left a pixel that is not (0, 0, 0, 0)");
+    }
 }
