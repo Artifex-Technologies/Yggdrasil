@@ -21,6 +21,7 @@
 //! - **Device names**: as Hyprland names them (lower case, spaces as `-`, `-1`, `-2` ... after a name already taken), so
 //!   input.conf's sections and Settings > Peripherals mean the same device on both.
 
+use smithay::backend::input::InputTime;
 use yggdrasil_wm::input::{self, Accel, ClickMethod, InputConf, Pointer, ScrollMethod};
 
 /// The headless backend's devices (the control socket's input): their names as `devices` lists them.
@@ -203,7 +204,7 @@ pub fn scroll(m: &Mouse, v: f64) -> f64 {
 /// An axis that is not in the event did not stop: a vertical two-finger scroll is not a stop of the horizontal axis on every
 /// frame (the laptop, 2026-11-19).
 pub fn axis_frame(
-    time: u32,
+    time: InputTime,
     source: smithay::backend::input::AxisSource,
     factor: f64,
     h: (Option<f64>, Option<f64>),

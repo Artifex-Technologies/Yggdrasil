@@ -1,6 +1,7 @@
 //! The compositor's state and the protocol handlers: windows (xdg-shell), panels and backgrounds (layer-shell), the screen locker
 //! (ext-session-lock), idle detection (ext-idle-notify), and the usual seat, output and clipboard parts.
 
+use smithay::backend::input::InputTime;
 use std::time::Duration;
 
 use crate::deco::{self, Bar, Hit, Key as BarKey};
@@ -447,7 +448,7 @@ impl smithay::input::keyboard::KeyboardTarget<App> for KbFocus {
         key: smithay::input::keyboard::KeysymHandle<'_>,
         state: KeyState,
         serial: Serial,
-        time: u32,
+        time: InputTime,
     ) {
         match self {
             KbFocus::Wl(s) => smithay::input::keyboard::KeyboardTarget::key(s, seat, data, key, state, serial, time),
@@ -2722,25 +2723,25 @@ impl App {
             return;
         }
         match event {
-            InputEvent::Keyboard { event } => self.key(event.key_code(), event.state(), event.time_msec()),
+            InputEvent::Keyboard { event } => self.key(event.key_code(), event.state(), event.time()),
             InputEvent::PointerMotionAbsolute { event } => {
                 // a tablet, a touch screen used as a pointer, a virtual machine's pointer: the whole of the screens
                 let area = self.space.outputs().map(output_rect).reduce(|a, b| a.merge(b)).unwrap_or_else(|| output_rect(&self.output));
                 let pos = event.position_transformed(area.size) + area.loc.to_f64();
-                self.pointer_to(pos, event.time_msec());
+                self.pointer_to(pos, event.time());
             }
             InputEvent::PointerMotion { event } => {
                 // a mouse or touchpad: moved by what libinput made of the movement (its speed and acceleration), kept on the
                 // screens, and told as relative motion to a game (constraints.rs: it stays put while a game has locked it)
                 self.pointer_moved_by(event.delta(), event.delta_unaccel(), event.time());
             }
-            InputEvent::PointerButton { event } => self.button(event.button_code(), event.state(), event.time_msec()),
+            InputEvent::PointerButton { event } => self.button(event.button_code(), event.state(), event.time()),
             InputEvent::PointerAxis { event } => {
                 self.input_seen();
                 let pointer = self.pointer.clone();
                 let factor = if own_settings { self.scroll_factor_of(&event.device().name()) } else { 1.0 };
                 let of = |a: Axis| (event.amount(a), event.amount_v120(a));
-                let frame = crate::input::axis_frame(event.time_msec(), event.source(), factor, of(Axis::Horizontal), of(Axis::Vertical));
+                let frame = crate::input::axis_frame(event.time(), event.source(), factor, of(Axis::Horizontal), of(Axis::Vertical));
                 pointer.axis(self, frame);
                 pointer.frame(self);
             }
@@ -2764,7 +2765,7 @@ impl App {
     }
 
     /// A key went down or up (an xkb key code: the kernel's code + 8). Shortcuts are taken here; the rest goes to the focus.
-    pub fn key(&mut self, code: smithay::input::keyboard::Keycode, state: KeyState, time: u32) {
+    pub fn key(&mut self, code: smithay::input::keyboard::Keycode, state: KeyState, time: InputTime) {
         self.input_seen();
         // a panel that went does not take this key (keyboard_check)
         self.keyboard_check();
@@ -2800,7 +2801,7 @@ impl App {
     }
 
     /// The pointer moved to `pos` (in the space's coordinates): input, so it shows again if it was resting.
-    pub fn pointer_to(&mut self, pos: Point<f64, Logical>, time: u32) {
+    pub fn pointer_to(&mut self, pos: Point<f64, Logical>, time: InputTime) {
         self.input_seen();
         self.cursor.last_motion = std::time::Instant::now();
         self.motion(pos, time);
@@ -2809,10 +2810,10 @@ impl App {
     /// The pointer put somewhere by the compositor (its screen went): not input, the idle time and a resting pointer stay.
     pub fn pointer_moved_to(&mut self, pos: Point<f64, Logical>) {
         self.wake();
-        self.motion(pos, crate::wmctl::now_ms());
+        self.motion(pos, InputTime::now());
     }
 
-    fn motion(&mut self, pos: Point<f64, Logical>, time: u32) {
+    fn motion(&mut self, pos: Point<f64, Logical>, time: InputTime) {
         let pointer = self.pointer.clone();
         let from = self.output_at(self.pointer_location);
         self.pointer_location = pos;
@@ -2851,7 +2852,7 @@ impl App {
     }
 
     /// A pointer button went down or up (a kernel button code: 0x110 is the left one).
-    pub fn button(&mut self, button: u32, state: ButtonState, time: u32) {
+    pub fn button(&mut self, button: u32, state: ButtonState, time: InputTime) {
         self.input_seen();
         if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
             eprintln!("button at {:?}, over {:?}", self.pointer_location, self.surface_under(self.pointer_location).map(|x| x.0.id()));
@@ -3433,7 +3434,7 @@ impl SessionLockHandler for App {
         let kb = self.keyboard.clone();
         kb.set_focus(self, None, SERIAL_COUNTER.next_serial());
         let (pointer, location) = (self.pointer.clone(), self.pointer_location);
-        pointer.motion(self, None, &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: 0 });
+        pointer.motion(self, None, &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: InputTime::now() });
     }
 
     fn unlock(&mut self) {

@@ -27,12 +27,12 @@ enum Hold {
 }
 
 impl App {
-    /// A mouse or touchpad moved by `delta` (libinput's, after its acceleration; `raw` before it), at `utime` microseconds: the
+    /// A mouse or touchpad moved by `delta` (libinput's, after its acceleration; `raw` before it), at `time`: the
     /// program under the pointer is told the relative motion, and the pointer moves unless a constraint holds it.
-    pub fn pointer_moved_by(&mut self, delta: Point<f64, Logical>, raw: Point<f64, Logical>, utime: u64) {
+    pub fn pointer_moved_by(&mut self, delta: Point<f64, Logical>, raw: Point<f64, Logical>, time: smithay::backend::input::InputTime) {
         let pointer = self.pointer.clone();
         let under = self.surface_under(self.pointer_location);
-        pointer.relative_motion(self, under.clone(), &RelativeMotionEvent { delta, delta_unaccel: raw, utime });
+        pointer.relative_motion(self, under.clone(), &RelativeMotionEvent { delta, delta_unaccel: raw, time });
         let to = self.pointer_location + delta;
         let to = self.nearest_on_screens(to).unwrap_or(to);
         match self.hold(&pointer, under.as_ref()) {
@@ -47,7 +47,7 @@ impl App {
             }
             _ => {}
         }
-        self.pointer_to(to, (utime / 1000) as u32);
+        self.pointer_to(to, time);
         self.constraint_check();
     }
 

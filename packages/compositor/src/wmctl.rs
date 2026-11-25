@@ -224,12 +224,12 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
             if app.focused_surface().and_then(|f| app.window_for(&f)).is_none() {
                 return Some(Err("no window has the keyboard".into()));
             }
-            let t = now_ms();
+            let t = smithay::backend::input::InputTime::now();
             for k in keys {
                 app.key((k + 8).into(), smithay::backend::input::KeyState::Pressed, t);
             }
             for k in keys.iter().rev() {
-                app.key((k + 8).into(), smithay::backend::input::KeyState::Released, t + 1);
+                app.key((k + 8).into(), smithay::backend::input::KeyState::Released, smithay::backend::input::InputTime::from_micros(t.micros() + 1000));
             }
             Ok(vec![])
         }
@@ -284,12 +284,6 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
 /// A name that may be kept as it is: letters, digits and `._-+`.
 fn plain(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || "._-+".contains(c))
-}
-
-/// Milliseconds on a clock of this process (the time stamp of the keys `paste` presses).
-pub fn now_ms() -> u32 {
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u32
 }
 
 /// The process of a window (its client's, or the X11 window's _NET_WM_PID); 0 when not known.

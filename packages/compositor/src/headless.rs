@@ -537,11 +537,6 @@ impl Headless {
         Some((covered, (buffer, s.output.name())))
     }
 
-    /// Milliseconds since the start (the time stamp of input made here).
-    fn ms(&self) -> u32 {
-        self.start.elapsed().as_millis() as u32
-    }
-
     fn screen(&self, name: &str) -> Option<&Screen> {
         self.screens.iter().find(|s| s.output.name() == name)
     }
@@ -685,9 +680,9 @@ fn touch_command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Resu
         [w @ ("touch-down" | "touch-move"), id, x, y] => match (slot(id), at(app, x, y)) {
             (Some(s), Some(p)) => {
                 if *w == "touch-down" {
-                    app.touch_down(s, p, h.ms());
+                    app.touch_down(s, p, smithay::backend::input::InputTime::now());
                 } else {
-                    app.touch_motion(s, p, h.ms());
+                    app.touch_motion(s, p, smithay::backend::input::InputTime::now());
                 }
                 app.touch_frame();
                 Ok(vec![])
@@ -696,7 +691,7 @@ fn touch_command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Resu
         },
         ["touch-up", id] => match slot(id) {
             Some(s) => {
-                app.touch_up(s, h.ms());
+                app.touch_up(s, smithay::backend::input::InputTime::now());
                 app.touch_frame();
                 Ok(vec![])
             }
@@ -822,7 +817,7 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
         }
         ["pointer", x, y] => {
             let (x, y) = (x.parse::<f64>().map_err(|_| "pointer X Y: numbers")?, y.parse::<f64>().map_err(|_| "pointer X Y: numbers")?);
-            let t = h.ms();
+            let t = smithay::backend::input::InputTime::now();
             app.pointer_to((x, y).into(), t);
             Ok(vec![])
         }
@@ -840,7 +835,7 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             } else {
                 smithay::backend::input::ButtonState::Released
             };
-            app.button(button, state, h.ms());
+            app.button(button, state, smithay::backend::input::InputTime::now());
             Ok(vec![])
         }
         ["click", rest @ ..] if rest.len() <= 1 => {
@@ -852,9 +847,9 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             };
             // a press of the virtual mouse's button: left-handed, its left one is the right button
             let button = crate::input::button(&crate::input::mouse(&app.input, crate::input::HEADLESS_MOUSE), button);
-            let t = h.ms();
+            let t = smithay::backend::input::InputTime::now();
             app.button(button, smithay::backend::input::ButtonState::Pressed, t);
-            app.button(button, smithay::backend::input::ButtonState::Released, t + 1);
+            app.button(button, smithay::backend::input::ButtonState::Released, smithay::backend::input::InputTime::from_micros(t.micros() + 1000));
             Ok(vec![])
         }
         ["pointer-move", dx, dy] => {
@@ -863,7 +858,7 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             let raw = (num(dx)?, num(dy)?);
             let (mx, my) = crate::input::motion(&m, raw);
             // as a mouse's motion: told to a game as relative motion, held by its pointer lock (constraints.rs)
-            let t = h.ms() as u64 * 1000;
+            let t = smithay::backend::input::InputTime::now();
             app.pointer_moved_by((mx, my).into(), raw.into(), t);
             Ok(vec![])
         }
@@ -873,7 +868,7 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             let m = crate::input::mouse(&app.input, crate::input::HEADLESS_MOUSE);
             let (vy, vx) =
                 (crate::input::scroll(&m, num(dy)?), crate::input::scroll(&m, rest.first().map(|v| num(v)).transpose()?.unwrap_or(0.0)));
-            let t = h.ms();
+            let t = smithay::backend::input::InputTime::now();
             app.wake();
             let pointer = app.pointer.clone();
             let mut frame = smithay::input::pointer::AxisFrame::new(t).source(AxisSource::Wheel);
@@ -1005,7 +1000,7 @@ fn combo(s: &str) -> Option<Vec<u32>> {
 fn press(app: &mut App, h: &Headless, code: u32, down: bool) {
     use smithay::backend::input::KeyState;
     let state = if down { KeyState::Pressed } else { KeyState::Released };
-    app.key((code + 8).into(), state, h.ms());
+    app.key((code + 8).into(), state, smithay::backend::input::InputTime::now());
 }
 
 #[cfg(test)]
