@@ -128,7 +128,8 @@ const FT_PIXEL_MODE_GRAY: u8 = 2;
 
 type Face = *mut FaceRec;
 
-/// The FreeType library handle is used by one thread only (ygg-cursors draws in one), and never freed.
+/// The FreeType library handle is used by the main thread only (main.rs draws the shape with text there; draw_text_mm
+/// checks it), and never freed.
 struct Library(*mut c_void);
 unsafe impl Send for Library {}
 unsafe impl Sync for Library {}
@@ -322,8 +323,8 @@ fn search_font_dirs(path: &str) -> Option<std::path::PathBuf> {
 }
 
 /// What fc-match names for sans-serif:bold, asked once a run (the script asked again for each of the five sizes and was
-/// given the same answer each time)
-fn fc_match() -> Option<&'static str> {
+/// given the same answer each time); ygg-cursors asks it on a thread of its own while the other shapes are drawn
+pub fn fc_match() -> Option<&'static str> {
     static NAMED: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     NAMED
         .get_or_init(|| {
@@ -413,6 +414,7 @@ fn layout(font: &Font, text: &str) -> Vec<Glyph> {
 /// keep the code right where they are not)
 #[allow(clippy::unnecessary_cast)]
 pub fn draw_text_mm(im: &mut Img, xy: (f64, f64), text: &str, px: f64, ink: &Ink) {
+    assert_eq!(std::thread::current().name(), Some("main"), "FreeType is used on the main thread only");
     let Some(font) = cursor_font(px) else {
         // no FreeType at all: Pillow could not have drawn it either (it needs FreeType for ImageDraw.text)
         return;

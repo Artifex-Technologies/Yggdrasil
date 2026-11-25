@@ -87,9 +87,17 @@ struct Canvas {
 
 type Pt = (f64, f64);
 
+thread_local! {
+    /// This thread's canvas pixels, kept from one drawing to the next and cleared, rather than made again with new pages
+    static PIXELS: std::cell::Cell<Vec<u8>> = const { std::cell::Cell::new(Vec::new()) };
+}
+
 impl Canvas {
     fn new(size: i32) -> Canvas {
-        Canvas { size, k: size as f64 / 32.0 * SS as f64, img: Img::new(size * SS, size * SS, 4, [0, 0, 0, 0]) }
+        let mut px = PIXELS.take();
+        px.clear();
+        px.resize((size * SS * size * SS * 4) as usize, 0);
+        Canvas { size, k: size as f64 / 32.0 * SS as f64, img: Img { w: size * SS, h: size * SS, ps: 4, px } }
     }
 
     fn p(&self, pts: &[Pt]) -> Vec<Pt> {
@@ -161,7 +169,9 @@ impl Canvas {
     }
 
     fn done(self) -> Img {
-        resample::resize_lanczos(&self.img, self.size, self.size)
+        let small = resample::resize_lanczos(&self.img, self.size, self.size);
+        PIXELS.set(self.img.px);
+        small
     }
 }
 
@@ -468,6 +478,119 @@ pub fn render(shape: &str, size: i32, frame: i32) -> R<Frame> {
 /// One frame: the picture and its hotspot
 pub type Frame = (Img, (u32, u32));
 
+/// The shape with text (the help cursor's "?", drawn with FreeType): drawn on the main thread, as FreeType is not for
+/// several threads at once (draw_all)
+const TEXT_SHAPE: &str = "help";
+
+/// Most threads that draw: each has its own 8x canvas (2.4 MB at 96 px) and its rows, and more than this saves little
+/// time (docs/PORT_NUMBERS.md)
+const MAX_THREADS: usize = 4;
+
+/// The threads that draw: the CPUs this process may use, at most the jobs the build allows (make's -jN or --jobs=N in
+/// MAKEFLAGS, as makepkg passes it, and CARGO_BUILD_JOBS) and at most MAX_THREADS; 1 draws everything on the main thread.
+fn threads() -> usize {
+    let mut n = std::thread::available_parallelism().map_or(1, |n| n.get()).min(MAX_THREADS);
+    if let Some(j) = std::env::var("MAKEFLAGS").ok().and_then(|f| make_jobs(&f)) {
+        n = n.min(j);
+    }
+    if let Some(j) = std::env::var("CARGO_BUILD_JOBS").ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|&j| j > 0) {
+        n = n.min(j);
+    }
+    n
+}
+
+/// The number of jobs in make's flags: -jN, -j N, --jobs=N or --jobs N (none for a -j without a number: no limit)
+fn make_jobs(flags: &str) -> Option<usize> {
+    let words: Vec<&str> = flags.split_whitespace().collect();
+    words.iter().enumerate().find_map(|(i, w)| {
+        let n = match (w.strip_prefix("--jobs="), w.strip_prefix("-j")) {
+            (Some(n), _) => n,
+            (None, Some("")) => words.get(i + 1)?,
+            (None, Some(n)) => n,
+            _ if *w == "--jobs" => words.get(i + 1)?,
+            _ => return None,
+        };
+        n.parse::<usize>().ok().filter(|&n| n > 0)
+    })
+}
+
+/// One frame of a shape in the five sizes
+fn draw_unit(shape: &str, frame: i32) -> Vec<R<Frame>> {
+    SIZES.into_iter().map(|size| render(shape, size, frame)).collect()
+}
+
+/// Every frame of every shape in the five sizes, drawn on `threads` threads, this one among them: each takes the next
+/// frame not yet taken (SHAPES' order, frame by frame), and this one draws the shape with text when the others are done,
+/// so FreeType's libraries (4 MB) are loaded while no other canvas is (fc-match, which names the font, runs meanwhile).
+/// Each shape's frames go to `done` on this thread, in SHAPES' order, as soon as they and those of the shapes before are
+/// drawn, so only the frames drawn ahead are kept.
+fn draw_all(threads: usize, mut done: impl FnMut(usize, Vec<Vec<R<Frame>>>)) {
+    if threads <= 1 {
+        for (k, &(shape, frames, _)) in SHAPES.iter().enumerate() {
+            done(k, (0..frames).map(|f| draw_unit(shape, f)).collect());
+        }
+        drop(PIXELS.take());
+        return;
+    }
+    let units: Vec<(&str, i32)> = SHAPES.iter().flat_map(|&(shape, frames, _)| (0..frames).map(move |f| (shape, f))).collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let take = || loop {
+        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        match units.get(i) {
+            Some(&(shape, _)) if shape == TEXT_SHAPE => continue,
+            Some(&(shape, f)) => return Some((i, draw_unit(shape, f))),
+            None => return None,
+        }
+    };
+    // the frames drawn and not yet given, and the next shape to give and its first frame
+    let mut drawn: Vec<Option<Vec<R<Frame>>>> = units.iter().map(|_| None).collect();
+    let (mut k, mut first) = (0, 0);
+    let mut give = |drawn: &mut Vec<Option<Vec<R<Frame>>>>| {
+        while let Some(&(_, frames, _)) = SHAPES.get(k) {
+            let these = first..first + frames as usize;
+            if drawn[these.clone()].iter().any(Option::is_none) {
+                break;
+            }
+            done(k, drawn[these].iter_mut().map(|d| d.take().expect("drawn")).collect());
+            (k, first) = (k + 1, first + frames as usize);
+        }
+    };
+    std::thread::scope(|sc| {
+        sc.spawn(text::fc_match);
+        let (tx, rx) = std::sync::mpsc::channel();
+        for _ in 1..threads {
+            let tx = tx.clone();
+            sc.spawn(|| {
+                for d in std::iter::from_fn(&take) {
+                    if tx.send(d).is_err() {
+                        break;
+                    }
+                }
+                // its canvas goes before this thread is counted as done
+                drop(PIXELS.take());
+                drop(tx);
+            });
+        }
+        drop(tx);
+        while let Some((i, d)) = take() {
+            drawn[i] = Some(d);
+            for (i, d) in rx.try_iter() {
+                drawn[i] = Some(d);
+            }
+            give(&mut drawn);
+        }
+        for (i, d) in rx {
+            drawn[i] = Some(d);
+            give(&mut drawn);
+        }
+        for (i, &(shape, f)) in units.iter().enumerate().filter(|(_, u)| u.0 == TEXT_SHAPE) {
+            drawn[i] = Some(draw_unit(shape, f));
+        }
+        give(&mut drawn);
+    });
+    drop(PIXELS.take());
+}
+
 /// The X cursor file: header, table of contents, one image chunk per picture (premultiplied ARGB, little endian).
 pub fn xcursor(frames_by_size: &[(i32, Vec<Frame>)], delay: u32) -> Vec<u8> {
     let mut chunks: Vec<(u32, Vec<u8>)> = vec![];
@@ -529,15 +652,15 @@ fn run(argv0: &str, args: &[String]) -> i32 {
         fail(format!("{}: {e}", cur.display()));
     }
     let mut sheet: Vec<Img> = vec![];
-    for (shape, frames, names) in SHAPES {
-        let mut by_size = vec![];
-        for size in SIZES {
-            let mut fr = vec![];
-            for f in 0..frames {
-                fr.push(render(shape, size, f).unwrap_or_else(|e| fail(e.0)));
-            }
-            by_size.push((size, fr));
-        }
+    draw_all(threads(), |k, units| {
+        // the frames in the order the script drew them, size by size and frame by frame, so a failure is the first one it
+        // met; the files are written in its order too
+        let (_, frames, names) = SHAPES[k];
+        let mut units: Vec<_> = units.into_iter().map(Vec::into_iter).collect();
+        let mut by_size: Vec<(i32, Vec<Frame>)> = SIZES
+            .into_iter()
+            .map(|size| (size, units.iter_mut().map(|u| u.next().expect("a frame in every size").unwrap_or_else(|e| fail(e.0))).collect()))
+            .collect();
         let data = xcursor(&by_size, if frames > 1 { 80 } else { 0 });
         let main_name = names[0];
         let path = cur.join(main_name);
@@ -556,7 +679,7 @@ fn run(argv0: &str, args: &[String]) -> i32 {
             }
         }
         sheet.push(by_size.swap_remove(2).1.swap_remove(0).0);
-    }
+    });
     let index = out.join("index.theme");
     if let Err(e) =
         std::fs::write(&index, "[Icon Theme]\nName=Yggdrasil\nComment=Yggdrasil's mouse cursors: white shapes with a dark purple outline\n")
@@ -585,6 +708,26 @@ fn run(argv0: &str, args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The jobs a build allows, as make writes them in MAKEFLAGS
+    #[test]
+    fn make_flags_give_the_number_of_jobs() {
+        for (flags, jobs) in [
+            ("-j1", Some(1)),
+            ("-j16", Some(16)),
+            (" -j4 --jobserver-auth=fifo:/tmp/x", Some(4)),
+            ("-j 3", Some(3)),
+            ("--jobs=2", Some(2)),
+            ("--jobs 5", Some(5)),
+            ("-j", None),
+            ("-j --jobserver-auth=3,4", None),
+            ("-k -s", None),
+            ("", None),
+            ("-j0", None),
+        ] {
+            assert_eq!(make_jobs(flags), jobs, "{flags:?}");
+        }
+    }
 
     /// The ring's hole: a paste of transparent through a mask of 0 and 255 is the same as drawing the 255s in transparent
     #[test]
