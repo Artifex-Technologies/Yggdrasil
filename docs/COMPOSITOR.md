@@ -396,7 +396,11 @@ does; while an X11 program drags, the window manager covers the screen with a wi
 for the Wayland windows, and steps aside over X11 windows, so two X11 programs still speak XDND to each other. An X11
 program's drag icon under the pointer is passed over while a button is held (only then can a drag go on, so X11 menus take
 the pointer again after a drag was given up), and XWayland going away in the middle of a drag ends only its own part: a
-Wayland program's drag goes on to the Wayland windows (`tests/dnd.rs`).
+Wayland program's drag goes on to the Wayland windows (`tests/dnd.rs`). Known limitations with the pinned Smithay fork (the
+ignored tests in `tests/dnd.rs` show them): an X11 program that takes XdndSelection while the left button is held for
+anything (a Wayland program's drag, a move) turns that into its own drag; an X11 drop target that ends before XdndFinished
+leaves the dragging program waiting and stops later X11 drags; and an X11 program's next drag after one it gave up is not
+seen.
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton
