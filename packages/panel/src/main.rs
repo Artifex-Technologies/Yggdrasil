@@ -703,11 +703,12 @@ fn config_watch() -> std::io::Result<std::os::fd::OwnedFd> {
     watch_dir(&dir)
 }
 
-/// /dev/input: a mouse plugged in or out, or made readable to this user (udev sets its permissions just after the node appears).
+/// /dev/input (zones::input_dir): a mouse plugged in or out, or made readable to this user (udev sets its permissions just after
+/// the node appears).
 fn input_watch() -> std::io::Result<std::os::fd::OwnedFd> {
     use rustix::fs::inotify::{self, CreateFlags, WatchFlags};
     let fd = inotify::init(CreateFlags::CLOEXEC | CreateFlags::NONBLOCK)?;
-    inotify::add_watch(&fd, "/dev/input", WatchFlags::CREATE | WatchFlags::DELETE | WatchFlags::ATTRIB | WatchFlags::ONLYDIR)?;
+    inotify::add_watch(&fd, zones::input_dir(), WatchFlags::CREATE | WatchFlags::DELETE | WatchFlags::ATTRIB | WatchFlags::ONLYDIR)?;
     Ok(fd)
 }
 

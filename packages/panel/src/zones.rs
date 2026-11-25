@@ -145,12 +145,18 @@ fn bit(buf: &[u8], n: usize) -> bool {
     buf.get(n / 8).is_some_and(|b| b & (1 << (n % 8)) != 0)
 }
 
+/// The folder of input devices: /dev/input, or the one `YGGDRASIL_PANEL_INPUT` names (the tests' own, empty: a panel under test
+/// never reads the computer's mice).
+pub fn input_dir() -> std::path::PathBuf {
+    std::env::var_os("YGGDRASIL_PANEL_INPUT").map(std::path::PathBuf::from).unwrap_or_else(|| "/dev/input".into())
+}
+
 impl Buttons {
     /// The readable devices that have a left button and are not keyboards (a mouse's macro-key half shows up as a keyboard).
     pub fn open() -> Buttons {
         use std::os::fd::AsRawFd;
         let mut devices = vec![];
-        let Ok(rd) = std::fs::read_dir("/dev/input") else { return Buttons { devices } };
+        let Ok(rd) = std::fs::read_dir(input_dir()) else { return Buttons { devices } };
         for e in rd.flatten() {
             if !e.file_name().to_string_lossy().starts_with("event") {
                 continue;
