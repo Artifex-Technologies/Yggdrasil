@@ -321,22 +321,32 @@ fn search_font_dirs(path: &str) -> Option<std::path::PathBuf> {
     found.or(first_other)
 }
 
+/// What fc-match names for sans-serif:bold, asked once a run (the script asked again for each of the five sizes and was
+/// given the same answer each time)
+fn fc_match() -> Option<&'static str> {
+    static NAMED: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    NAMED
+        .get_or_init(|| {
+            std::process::Command::new("fc-match")
+                .args(["sans-serif:bold", "-f", "%{file}"])
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| pycompat::strip(&s).to_string())
+        })
+        .as_deref()
+}
+
 /// font(px) in ygg-cursors: what fc-match names for sans-serif:bold, else Pillow's default font.
 fn cursor_font(px: f64) -> Option<Font> {
-    let named = std::process::Command::new("fc-match")
-        .args(["sans-serif:bold", "-f", "%{file}"])
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| pycompat::strip(&s).to_string());
-    if let Some(path) = named {
+    if let Some(path) = fc_match() {
         let size = px as i32 as f32;
         match open_font(Some(path.as_bytes()), size, true) {
             Some(f) => return Some(f),
             None => {
-                if let Some(f) = search_font_dirs(&path).and_then(|p| open_font(Some(p.as_os_str().as_encoded_bytes()), size, true)) {
+                if let Some(f) = search_font_dirs(path).and_then(|p| open_font(Some(p.as_os_str().as_encoded_bytes()), size, true)) {
                     return Some(f);
                 }
             }
