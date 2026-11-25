@@ -48,6 +48,8 @@ type Shape = (String, u32, CursorIcon);
 /// loaded from that theme so far.
 pub struct Pointer {
     pub status: CursorImageStatus,
+    /// The look is the compositor's resize arrows (over a grip, or a window being resized), not a program's.
+    pub resize_look: bool,
     pub last_motion: Instant,
     pub configured: (String, u32),
     cache: Vec<(Shape, Option<Arc<Picture>>)>,
@@ -55,7 +57,13 @@ pub struct Pointer {
 
 impl Default for Pointer {
     fn default() -> Pointer {
-        Pointer { status: CursorImageStatus::default_named(), last_motion: Instant::now(), configured: configured(), cache: vec![] }
+        Pointer {
+            status: CursorImageStatus::default_named(),
+            resize_look: false,
+            last_motion: Instant::now(),
+            configured: configured(),
+            cache: vec![],
+        }
     }
 }
 

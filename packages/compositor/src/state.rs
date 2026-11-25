@@ -1132,17 +1132,16 @@ impl App {
 
     /// Floating windows on the workspace now showing (not tiled, maximized, full screen or snapped), bottom first.
     fn floating_shown(&self) -> Vec<Window> {
+        self.space.elements().filter(|w| self.free_floating(w)).cloned().collect()
+    }
+
+    /// Is this window floating free: not tiled, maximized, full screen or snapped to a side?
+    pub(crate) fn free_floating(&self, w: &Window) -> bool {
         use xdg_toplevel::State as S;
-        self.space
-            .elements()
-            .filter(|w| {
-                let Some(s) = surface_of(w) else { return false };
-                !self.is_tiled(w, &s)
-                    && !self.x11_snapped.contains(&s)
-                    && ![S::Maximized, S::Fullscreen, S::TiledLeft, S::TiledRight].into_iter().any(|st| win_has(w, st))
-            })
-            .cloned()
-            .collect()
+        let Some(s) = surface_of(w) else { return false };
+        !self.is_tiled(w, &s)
+            && !self.x11_snapped.contains(&s)
+            && ![S::Maximized, S::Fullscreen, S::TiledLeft, S::TiledRight].into_iter().any(|st| win_has(w, st))
     }
 
     /// Put a window at `r`, asking it for the new size when that differs.
@@ -2366,6 +2365,28 @@ impl App {
         self.give_keyboard(next, SERIAL_COUNTER.next_serial());
     }
 
+    /// The pointer's look for resizing at `pos`: the arrows of the edge a window is being resized by (the compositor's resize,
+    /// whoever started it), else of the resize grip under the pointer while nothing holds the pointer. Not called from inside a
+    /// grab (Smithay holds the grab's lock while one runs).
+    fn resize_look(&self, pos: Point<f64, Logical>) -> Option<smithay::input::pointer::CursorIcon> {
+        use smithay::input::pointer::CursorIcon as C;
+        let edges = match self.pointer.with_grab(|_, g| g.downcast_ref::<ByButton<Resize>>().map(|r| r.what.edges)) {
+            Some(resizing) => resizing,
+            None => self.edge_at(pos).map(|(_, e)| e),
+        }?;
+        Some(match edges {
+            ResizeEdge::Top => C::NResize,
+            ResizeEdge::Bottom => C::SResize,
+            ResizeEdge::Left => C::WResize,
+            ResizeEdge::Right => C::EResize,
+            ResizeEdge::TopLeft => C::NwResize,
+            ResizeEdge::TopRight => C::NeResize,
+            ResizeEdge::BottomLeft => C::SwResize,
+            ResizeEdge::BottomRight => C::SeResize,
+            _ => return None,
+        })
+    }
+
     fn bar_visible(&self, w: &Window) -> bool {
         let Some(s) = w.wl_surface() else { return false };
         self.decorated.contains(&s) && !win_has(w, xdg_toplevel::State::Fullscreen)
@@ -3132,14 +3153,24 @@ impl App {
             self.bar_hover = hover;
         }
         let under = self.target_under(pos);
-        if under.is_none()
-            && self.pointer_drag.is_none()
-            && !matches!(self.cursor.status, CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Default))
-        {
-            // over no program (the background, the compositor's own title bars): the default arrow
-            self.cursor.status = CursorImageStatus::default_named();
-        }
+        let on_program = under.is_some();
         pointer.motion(self, under, &MotionEvent { location: pos, serial, time });
+        // after the motion, as Smithay gives the pointer the default look when it leaves a program
+        if self.pointer_drag.is_none() {
+            // a window being resized, or one of the compositor's resize grips: the arrows for that edge; over no program (the
+            // background, the compositor's own title bars): the default arrow
+            let resize = self.resize_look(pos);
+            let look = match resize {
+                Some(icon) => Some(icon),
+                // and off a grip onto a program: the arrow until it sets its own (it hears the pointer came in only after this)
+                None if !on_program || self.cursor.resize_look => Some(smithay::input::pointer::CursorIcon::Default),
+                None => None,
+            };
+            self.cursor.resize_look = resize.is_some();
+            if let Some(icon) = look.filter(|i| !matches!(self.cursor.status, CursorImageStatus::Named(n) if n == *i)) {
+                self.cursor.status = CursorImageStatus::Named(icon);
+            }
+        }
         pointer.frame(self);
     }
 
@@ -3501,6 +3532,7 @@ impl SeatHandler for App {
             return;
         }
         self.cursor.status = image.clone();
+        self.cursor.resize_look = false;
         self.wake();
         if let Some(f) = self.cursor_hook.as_mut() {
             f(&image);

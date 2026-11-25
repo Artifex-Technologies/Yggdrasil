@@ -96,6 +96,47 @@ fn a_window_moves_and_resizes_only_with_a_press_on_its_own_program() {
     comp.must("release");
 }
 
+/// A program that draws its own frame without a shadow to resize by (Chromium and Electron programs: their own edge is a few
+/// pixels inside the window) gets the compositor's grips just outside its floating window, as a decorated window has: the
+/// pointer there shows the arrows for that edge and is not on the program, and dragging the grip resizes the window, the arrows
+/// staying meanwhile. Back on the window the pointer is the arrow until the program sets its own.
+#[test]
+fn a_window_drawing_its_own_frame_has_resize_grips_outside_it() {
+    let _l = limit(60, "grips around a window with its own frame");
+    let comp = Compositor::start(&["--size", "1000x600"]);
+    let mut a = comp.connect();
+    let (_ak, _ap) = a.input();
+    let aw = a.window("test.a", "A");
+    a.draw(&aw, (300, 200), BLUE);
+    comp.must(&format!("place {} 100 100 300 200", id_of(&comp, "test.a")));
+    a.roundtrip();
+    assert_eq!(comp.window("test.a").unwrap().rect(), (100, 100, 300, 200));
+    let look = |comp: &Compositor| comp.must("pointer-look")[0].rsplit('\t').next().unwrap().to_string();
+    comp.must("pointer 250 200");
+    a.until("the pointer on the window", |st| st.pointer_on == Some(aw.surface.id()));
+    assert_eq!(look(&comp), "default", "the program set no look of its own");
+    // 3 pixels right of it, past its top left corner and below it: its grips
+    for (p, shape) in [((403, 200), "e-resize"), ((97, 97), "nw-resize"), ((250, 303), "s-resize")] {
+        comp.must(&format!("pointer {} {}", p.0, p.1));
+        assert_eq!(look(&comp), shape, "the arrows at {p:?}: {:?}", comp.must("windows"));
+    }
+    a.until("the pointer off the window", |st| st.pointer_on.is_none());
+    // 7 pixels out: past the grips (6 pixels wide), the background's arrow
+    comp.must("pointer 407 200");
+    assert_eq!(look(&comp), "default", "no grip 7 pixels out");
+    // the right grip dragged 30 pixels further right: the window is asked to be 30 pixels wider
+    comp.must("pointer 403 200");
+    comp.must("press");
+    comp.must("pointer 433 200");
+    assert_eq!(look(&comp), "e-resize", "the arrows while the window is resized");
+    a.until("A asked to be 330 pixels wide", |st| st.wins[aw.index].size == (330, 200));
+    comp.must("release");
+    assert_eq!(a.state.pointer_on, None, "the program never had the pointer");
+    comp.must("pointer 250 200");
+    a.until("the pointer on the window again", |st| st.pointer_on == Some(aw.surface.id()));
+    assert_eq!(look(&comp), "default", "back on the program: the arrow");
+}
+
 /// A finger (slot 1) put down on a program's window at `at`: the serial of that finger down, as the program is told it.
 fn touch_on(comp: &Compositor, c: &mut Client, at: (i32, i32)) -> u32 {
     c.state.touch_serial = 0;
