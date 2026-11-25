@@ -479,15 +479,17 @@ drop on them does nothing (`tests/dnd.rs`). Known limitation: during an accepted
 (at most the 10 s), any X11 program that asks is given the data too, since X11 cannot tell it from the target.
 
 **Our Smithay fork** (github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit in
-packages/compositor/Cargo.toml): since 2026-11-24, Smithay's main branch (54cf9c10) with nine commits of ours, each for
-something the compositor's own code cannot do well, and a tenth that only formats a line. They bind the X11 sockets apart from
+packages/compositor/Cargo.toml): since 2026-11-24, Smithay's main branch (54cf9c10) with ten commits of ours, each for
+something the compositor's own code cannot do well, and an eleventh that only formats a line. They bind the X11 sockets apart from
 starting XWayland (XWayland on the first X11 program, above); fix two X11 window manager bugs (close, and the events dropped
 after setting the primary screen: "Tried by hand", above); clamp a layer surface's size at i32::MAX and `_GTK_FRAME_EXTENTS`
 at what an X window can hold (a program's huge values ended a debug build: a negative size, an overflow in
 `X11Surface::geometry`; `tests/hostile.rs`, `tests/x11.rs`); fix the three drag and drop bugs above; end the window
 manager's transfers, and a drop not finished yet, when XWayland's X connection closes; cancel a drop an X11 program has not
 finished 10 s after it; pass a finger's lift on to XWayland during an X11 program's drag; and give a Wayland program's drag's
-data to X11 programs only from a drop an X11 window accepted until the drop ends (all above; `tests/dnd.rs`). The rest of
+data to X11 programs only from a drop an X11 window accepted until the drop ends; and cancel, for the dragging program, a
+drop an X11 program says it did not take (XDND 5's XdndFinished with its accept bit clear: told finished, a program moving
+its data would delete it though it arrived nowhere; all above; `tests/dnd.rs`). The rest of
 what our fork of Smithay 0.7 carried is Smithay main's own: a new X11 window's first place and size at fractional scales; the
 session lock's checks (a program refused as a second locker can neither unlock the session nor show its lock screen in place
 of the real one, which would get the password; the compositor keeps its own check of which lock's surfaces it shows:
