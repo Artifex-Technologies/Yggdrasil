@@ -194,6 +194,27 @@ pub struct ButtonEvents {
 const EV_SYN: u16 = 0;
 const EV_KEY: u16 = 1;
 const SYN_DROPPED: u16 = 3;
+/// How many event types and key codes there are (linux/input-event-codes.h: EV_CNT, KEY_CNT).
+const EV_CNT: usize = 0x20;
+const KEY_CNT: usize = 0x300;
+const LONG_BITS: usize = libc::c_ulong::BITS as usize;
+type TypeMask = [libc::c_ulong; EV_CNT.div_ceil(LONG_BITS)];
+type KeyMask = [libc::c_ulong; KEY_CNT.div_ceil(LONG_BITS)];
+
+/// A bitmap as EVIOCSMASK reads it: in whole longs. The kernel refuses any other size (EINVAL): a mask of the event types in 4
+/// bytes was refused, and every motion and wheel turn of a mouse still woke the panel.
+fn longs<const N: usize>(bits: &[usize]) -> [libc::c_ulong; N] {
+    let mut m = [0; N];
+    for &b in bits {
+        m[b / LONG_BITS] |= 1 << (b % LONG_BITS);
+    }
+    m
+}
+
+/// The masks for the left button alone: of the event types, keys and buttons; of those, BTN_LEFT.
+fn left_button_masks() -> (TypeMask, KeyMask) {
+    (longs(&[EV_KEY as usize]), longs(&[BTN_LEFT]))
+}
 
 /// EVIOCSMASK's argument (linux/input.h, struct input_mask).
 #[repr(C)]
@@ -211,12 +232,9 @@ fn ioc_write(nr: u64, len: usize) -> u64 {
 /// not delivered, so a motion wakes no one. A device that does not take masks (an old kernel) still works, it just wakes more.
 fn left_button_only(f: &std::fs::File) {
     use std::os::fd::AsRawFd;
-    let mut types = [0u8; 4]; // EV_CNT bits
-    types[(EV_KEY / 8) as usize] |= 1 << (EV_KEY % 8);
-    let mut keys = [0u8; 96]; // KEY_CNT bits
-    keys[BTN_LEFT / 8] |= 1 << (BTN_LEFT % 8);
+    let (types, keys) = left_button_masks();
     for (kind, codes) in [(EV_SYN as u32, &types[..]), (EV_KEY as u32, &keys[..])] {
-        let m = InputMask { kind, codes_size: codes.len() as u32, codes_ptr: codes.as_ptr() as u64 };
+        let m = InputMask { kind, codes_size: std::mem::size_of_val(codes) as u32, codes_ptr: codes.as_ptr() as u64 };
         // SAFETY: EVIOCSMASK reads the struct and `codes_size` bytes at `codes_ptr`, both alive for the call
         unsafe { libc::ioctl(f.as_raw_fd(), ioc_write(0x93, std::mem::size_of::<InputMask>()) as _, &m) };
     }
@@ -696,5 +714,20 @@ mod button_tests {
         let mut b = [0u8; 96];
         b[BTN_LEFT / 8] = 1 << (BTN_LEFT % 8);
         assert!(bit(&b, BTN_LEFT) && !bit(&b, KEY_A));
+    }
+
+    /// EVIOCSMASK takes whole longs only: the kernel refused the 4-byte mask of event types (EINVAL), so motion and the wheel
+    /// still woke the panel. The masks hold the left button and nothing else.
+    #[test]
+    fn the_masks_are_whole_longs_with_the_left_button_alone() {
+        assert_eq!(ioc_write(0x93, std::mem::size_of::<InputMask>()), 0x40104593);
+        let (types, keys) = left_button_masks();
+        let long = std::mem::size_of::<libc::c_ulong>();
+        assert!(std::mem::size_of_val(&types) % long == 0 && std::mem::size_of_val(&types) * 8 >= EV_CNT);
+        assert!(std::mem::size_of_val(&keys) % long == 0 && std::mem::size_of_val(&keys) * 8 >= KEY_CNT);
+        let set =
+            |m: &[libc::c_ulong]| (0..m.len() * LONG_BITS).filter(|&b| m[b / LONG_BITS] >> (b % LONG_BITS) & 1 == 1).collect::<Vec<_>>();
+        assert_eq!(set(&types), [EV_KEY as usize]);
+        assert_eq!(set(&keys), [BTN_LEFT]);
     }
 }
