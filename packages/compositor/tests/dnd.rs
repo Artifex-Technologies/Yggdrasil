@@ -7,14 +7,15 @@
 //! both ways. A Wayland program's drag over an X11 window is told to that window (XdndEnter, XdndPosition, XdndDrop), which
 //! asks for the data through XdndSelection. While an X11 program drags, the window manager stands in for the Wayland windows
 //! with a window of its own over the whole screen that takes XDND. XWayland can go away in the middle of a drag (it crashed):
-//! its windows go, and the compositor and a Wayland program's drag go on. The X11 tests are skipped where XWayland is not
-//! installed.
+//! its windows go, and the compositor and a Wayland program's drag go on. It can also go away in the middle of a transfer, a
+//! drop's or the clipboard's (a paste goes through a pipe the window manager hands over, as a drop does): the transfer ends
+//! with it, and the compositor goes on. The X11 tests are skipped where XWayland is not installed.
 
 mod common;
 
 use std::cell::RefCell;
-use std::io::{Read, Write};
-use std::os::fd::AsFd;
+use std::io::{ErrorKind, Read, Write};
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::time::{Duration, Instant};
 
 use common::*;
@@ -45,11 +46,16 @@ struct Log {
     entered: Option<(u32, WlDataOffer)>,
     mimes: Vec<String>,
     dropped: bool,
+    /// the receiver: the clipboard it was offered
+    clipboard: Option<WlDataOffer>,
     /// the dragging program: the action the receiver chose, data asked for, the drop finished
     action: Option<DndAction>,
     sent: usize,
     finished: bool,
     cancelled: bool,
+    /// the dragging (or copying) program is a slow one (`hold`): asked for its data, it keeps the pipe for later (`held`)
+    hold: bool,
+    held: Option<OwnedFd>,
 }
 
 thread_local! {
@@ -70,6 +76,7 @@ impl Dispatch<WlDataDevice, Receiver> for State {
         match event {
             wl_data_device::Event::Enter { serial, id: Some(offer), .. } => log(|l| l.entered = Some((serial, offer))),
             wl_data_device::Event::Drop => log(|l| l.dropped = true),
+            wl_data_device::Event::Selection { id } => log(|l| l.clipboard = id),
             _ => {}
         }
     }
@@ -91,12 +98,16 @@ impl Dispatch<WlDataSource, Dragged> for State {
     fn event(_: &mut Self, _: &WlDataSource, event: wl_data_source::Event, _: &Dragged, _: &Connection, _: &QueueHandle<Self>) {
         match event {
             wl_data_source::Event::Send { mime_type, fd } => {
-                let what = match mime_type.as_str() {
-                    MIME => WORDS,
-                    URI_MIME => URI,
-                    _ => &[],
-                };
-                let _ = std::fs::File::from(fd).write_all(what);
+                if log(|l| l.hold) {
+                    log(|l| l.held = Some(fd));
+                } else {
+                    let what = match mime_type.as_str() {
+                        MIME => WORDS,
+                        URI_MIME => URI,
+                        _ => &[],
+                    };
+                    let _ = std::fs::File::from(fd).write_all(what);
+                }
                 log(|l| l.sent += 1);
             }
             wl_data_source::Event::Action { dnd_action: WEnum::Value(a) } => log(|l| l.action = Some(a)),
@@ -200,7 +211,7 @@ fn what_is_dropped_on_another_program_arrives_there() {
 /// The XDND version the test's X11 programs speak (the newest).
 const XDND: u32 = 5;
 
-/// An X11 program on the compositor's XWayland, with XDND's atoms.
+/// An X11 program on the compositor's XWayland, with XDND's atoms and the clipboard's.
 struct X11 {
     conn: RustConnection,
     root: XWindow,
@@ -214,6 +225,8 @@ struct X11 {
     selection: Atom,
     copy: Atom,
     uri: Atom,
+    clipboard: Atom,
+    targets: Atom,
 }
 
 impl X11 {
@@ -233,6 +246,8 @@ impl X11 {
             selection: atom("XdndSelection"),
             copy: atom("XdndActionCopy"),
             uri: atom(URI_MIME),
+            clipboard: atom("CLIPBOARD"),
+            targets: atom("TARGETS"),
             conn,
         }
     }
@@ -307,10 +322,10 @@ impl X11 {
         })
     }
 
-    /// The next request for XdndSelection, which this program owns.
-    fn asked(&self, programs: &mut [&mut Client]) -> SelectionRequestEvent {
-        self.until(programs, "the X11 program asked for what it drags", |e| match e {
-            Event::SelectionRequest(r) if r.selection == self.selection => Some(*r),
+    /// The next request for `selection` (XdndSelection: what it drags; the clipboard: what it copied), which this program owns.
+    fn asked(&self, programs: &mut [&mut Client], selection: Atom) -> SelectionRequestEvent {
+        self.until(programs, "the X11 program asked for what it owns", |e| match e {
+            Event::SelectionRequest(r) if r.selection == selection => Some(*r),
             _ => None,
         })
     }
@@ -318,6 +333,17 @@ impl X11 {
     /// Answers a request for the selection with `data`, as its owner.
     fn give(&self, asked: &SelectionRequestEvent, data: &[u8]) {
         self.conn.change_property8(PropMode::REPLACE, asked.requestor, asked.property, asked.target, data).unwrap();
+        self.answered(asked);
+    }
+
+    /// Answers a request for the types the selection comes in (TARGETS) with `types`, as its owner.
+    fn give_types(&self, asked: &SelectionRequestEvent, types: &[Atom]) {
+        self.conn.change_property32(PropMode::REPLACE, asked.requestor, asked.property, AtomEnum::ATOM, types).unwrap();
+        self.answered(asked);
+    }
+
+    /// Tells the program that asked that the answer is in its property (SelectionNotify).
+    fn answered(&self, asked: &SelectionRequestEvent) {
         let given = SelectionNotifyEvent {
             response_type: SELECTION_NOTIFY_EVENT,
             sequence: 0,
@@ -527,7 +553,7 @@ fn a_file_dragged_from_an_x11_program_onto_a_wayland_program_arrives_there() {
     let (read, write) = std::io::pipe().unwrap();
     offer.receive(URI_MIME.into(), write.as_fd());
     drop(write);
-    let asked = x.asked(&mut [&mut t]);
+    let asked = x.asked(&mut [&mut t], x.selection);
     assert_eq!(asked.target, x.uri, "asked for the URI's type");
     x.give(&asked, URI);
     assert_eq!(read_all(read), URI, "what was dropped arrived");
@@ -601,7 +627,7 @@ fn a_file_dragged_between_two_x11_programs_arrives_there() {
     let into = y.conn.intern_atom(false, b"DROPPED").unwrap().reply().unwrap().atom;
     y.conn.convert_selection(target, y.selection, y.uri, into, dropped[2]).unwrap();
     y.conn.flush().unwrap();
-    let asked = x.asked(&mut []);
+    let asked = x.asked(&mut [], x.selection);
     assert_eq!(asked.requestor, target, "asked by the target itself");
     x.give(&asked, URI);
     let property = y.until(&mut [], "the URI given to the target", |e| match e {
@@ -1020,4 +1046,193 @@ fn an_x11_program_cannot_take_a_wayland_drag_over() {
     assert_eq!(read_all(read), WORDS, "what the Wayland program dragged arrived");
     offer.finish();
     until(&mut [&mut s, &mut t], "the dragging program told the drop finished", |l| l.finished);
+}
+
+// ------------------------------------------------------------------ XWayland going away in the middle of a transfer
+
+/// Places the X11 program's window `app` at `at` once XWayland has made its surface. The window is listed a moment before
+/// that, and it takes the keyboard when its surface comes: a window made after this keeps the keyboard.
+fn place_x11(comp: &Compositor, app: &str, at: (i32, i32)) {
+    comp.wait(10, &format!("{app} managed"), |c| c.window(app).is_some());
+    comp.wait(10, &format!("{app} placed"), |c| c.ctl(&format!("place {} {} {} 300 200", id_of(c, app), at.0, at.1)).is_ok());
+}
+
+/// Kills this test's XWayland (as when it crashes) and waits until the compositor has seen it go. Its process number.
+fn kill_xwayland(comp: &Compositor) -> u32 {
+    let xwayland = xwayland_of(comp).expect("an Xwayland");
+    unsafe { libc::kill(xwayland as i32, libc::SIGKILL) };
+    comp.wait(10, "XWayland gone", |c| c.log.lock().unwrap().iter().any(|l| l.contains("XWayland went away")));
+    xwayland
+}
+
+/// The compositor goes on after XWayland went away in the middle of a transfer (it once ended as soon as the transfer's pipe
+/// was ready: the pipe's handler asked for the window manager that was gone), and the next X11 program starts a new XWayland,
+/// which manages its window.
+fn goes_on(comp: &mut Compositor, display: &str, gone: u32) {
+    let answer = comp.ctl("outputs");
+    assert!(answer.is_ok() && matches!(comp.child.try_wait(), Ok(None)), "the compositor ended: {answer:?}\n{}", comp.log_tail(20));
+    let next = X11::connect(display);
+    next.window(b"next\0Next\0", EventMask::NO_EVENT);
+    comp.wait(10, "the next X11 program's window managed", |c| c.window("Next").is_some());
+    assert!(xwayland_of(comp).is_some_and(|x| x != gone), "a new XWayland");
+}
+
+/// XWayland goes away while the Wayland program an X11 program asked for a file holds the pipe (`held`); then the program
+/// writes the file and closes the pipe. The transfer ended with XWayland, its pipe closed: the write fails, as nobody reads it
+/// any more. The compositor goes on (`goes_on`).
+fn written_after_xwayland_went_away(comp: &mut Compositor, display: &str) {
+    let gone = kill_xwayland(comp);
+    let held = log(|l| l.held.take()).expect("the pipe held");
+    let wrote = std::fs::File::from(held).write_all(URI);
+    goes_on(comp, display, gone);
+    assert!(matches!(&wrote, Err(e) if e.kind() == ErrorKind::BrokenPipe), "the transfer ended with XWayland: {wrote:?}");
+}
+
+/// XWayland goes away (it crashed, or was killed) while an X11 program pastes a file a Wayland program copied, before the
+/// Wayland program has written it (a slow one): the paste ends, and the compositor and the next X11 program go on.
+#[test]
+#[ignore = "needs the fork's fix that ends XWayland's transfers when it goes away (YGG-113)"]
+fn a_paste_into_an_x11_program_ends_when_xwayland_goes_away() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a paste into an X11 program when XWayland goes away");
+    let (mut comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program that pastes, on the right
+    let x = X11::connect(&display);
+    let win = x.window(b"x11paste\0X11paste\0", EventMask::NO_EVENT);
+    place_x11(&comp, "X11paste", (600, 100));
+    // the Wayland program that copies a file: it has the keyboard, so it may set the clipboard (Smithay looks at the focus,
+    // not at the serial); its source answers as a dragging program's does, and asked for the file it keeps the pipe
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.copy", "Copy");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    s.until("the keyboard on the copying program", |st| st.kb_focus == Some(sw.surface.id()));
+    log(|l| l.hold = true);
+    let m: WlDataDeviceManager = s.globals.bind(&s.qh, 3..=3, ()).expect("wl_data_device_manager 3");
+    let device: WlDataDevice = m.get_data_device(&s.seat, &s.qh, ());
+    let source: WlDataSource = m.create_data_source(&s.qh, Dragged);
+    source.offer(URI_MIME.into());
+    device.set_selection(Some(&source), 0);
+    s.roundtrip();
+
+    // the X11 program gets the keyboard (only then may it paste) and pastes: the copying program is asked for the file
+    comp.must(&format!("activate {}", id_of(&comp, "X11paste")));
+    comp.wait(10, "the keyboard on the X11 program", |c| c.focus().contains("X11paste"));
+    let start = Instant::now();
+    while x.conn.get_selection_owner(x.clipboard).unwrap().reply().unwrap().owner == x11rb::NONE {
+        assert!(start.elapsed() < Duration::from_secs(5), "the copy not offered to X11 programs");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let into = x.conn.intern_atom(false, b"PASTED").unwrap().reply().unwrap().atom;
+    x.conn.convert_selection(win, x.clipboard, x.uri, into, x11rb::CURRENT_TIME).unwrap();
+    x.conn.flush().unwrap();
+    until(&mut [&mut s], "the copying program asked for the file", |l| l.held.is_some());
+
+    // XWayland goes away; then the copying program writes the file
+    written_after_xwayland_went_away(&mut comp, &display);
+}
+
+/// XWayland goes away while a Wayland program pastes the files an X11 program copied, before it has read them all (more than
+/// its pipe holds): the paste ends with what was in the pipe, and the compositor and the next X11 program go on.
+#[test]
+#[ignore = "needs the fork's fix that ends XWayland's transfers when it goes away (YGG-113)"]
+fn a_paste_from_an_x11_program_ends_when_xwayland_goes_away() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a paste from an X11 program when XWayland goes away");
+    let (mut comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program that copies the files, on the right
+    let x = X11::connect(&display);
+    let win = x.window(b"x11copy\0X11copy\0", EventMask::NO_EVENT);
+    place_x11(&comp, "X11copy", (600, 100));
+    // the Wayland program that pastes: it has the keyboard, so it is offered the clipboard
+    let mut t = comp.connect();
+    let (_tk, _tp) = t.input();
+    let tw = t.window("test.paste", "Paste");
+    t.draw(&tw, (300, 200), 0xff00ff00);
+    t.until("the keyboard on the pasting program", |st| st.kb_focus == Some(tw.surface.id()));
+    let _tdev = data_device(&mut t);
+    // the X11 program copies: it takes the clipboard, and tells the window manager the types it comes in (TARGETS)
+    x.conn.set_selection_owner(win, x.clipboard, x11rb::CURRENT_TIME).unwrap();
+    x.conn.flush().unwrap();
+    let asked = x.asked(&mut [&mut t], x.clipboard);
+    assert_eq!(asked.target, x.targets, "asked for the types");
+    x.give_types(&asked, &[x.targets, x.uri]);
+    until(&mut [&mut t], "the Wayland program offered the copy", |l| l.clipboard.is_some() && l.mimes.iter().any(|m| m == URI_MIME));
+
+    // it pastes: the X11 program is asked for the files and gives more than the pipe holds; the compositor fills the pipe
+    let (read, write) = std::io::pipe().unwrap();
+    log(|l| l.clipboard.clone()).unwrap().receive(URI_MIME.into(), write.as_fd());
+    drop(write);
+    let asked = x.asked(&mut [&mut t], x.clipboard);
+    assert_eq!(asked.target, x.uri, "asked for the files");
+    let room = usize::try_from(unsafe { libc::fcntl(read.as_raw_fd(), libc::F_GETPIPE_SZ) }).expect("the pipe's size");
+    let files = URI.repeat(2 * room / URI.len());
+    x.give(&asked, &files);
+    let start = Instant::now();
+    loop {
+        let mut holds: libc::c_int = 0;
+        unsafe { libc::ioctl(read.as_raw_fd(), libc::FIONREAD, &mut holds) };
+        if holds as usize == room {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5), "the pipe not filled: {holds} of {room} bytes");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // XWayland goes away; then the Wayland program reads: what was in the pipe, then the pipe closes
+    let gone = kill_xwayland(&comp);
+    let got = read_all(read);
+    goes_on(&mut comp, &display, gone);
+    assert!(got == files[..room], "the paste ended with XWayland: {} bytes of {}", got.len(), files.len());
+}
+
+/// XWayland goes away while an X11 program asks for the file a Wayland program dropped on it, before the Wayland program has
+/// written it (a slow one): the drop's transfer ends, and the compositor and the next X11 program go on.
+#[test]
+#[ignore = "needs the fork's fix that ends XWayland's transfers when it goes away (YGG-113)"]
+fn a_drop_on_an_x11_program_ends_when_xwayland_goes_away() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a drop on an X11 program when XWayland goes away");
+    let (mut comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program that takes the drop, on the right
+    let x = X11::connect(&display);
+    let win = x.window(b"x11target\0X11target\0", EventMask::NO_EVENT);
+    x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[XDND]).unwrap();
+    x.conn.flush().unwrap();
+    place_x11(&comp, "X11target", (600, 100));
+    // the Wayland program dragging a file, on the left: asked for the file, it keeps the pipe
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.source")));
+    s.roundtrip();
+    let (si, xi) = (comp.window("test.source").unwrap(), comp.window("X11target").unwrap());
+    log(|l| l.hold = true);
+    drag_from(&comp, &mut s, &sw, si.at, URI_MIME);
+    // over the X11 window, which takes it; let go there, and the X11 program asks for the file
+    x11_drawn(&comp, xi.at);
+    comp.must(&format!("pointer {} {}", xi.at.0 + 150, xi.at.1 + 100));
+    let source = x.message(&mut [&mut s], x.enter, "XdndEnter")[0];
+    x.message(&mut [&mut s], x.position, "XdndPosition");
+    x.send(source, x.status, [win, 1, 0, 0, x.copy]);
+    until(&mut [&mut s], "the dragging program told the X11 program's choice", |l| l.action == Some(DndAction::Copy));
+    comp.must("release");
+    let dropped = x.message(&mut [&mut s], x.drop, "XdndDrop");
+    let into = x.conn.intern_atom(false, b"DROPPED").unwrap().reply().unwrap().atom;
+    x.conn.convert_selection(win, x.selection, x.uri, into, dropped[2]).unwrap();
+    x.conn.flush().unwrap();
+    until(&mut [&mut s], "the dragging program asked for the file", |l| l.held.is_some());
+
+    // XWayland goes away; then the dragging program writes the file
+    written_after_xwayland_went_away(&mut comp, &display);
 }
