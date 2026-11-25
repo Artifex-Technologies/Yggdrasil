@@ -1010,6 +1010,70 @@ fn a_file_dragged_from_a_wayland_program_onto_an_x11_program_arrives_there() {
     assert!(!log(|l| l.cancelled), "not cancelled");
 }
 
+/// A Wayland program's file dropped on an X11 program that says XDND `version` (XdndAware), takes the drag as a copy, reads the
+/// URI on the drop and then finishes with `finished` (XdndFinished's words after the window): what the dragging program is told,
+/// (finished, cancelled).
+fn drop_on_x11_finished_with(version: u32, finished: [u32; 4]) -> (bool, bool) {
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    let x = X11::connect(&display);
+    let win = x.window(b"x11target\0X11target\0", EventMask::NO_EVENT);
+    x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[version]).unwrap();
+    x.conn.flush().unwrap();
+    comp.wait(10, "the X11 window managed", |c| c.window("X11target").is_some());
+    place_x11(&comp, "X11target", (600, 100));
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.source")));
+    s.roundtrip();
+    let (si, xi) = (comp.window("test.source").unwrap(), comp.window("X11target").unwrap());
+    drag_from(&comp, &mut s, &sw, si.at, URI_MIME);
+    x11_drawn(&comp, xi.at);
+    comp.must(&format!("pointer {} {}", xi.at.0 + 150, xi.at.1 + 100));
+    let enter = x.message(&mut [&mut s], x.enter, "XdndEnter");
+    assert_eq!(enter[1] >> 24, version.min(XDND), "the version the X11 program said: {enter:?}");
+    let source = enter[0];
+    x.message(&mut [&mut s], x.position, "XdndPosition");
+    x.send(source, x.status, [win, 1, 0, 0, x.copy]);
+    until(&mut [&mut s], "the dragging program told the X11 program's choice", |l| l.action == Some(DndAction::Copy));
+    comp.must("release");
+    let dropped = x.message(&mut [&mut s], x.drop, "XdndDrop");
+    let into = x.conn.intern_atom(false, b"DROPPED").unwrap().reply().unwrap().atom;
+    x.conn.convert_selection(win, x.selection, x.uri, into, dropped[2]).unwrap();
+    x.conn.flush().unwrap();
+    let property = x.until(&mut [&mut s], "the URI given to the X11 program", |e| match e {
+        Event::SelectionNotify(n) if n.requestor == win => Some(n.property),
+        _ => None,
+    });
+    assert_eq!(property, into, "the URI given on the drop");
+    x.send(source, x.finished, [win, finished[0], finished[1], finished[2], finished[3]]);
+    until(&mut [&mut s], "the dragging program told how the drop ended", |l| l.finished || l.cancelled);
+    // a moment for a second, contrary word
+    let end = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < end {
+        s.roundtrip();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    log(|l| (l.finished, l.cancelled))
+}
+
+/// An X11 program that read a Wayland program's drop and then says it did not take it (XDND 5's XdndFinished with its accept
+/// bit clear: it failed to use what it read) has the drop cancelled for the dragging program, not finished: told finished, a
+/// program moving its data would delete it (dragged text, a file in a file manager), though it arrived nowhere. An X11 program
+/// on XDND 4 or older, whose XdndFinished has no such bit, still finishes it (YGG-148).
+#[test]
+fn a_drop_an_x11_program_says_it_did_not_take_is_cancelled_for_the_dragging_program() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(90, "a drop an X11 program did not take");
+    assert_eq!(drop_on_x11_finished_with(XDND, [0, 0, 0, 0]), (false, true), "XDND 5, not taken: cancelled, not finished");
+    log(|l| *l = Log::default());
+    assert_eq!(drop_on_x11_finished_with(4, [0, 0, 0, 0]), (true, false), "XDND 4 (no accept bit): finished");
+}
+
 /// The same with a finger, as on a 2-in-1's screen: a Wayland program drags a file with a finger onto an X11 program, which is
 /// told the drag came and where the finger is, takes it, and once the finger lifts over it is told of the drop and reads the
 /// file's URI; the Wayland program is told the drop finished.
