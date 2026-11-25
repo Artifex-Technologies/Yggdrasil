@@ -2493,7 +2493,19 @@ impl App {
         // X window is (its surface is all of the X window, a shadow drawn into it included)
         for x in self.overlays.iter().rev() {
             let loc = cam.point(x.last_configure().loc.to_f64()).to_i32_round();
-            out.extend(lift(x.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, loc, scale, 1.0), loc));
+            let els = x.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, loc, scale, 1.0);
+            if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+                // only when it changes, so a frame loop does not fill the log
+                static SEEN: std::sync::Mutex<Vec<(u32, usize)>> = std::sync::Mutex::new(Vec::new());
+                let mut seen = SEEN.lock().unwrap();
+                let now = (x.window_id(), els.len());
+                if !seen.contains(&now) {
+                    seen.retain(|(w, _)| *w != now.0);
+                    seen.push(now);
+                    eprintln!("x11: menu or tooltip {} drawn with {} pieces at {loc:?}", now.0, now.1);
+                }
+            }
+            out.extend(lift(els, loc));
         }
         // A full screen window in front (a game, a video) covers the top bar and the dock: the Top layer then goes behind the
         // windows. The Overlay layer (the lock's own picture, alerts that must be seen) stays in front.
@@ -3215,6 +3227,12 @@ impl CompositorHandler for App {
     fn commit(&mut self, surface: &WlSurface) {
         self.wake();
         on_commit_buffer_handler::<Self>(surface);
+        if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+            if let Some(x) = self.overlays.iter().find(|x| x.wl_surface().as_ref() == Some(surface)) {
+                let size = smithay::backend::renderer::utils::with_renderer_surface_state(surface, |s| s.buffer_size()).flatten();
+                eprintln!("x11: menu or tooltip {} committed, its picture {size:?}", x.window_id());
+            }
+        }
         // a drag's icon moved by its program (wl_surface.offset): it keeps its place from the pointer
         if self.dnd_icon.as_ref() == Some(surface) {
             if let Some(d) = with_states(surface, |st| st.cached_state.get::<SurfaceAttributes>().current().buffer_delta.take()) {

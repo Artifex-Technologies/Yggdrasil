@@ -545,7 +545,7 @@ fn closing_asks_a_program_that_takes_part_and_ends_one_that_does_not() {
     // a program that takes part in WM_DELETE_WINDOW is asked, and stays connected to decide
     let (polite, delete) = open(b"polite\0Polite\0", true);
     wait("the polite window", &|| comp.window("Polite").is_some());
-    comp.must(&format!("close {}", client_of(&comp, "Polite")));
+    comp.wait(10, "Polite asked to close", |c| c.ctl(&format!("close {}", client_of(c, "Polite"))).is_ok());
     let start = Instant::now();
     let asked = loop {
         match polite.poll_for_event() {
@@ -561,7 +561,7 @@ fn closing_asks_a_program_that_takes_part_and_ends_one_that_does_not() {
     // one that does not take part is ended (XKillClient), not left running without a window
     let (rude, _) = open(b"rude\0Rude\0", false);
     wait("the rude window", &|| comp.window("Rude").is_some());
-    comp.must(&format!("close {}", client_of(&comp, "Rude")));
+    comp.wait(10, "Rude closed", |c| c.ctl(&format!("close {}", client_of(c, "Rude"))).is_ok());
     wait("the rude window gone", &|| comp.window("Rude").is_none());
     let start = Instant::now();
     loop {
@@ -593,7 +593,7 @@ fn an_x11_window_shown_again_under_the_resting_pointer_hears_it_move() {
     conn.map_window(win).unwrap();
     conn.flush().unwrap();
     comp.wait(10, "the window managed", |c| c.window("Prog").is_some());
-    comp.must(&format!("place {} 100 100 300 200", client_of(&comp, "Prog")));
+    comp.wait(10, "Prog placed", |c| c.ctl(&format!("place {} 100 100 300 200", client_of(c, "Prog"))).is_ok());
     // A window is listed as soon as the program shows it; the pointer can be in it only once XWayland has made its surface
     // (then it is active) and drawn it (its green, away from where the pointer goes).
     let shown = |c: &Compositor| {
@@ -640,9 +640,10 @@ fn an_x11_menu_is_drawn_where_it_was_made_at_a_fractional_scale() {
     }
     let _l = limit(60, "an X11 menu at 125 %");
     // at 125 % X11 programs draw in the screen's pixels: a menu made at (500, 250), 125 x 125, is there on the screen
-    // the compositor's debug lines and XWayland's own messages go into its log, for the report of a failure (YGG-115: it has
-    // failed in CI with the menu never drawn, and only there)
-    let (comp, display) = with_xwayland_env(&["--output", "1600x900@1.25"], &[("YGGDRASIL_COMPOSITOR_DEBUG", "1")], |_| {});
+    // the compositor's debug lines, XWayland's own messages and its Wayland requests (WAYLAND_DEBUG) go into the log, for the
+    // report of a failure (YGG-115: under load XWayland has sent the menu's surface its serial and then never its picture)
+    let (comp, display) =
+        with_xwayland_env(&["--output", "1600x900@1.25"], &[("YGGDRASIL_COMPOSITOR_DEBUG", "1"), ("WAYLAND_DEBUG", "client")], |_| {});
     let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
     let root = conn.setup().roots[screen].root;
     let menu = conn.generate_id().unwrap();

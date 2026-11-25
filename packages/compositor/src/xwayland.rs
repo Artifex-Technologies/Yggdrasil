@@ -94,7 +94,8 @@ fn spawn(app: &mut App, handle: LoopHandle<'static, App>, sockets: X11Sockets) -
     let (xwayland, client) = XWayland::spawn_with_sockets(
         &app.display_handle,
         sockets,
-        std::iter::empty::<(String, String)>(),
+        // WAYLAND_DEBUG reaches XWayland when the compositor has it (Smithay starts XWayland with nothing else)
+        std::env::vars().filter(|(k, _)| k == "WAYLAND_DEBUG"),
         std::iter::empty::<String>(),
         out(),
         out(),

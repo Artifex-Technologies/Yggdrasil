@@ -1279,7 +1279,7 @@ fn an_x11_target_ends_unfinished(dropped: bool) {
         }
         a.window(b"after\0After\0", EventMask::NO_EVENT);
         comp.wait(10, "the window shown after it managed", |c| c.window("After").is_some());
-        comp.must(&format!("place {} 50 350 300 200", id_of(&comp, "After")));
+        place_x11(&comp, "After", (50, 350));
         comp.must("release");
     }
     until(&mut [&mut s], "the dragging program told the drag is over", |l| l.cancelled);
@@ -1415,13 +1415,25 @@ fn kill_xwayland(comp: &Compositor) -> u32 {
 /// The compositor goes on after XWayland went away in the middle of a transfer (it once ended as soon as the transfer's pipe
 /// was ready: the pipe's handler asked for the window manager that was gone), and the next X11 program starts a new XWayland,
 /// which manages its window.
-fn goes_on(comp: &mut Compositor, display: &str, gone: u32) {
+fn goes_on(comp: &mut Compositor, gone: u32) {
     let answer = comp.ctl("outputs");
     assert!(answer.is_ok() && matches!(comp.child.try_wait(), Ok(None)), "the compositor ended: {answer:?}\n{}", comp.log_tail(20));
-    // the display is bound again before the next program connects (as tests/x11.rs's restart test waits)
-    let again = format!("it starts again with the next X11 program (DISPLAY={display})");
-    comp.wait(10, "the display bound again", |c| c.log.lock().unwrap().iter().any(|l| l.contains(&again)));
-    let next = X11::connect(display);
+    // the display is bound again before the next program connects (as tests/x11.rs's restart test waits): the same one, or,
+    // when another test's compositor took it in between (tests run side by side), the one the compositor says
+    let display = {
+        let found = || {
+            comp.log.lock().unwrap().iter().find_map(|l| {
+                l.strip_suffix(")").and_then(|l| {
+                    l.split_once("it starts again with the next X11 program (DISPLAY=")
+                        .or_else(|| l.split_once("X11 programs now use DISPLAY="))
+                        .map(|(_, d)| d.split_once(' ').map_or(d, |(d, _)| d).to_string())
+                })
+            })
+        };
+        comp.wait(10, "the display bound again", |_| found().is_some());
+        found().unwrap()
+    };
+    let next = X11::connect(&display);
     next.window(b"next\0Next\0", EventMask::NO_EVENT);
     comp.wait(10, "the next X11 program's window managed", |c| c.window("Next").is_some());
     assert!(xwayland_of(comp).is_some_and(|x| x != gone), "a new XWayland");
@@ -1430,10 +1442,10 @@ fn goes_on(comp: &mut Compositor, display: &str, gone: u32) {
 /// XWayland (`gone`) went away while the Wayland program an X11 program asked for data held the pipe (`held`); now the program
 /// writes `what` and closes the pipe. The transfer ended with XWayland, its pipe closed: the write fails, as nobody reads it
 /// any more. The compositor goes on (`goes_on`).
-fn written_after_xwayland_went_away(comp: &mut Compositor, display: &str, gone: u32, what: &[u8]) {
+fn written_after_xwayland_went_away(comp: &mut Compositor, gone: u32, what: &[u8]) {
     let held = log(|l| l.held.take()).expect("the pipe held");
     let wrote = std::fs::File::from(held).write_all(what);
-    goes_on(comp, display, gone);
+    goes_on(comp, gone);
     assert!(matches!(&wrote, Err(e) if e.kind() == ErrorKind::BrokenPipe), "the transfer ended with XWayland: {wrote:?}");
 }
 
@@ -1481,7 +1493,7 @@ fn a_paste_into_an_x11_program_ends_when_xwayland_goes_away() {
 
     // XWayland goes away; then the copying program writes the file
     let gone = kill_xwayland(&comp);
-    written_after_xwayland_went_away(&mut comp, &display, gone, URI);
+    written_after_xwayland_went_away(&mut comp, gone, URI);
 }
 
 /// An X11 program pastes text a Wayland program copied and, before the Wayland program has written it (a slow one), asks again
@@ -1558,7 +1570,7 @@ fn a_paste_asked_for_twice_ends_when_xwayland_goes_away() {
     busy.write_all(b"\n").unwrap();
     seen_gone(&comp);
     // the copying program writes the text; it was asked for it once, as the second paste came too late
-    written_after_xwayland_went_away(&mut comp, &display, gone, WORDS);
+    written_after_xwayland_went_away(&mut comp, gone, WORDS);
     s.roundtrip();
     assert_eq!(log(|l| l.sent), 1, "the window manager got to the second paste while XWayland was there");
 }
@@ -1615,7 +1627,7 @@ fn a_paste_from_an_x11_program_ends_when_xwayland_goes_away() {
     // XWayland goes away; then the Wayland program reads: what was in the pipe, then the pipe closes
     let gone = kill_xwayland(&comp);
     let got = read_all(read);
-    goes_on(&mut comp, &display, gone);
+    goes_on(&mut comp, gone);
     assert!(got == files[..room], "the paste ended with XWayland: {} bytes of {}", got.len(), files.len());
 }
 
@@ -1662,7 +1674,7 @@ fn a_drop_on_an_x11_program_ends_when_xwayland_goes_away() {
 
     // XWayland goes away; then the dragging program writes the file, and hears the drop was cancelled
     let gone = kill_xwayland(&comp);
-    written_after_xwayland_went_away(&mut comp, &display, gone, URI);
+    written_after_xwayland_went_away(&mut comp, gone, URI);
     until(&mut [&mut s], "the dragging program told the drop was cancelled", |l| l.cancelled);
     assert!(!log(|l| l.finished), "the drop finished");
 }
