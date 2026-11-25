@@ -279,6 +279,8 @@ pub struct App {
     asked_at_start: bool,
     /// workspaces.conf's, shortcuts.conf's and opaque.conf's stamps as last read (configs.rs)
     conf_stamps: (crate::configs::Stamp, crate::configs::Stamp, crate::configs::Stamp),
+    /// The wait between the config files' watch seeing a change and reload_config (configs.rs).
+    pub config_wait: crate::configs::Wait,
     /// Programs always drawn opaque (opaque.conf, one app id per line: games that fill their alpha channel with junk), besides
     /// the ones recognised as games (xwayland::is_game).
     pub opaque_apps: Vec<String>,
@@ -832,6 +834,7 @@ impl App {
             chooser_art: None,
             asked_at_start: false,
             conf_stamps: (None, None, None),
+            config_wait: Default::default(),
             opaque_apps: crate::xwayland::parse_opaque(&std::fs::read_to_string(crate::xwayland::opaque_path()).unwrap_or_default()),
             parked: vec![],
             x11_snapped: vec![],
@@ -1968,11 +1971,14 @@ impl App {
         self.retile();
     }
 
-    /// Read the config files again that changed (their stamps, configs.rs): when the watch saw one of them change, and on
-    /// `reload` (yggdrasil-wm asks for one after Settings saved a file). Every file read here is one of configs::files, the
-    /// files the watch wakes the loop for.
+    /// Read the config files again that changed (their stamps, configs.rs): once a change the watch saw has rested
+    /// (`config_changed`), and at once on `reload` (yggdrasil-wm asks for one after Settings saved a file). Every file read
+    /// here is one of configs::files, the files the watch wakes the loop for.
     pub fn reload_config(&mut self) {
         self.wake();
+        // which have something in them now, for the watch's wait (configs.rs: one of them missing or empty at the wait's end is
+        // waited for once more)
+        self.config_wait.read(crate::configs::files());
         use crate::configs::stamp;
         let (ws_t, sc_t) = (stamp(tiling::config_path()), stamp(shortcuts::config_path()));
         if ws_t != self.conf_stamps.0 {

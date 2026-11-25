@@ -249,13 +249,14 @@ fn serve(
         start_run(app);
     }
 
-    // the config files (configs.rs: Settings writes them) are read again when one of them changes, and the loop sleeps until then
+    // the config files (configs.rs: Settings writes them) are read again once a change to one of them has rested, and the loop
+    // sleeps until a change
     match configs::Watch::new(configs::files()) {
         Ok(watch) => {
             event_loop.handle().insert_source(Generic::new(watch, Interest::READ, LoopMode::Level), |_, watch, app| {
                 // SAFETY: the watch is not dropped while it is registered here
                 if unsafe { watch.get_mut() }.changed() {
-                    app.reload_config();
+                    app.config_changed();
                 }
                 Ok(PostAction::Continue)
             })?;

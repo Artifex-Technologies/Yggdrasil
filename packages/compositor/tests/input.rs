@@ -49,7 +49,7 @@ fn input_conf_is_taken_at_start_and_when_settings_applies_it() {
     );
     let mut c = comp.connect();
     let (_k, _p) = c.input();
-    assert_eq!(c.state.repeat_info, Some((40, 300)), "programs are told the key repeat");
+    assert_eq!(c.state.repeats.last(), Some(&(40, 300)), "programs are told the key repeat");
     let w = c.window("test.w", "W");
     c.draw(&w, (400, 300), BLUE);
     let info = comp.window("test.w").unwrap();
@@ -80,7 +80,7 @@ fn input_conf_is_taken_at_start_and_when_settings_applies_it() {
     let now = InputConf::parse("repeat_rate = 30\nrepeat_delay = 500\n");
     now.save_to(&comp.dir.join("home/.config/yggdrasil/input.conf")).unwrap();
     d.apply_input(&conf, &now).expect("applied at once");
-    c.until("the new key repeat", |s| s.repeat_info == Some((30, 500)));
+    c.until("the new key repeat", |s| s.repeats.last() == Some(&(30, 500)));
     assert_eq!(
         comp.must("input")[1],
         "yggdrasil-headless-mouse\tsensitivity=0\taccel_profile=default\tscroll_factor=1\tnatural_scroll=0\tleft_handed=0"
@@ -92,7 +92,7 @@ fn input_conf_is_taken_at_start_and_when_settings_applies_it() {
     // no file: the defaults (Hyprland's)
     std::fs::remove_file(comp.dir.join("home/.config/yggdrasil/input.conf")).unwrap();
     d.apply_input(&now, &InputConf::default()).unwrap();
-    c.until("the default key repeat", |s| s.repeat_info == Some((25, 600)));
+    c.until("the default key repeat", |s| s.repeats.last() == Some(&(25, 600)));
 }
 
 #[test]

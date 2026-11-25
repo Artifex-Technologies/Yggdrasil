@@ -404,7 +404,7 @@ own, and its handler asked for the window manager that was gone. A drop's draggi
 came. The fix is in our Smithay fork (below). The X11 display has XSETTINGS (since 2026-11-24; kept by Smithay's
 window manager, fed by the compositor): GTK programs under X11 get their DPI (Xft/DPI, matching Xft.dpi), the pointer's theme and size, and GTK's theme,
 icon theme, font and font settings from GTK's settings.ini, and follow a change at once (a new pointer theme, or settings.ini
-rewritten by ygg-theme or Settings, seen as soon as it is written: the compositor watches its config files; `tests/x11.rs`).
+rewritten by ygg-theme or Settings, seen a moment after it is written: the compositor watches its config files; `tests/x11.rs`).
 
 An X11 window that draws its own shadow inside its X window (GTK and Chromium do once the window manager says it reads
 `_GTK_FRAME_EXTENTS`, as Smithay's does on its main branch) is placed as any X11 window, and the compositor keeps the part
@@ -500,7 +500,7 @@ with `ydotool` in small steps (the host accelerates movement by about 1.7x) and 
 ## Lightness (a rule for all of Yggdrasil)
 Yggdrasil must stay as light and quick as the features allow, on any machine, including old and small ones. For the compositor that means: nothing is drawn while
 nothing changes (a frame is drawn only after a program committed a picture, input arrived or a setting changed, and a frame with no change is not even sent on);
-no polling (the config files are watched with inotify and read only when one of them changes, since 2026-11-25; until then a look at them every 2 seconds); pictures such as the window controls and the switcher are drawn once and kept until what they show changes.
+no polling (the config files are watched with inotify and read only when one of them changes, since 2026-11-25, a tenth of a second after the last change, with a timer only for that tenth; until then a look at them every 2 seconds); pictures such as the window controls and the switcher are drawn once and kept until what they show changes.
 Measured 2026-10-18 on this computer, nested: the compositor used about 2 % of a core while idle because it redrew 60 times a second; after the change it uses 0 %.
 Measured 2026-11-12 headless (release build, software drawing, 1920x1080, a bar, a dock and three 800x600 windows), before and after
 the window look: idle 0.004 % and 0.005 % of a core, 25.6 and 26.3 MB resident; a window opening costs about 0.1 s of CPU spread
@@ -535,8 +535,24 @@ passes over the screen, 15 wake-ups of the compositor's main thread and 1.0-1.1 
 builds), and none of the three after, at the same memory (23.0-23.3 and 23.1-23.2 MB resident). With a bar, a dock and three
 800x600 windows (`tests/look.rs idle_cost`, two runs each): idle 708-782 against 0 µs of CPU in 10 s (release builds; debug
 builds 3569-3837 against 0), 30.5 against 30.6-30.7 MB resident, an 800x600 window drawn anew 0.92-0.98 against 0.92-1.09 ms a
-frame (within the runs' spread). A change to one of the files is in force at once, and nothing wakes the compositor while none
-changes (`tests/headless.rs`).
+frame (within the runs' spread). A change to one of the files is in force a moment later (below), and nothing wakes the
+compositor while none changes (`tests/headless.rs`).
+A file saved in steps (2026-11-25, YGG-138): Vim and Emacs save by renaming the file to a backup, then making, writing and
+closing a new one, and the watch read a file the moment it changed, so a save stalled for a millisecond or two was read while
+the file was missing or half written: monitors.lua read while it was missing set the screens to their own size, pulled the
+pointer onto them and set them back once the file was written (headless, 2 ms between the steps). Now the files are read once
+the changes have rested for a tenth of a second (`SETTLE` in `packages/compositor/src/configs.rs`): a timer started by the
+first change of a burst, its end moved by each further one, gone once the files are read. The steps of a save leave the file
+missing or half written for well under a millisecond, about a millisecond on a busy machine, so a tenth of a second covers
+them with room to spare and is still as good as at once after a save; Settings does not wait for it, it asks for `reload`
+once it has written a file. A file that had something in it when it was last read and is missing or empty when the wait ends
+gets one more tenth, as a save in steps passes through both: back by then, it is read as it is; still missing or empty, it is
+read so. A file removed for good is therefore in force 0.2 s later, as any other change, and not only on `reload`: removing a
+file is a way to go back to the defaults. `tests/headless.rs` saves monitors.lua and input.conf in steps ten times each (2 ms
+between the steps, the backup removed after): each save sets the screens once, as they were, the pointer staying where only
+the file's screen reaches, and tells programs the key repeat once, the file's, and the compositor is asleep again after (the
+build before: the screens set twice a save and the pointer pulled to 1599,599; the default key repeat told first). Idle it
+still costs nothing (`tests/look.rs idle_cost`, debug builds, two runs: 0 µs of CPU in 10 s).
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
 their own, plus about 26 MB while libnvidia-ml is initialised (the NVIDIA driver's own cost, the same in any language), and tune
 reads /dev/kmsg instead of keeping a journalctl child (about 46 MB). The Python versions were about 40 MB each with swap counted.
