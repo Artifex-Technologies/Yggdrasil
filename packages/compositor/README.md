@@ -432,9 +432,10 @@ without a GPU driver, `YGGDRASIL_COMPOSITOR_RENDERER=pixman` keeps Mesa out alto
 own guests have no display and need root, so it only lends its Arch cloud image as a read-only base), memory capped (4 GB in a
 6 GB scope), a virtio GPU with virgl through the host's render node (`boot gl`) or without 3D (`boot 2d`), a USB keyboard and
 tablet. `provision` installs what the guest needs (mesa, seatd, libinput, polkit, foot, XWayland, fonts, wlr-randr) and logs `ygg`
-in on tty1 by itself; `deploy` copies the release builds in; `start [ARGS]` runs the compositor on tty1 through logind (default:
-the panel and Settings); `shot NAME [KEYS]` presses keys and saves the screen (through QEMU's VNC socket, which reads the virgl
-picture back); `type`, `click`, `move` give input; `ctl`, `measure`, `stop`. Screenshots stay in the VM's folder, not here.
+in on tty1 by itself; `deploy` copies the release builds in; `start [ARGS]` runs the compositor on tty1 through logind, with
+the own session's environment (default: the panel and Settings); `shot NAME [KEYS]` presses keys and saves the screen (through
+QEMU's VNC socket, which reads the virgl picture back); `type`, `click`, `move` give input; `ctl`, `measure`, `stop`. Screenshots
+stay in the VM's folder, not here.
 
 ## Building and running the tests
 
