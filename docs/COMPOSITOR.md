@@ -285,7 +285,7 @@ What works (each checked by hand in the nested window):
 - **Panels and backgrounds** (wlr-layer-shell): the whole Labyrinth desktop runs in it: the wallpaper, the top bar, Fylgja's notch and the dock from `yggdrasil-panel` drew correctly beside a Settings window.
 - **Screen lock** (ext-session-lock): `yggdrasil-lock` locked, typed the test password and unlocked (exit 0). While locked only the locker's own picture is drawn and only it gets input.
 - **Idle** (ext-idle-notify): `yggdrasil-idle` was told when the user went idle, and its dimming overlay (layer-shell + viewporter) was accepted.
-- **Moving a window** by its own title bar (the xdg `move` request): dragging Settings' title area moved the window; checked with a real pointer drag. **Resizing, maximize and full screen** (the matching requests, remembering and restoring the old size) are written but not yet tried by hand.
+- **Moving a window** by its own title bar (the xdg `move` request): dragging Settings' title area moved the window; checked with a real pointer drag. **Resizing, maximize and full screen** (the matching requests, remembering and restoring the old size) are written but not yet tried by hand. Since 2026-11-24 a program's own move and resize requests are followed only while the button is held on one of that program's own surfaces (a subsurface or a menu of it counts): Smithay checks only a request's serial, and every program can learn the serials. A request made with another program's press moves and resizes nothing (`tests/grabs.rs`), nor does one made with the compositor's own Super+drag or grip, which starts on no program's surface.
 - **Window list for the panel** (`wlr-foreign-toplevel-management`, written here because Smithay does not ship it): the panel found it, the top bar showed the active window's title ("Settings") and the dock lit a dot under its icon. Activate, close, minimize, maximize and full screen from the panel are written (minimized windows are kept aside and brought back by activate) but not yet tried by hand.
 - **Shortcuts handled by the compositor** (`shortcuts.rs`; when this was written they were KDE's `kglobalacceld`, today Hyprland binds the keys): the Super key on its own (start menu, through the panel's D-Bus service), Super+E/I/L/V/S/C/F/Q, Alt+F4, Alt+Tab, Super+arrows (maximize, restore or minimize, snap left and right), Super+Return. `~/.config/labyrinth/shortcuts.conf` changes or removes any of them. Checked in the nested window with test bindings (the host desktop keeps the Super key and Alt+Tab to itself): Ctrl+Shift+Left snapped the focused window to the left half, and Ctrl+Shift+Space opened the panel's start menu. The Super tap, Alt+Tab and the rest are written but could not be tried there.
 - **Window controls** drawn by the compositor for programs that ask for server-side decoration (`xdg-decoration`, mostly Qt programs): no title bar, only a grip and the round minimize, maximize and close buttons in the top right corner of the window with no background of their own (they take on the look of the program under them), level with the program's own menu or tool bar; the program keeps the whole height of its window. Drag by the grip (double click maximizes); or hold Super and drag anywhere with the left button to move, the right button to resize; grips just outside the edges resize too. A program that asks to draw its own controls (Minos, Settings, the Marketplace) gets none. `YGGDRASIL_COMPOSITOR_DECORATE=all` gives every window the pill (for testing). Checked in the nested window with Wireshark: the pill sat beside its menu row. Moving by the grip, Super+drag and the edge grips are written but were not tried by hand.
@@ -304,7 +304,11 @@ connects (since 2026-11-24, below). `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it 
   window; the keyboard also sets the X input focus, without which XWayland passes keys to none of its windows. It gets the window
   controls unless it says it draws its own (Motif hints: Steam and most games do). Activate, minimize, maximize, full screen,
   snap, close, the window controls, Super+drag and the program's own move and resize requests use the same code as for Wayland
-  windows. Hiding or destroying it is the same clean-up as a closed Wayland window.
+  windows. An X11 program's own move or resize request (`_NET_WM_MOVERESIZE`) is followed only while the button is held on
+  that X11 window itself; any other is ignored, as one sent while the button is held on a Wayland window (`tests/grabs.rs`),
+  on the desktop or on the lock screen. Known limitation: X11 does not tell which X11 program sent the request, so while the
+  button is held on an X11 window, another X11 program may still move that window. Hiding or destroying it is the same
+  clean-up as a closed Wayland window.
 - Menus and tooltips (override-redirect windows), and menus, tooltips, notifications and splash screens that go through the window
   manager, are drawn where they ask, on top, never get the keyboard and are not listed; a click on one goes to it.
 - A window the compositor placed (tiled, maximized, full screen, snapped) keeps its place when it asks for another; others may change
@@ -386,43 +390,84 @@ best size of it as a PNG for each window class in the runtime folder's `yggdrasi
 when the window shows, and again when its title changes), and the panel looks there for an icon its theme does not have and
 watches the folder, so the icon shows a moment after the window (`tests/x11.rs`, `tests/apps.rs`). When XWayland goes away
 (it crashed or was killed), its windows go and the next X11 program starts a new one on the same display, so programs already
-told DISPLAY reach it (since 2026-11-24, `tests/x11.rs`). The X11 display has XSETTINGS (since 2026-11-24; kept by Smithay's
+told DISPLAY reach it (since 2026-11-24, `tests/x11.rs`). A paste or a drop still being handed over when it goes ends with it:
+the clipboard or the middle-click selection in either direction, and a drop's data. A Wayland program writing into its pipe
+finds it closed (EPIPE); one reading gets what was already in the pipe, then its end; one whose drop on an X11 window was not
+finished yet is told the drop was cancelled. This holds also when the compositor was busy and an X11 program had asked for the
+same paste again. The compositor goes on, and the next X11 program starts XWayland again (`tests/dnd.rs`). Before, the
+compositor ended as soon as such a pipe became ready: Smithay's window manager kept each transfer as an event source of its
+own, and its handler asked for the window manager that was gone. A drop's dragging program also waited for an end that never
+came. The fix is in our Smithay fork (below). The X11 display has XSETTINGS (since 2026-11-24; kept by Smithay's
 window manager, fed by the compositor): GTK programs under X11 get their DPI (Xft/DPI, matching Xft.dpi), the pointer's theme and size, and GTK's theme,
 icon theme, font and font settings from GTK's settings.ini, and follow a change at once (a new pointer theme, or settings.ini
-rewritten by ygg-theme or Settings, seen within the compositor's two-second look at its files; `tests/x11.rs`). An X11
-window that draws its own shadow inside its X window (GTK and Chromium do once the window manager says it reads
+rewritten by ygg-theme or Settings, seen within the compositor's two-second look at its files; `tests/x11.rs`).
+
+An X11 window that draws its own shadow inside its X window (GTK and Chromium do once the window manager says it reads
 `_GTK_FRAME_EXTENTS`, as Smithay's does on its main branch) is placed as any X11 window, and the compositor keeps the part
 inside the shadow as the window, as a Wayland window's geometry: it is listed, drawn, clicked and maximized as that part,
 and when the shadow goes or comes back (maximized, restored) the window keeps its place and size and its X window is placed
-around it. Its surface takes clicks only 10 pixels out into the shadow, where GTK keeps its resize border (GTK 3 takes clicks
-10 pixels out, GTK 4 12); a click further out reaches what is behind, as the program's X input shape says, which XWayland
-does not pass on. When the compositor draws the window's controls, its own grips take the edge of the shadow. A shadow
-wider than 256 pixels on a side is not believed (a program may write any number there, up to i32::MAX): the window is then
-all of its X window (`tests/x11.rs`). Drag and drop
-works between X11 and Wayland programs, both ways (since 2026-11-24, with Smithay main's XDND): a Wayland program's drag over
-an X11 window is told to it in XDND by Smithay's window manager, which asks the Wayland program for the data when the X11 one
-does; while an X11 program drags, the window manager covers the screen with a window of its own that takes XDND and stands in
-for the Wayland windows, and steps aside over X11 windows, so two X11 programs still speak XDND to each other. An X11
-program's drag icon under the pointer is passed over while a button is held (only then can a drag go on, so X11 menus take
-the pointer again after a drag was given up), and XWayland going away in the middle of a drag ends only its own part: a
-Wayland program's drag goes on to the Wayland windows (`tests/dnd.rs`). Smithay main's drag and drop needed three fixes, carried in our
-fork: only a drag started on XWayland's surfaces can become an X11 program's drag (so an X11 program can no longer take over
-a press on a Wayland window, or the compositor's own move or resize; X11 programs are not told apart there, so one can still
-take over a press on another's window), a drop target that goes away ends the drag for good, and a drag the X11 program gave
-up ends with the button (`tests/dnd.rs`).
+around it. Its surface takes clicks only 10 of the program's own (X) pixels out into the shadow, where GTK keeps its resize
+border (GTK 3 takes clicks 10 X pixels out, GTK 4 12). X11 programs draw at XWayland's scale (above), so the band is 10
+pixels divided by that scale in logical pixels: 8 at 125 %, 5 at 200 %. A click further out reaches what is behind, as the
+program's X input shape says, which XWayland does not pass on (`tests/x11.rs`, also at 125 %). When the compositor draws the
+window's controls, its own grips take the edge of the shadow. A shadow is not believed when one side is wider than 256 pixels
+(a program may write any number there; our Smithay fork reads each side as 0 to 65535), or when it leaves nothing of the X
+window: left and right, or top and bottom, together as wide as the X window or wider (60 on each side of a 100x100 X window,
+say). The window is then all of its X window for everything: placed, listed, drawn, clicked (the compositor's controls and
+grips go around all of it), shown in the window switcher and copied (the dock's preview). The shadow is judged against the X
+window as it is when the window is placed (shown, moved, resized, maximized, tiled, its shadow changed, the scale changed),
+and again when the program resizes its X window itself: the window keeps its place, and its X window is placed around it with
+the shadow judged then. The compositor has one geometry per window (`state::window_geometry`): Smithay's for a Wayland
+window; for an X11 window, its picture less the shadow it was placed with (`state::placed_shadow`), which is also its place in
+the window list. Smithay's own X11 geometry (the picture less the program's whole `_GTK_FRAME_EXTENTS`) is used only inside
+Smithay's `Space`, to work out which outputs a window is on (`tests/x11.rs`). Known limitations: for a window whose shadow is
+not believed, Smithay's `Space` may count it on no output or the wrong one, so its frame callbacks fall back to the main
+screen, and with several screens the output column of the control socket's `clients` can name the main screen; and a shadow
+that did not fit the X window when the window was shown is believed once the window is placed in an X window big enough for
+it (maximized, then restored): its X window then goes around the window, which looks the same.
+
+**Drag and drop** works between Wayland programs (wl_data_device) and between X11 and Wayland programs, both ways (since
+2026-11-24, with Smithay main's XDND). Only the program whose window the button or finger went down on may turn that press
+into a drag: Smithay checks only the drag's serial, and every program can learn the serials. A program that asks with another
+program's press or finger, or with the compositor's own Super+drag or grip, is told its drag is cancelled, and nothing else
+changes: no closed hand, and the press, the finger or the move goes on. This check is the compositor's own (`dnd_requested`,
+not in our Smithay fork); an X11 program's drag is checked by the fork's first XDND fix (below). A drag's closed hand and its
+icon last exactly as long as the drag: they end when it is dropped, and when it ends without a drop (a touchscreen's cancel,
+another grab taking the button, or the dragging program going away), which Smithay main reports through
+`DndGrabHandler::cancelled`. Nothing else ends them, so a finger's drag keeps its closed hand while the mouse moves
+(`tests/dnd.rs`). A Wayland program's drag over an X11 window is told to it in XDND by Smithay's window manager, which asks
+the Wayland program for the data when the X11 one does; while an X11 program drags, the window manager covers the screen with
+a window of its own that takes XDND and stands in for the Wayland windows, and steps aside over X11 windows, so two X11
+programs still speak XDND to each other. An X11 program's drag icon under the pointer is passed over while a button is held
+(only then can a drag go on, so X11 menus take the pointer again after a drag was given up), and XWayland going away in the
+middle of a drag ends only its own part: a Wayland program's drag goes on to the Wayland windows, and a drop on an X11 window
+whose data was still being handed over ends with that transfer, its dragging program told `cancelled` (`tests/dnd.rs`).
+Smithay main's drag and drop needed three fixes, carried in our fork: only a drag started on XWayland's surfaces can become
+an X11 program's drag (so an X11 program can no longer take over a press on a Wayland window, or the compositor's own move or
+resize; X11 programs are not told apart there, so one can still take over a press on another's window), a drop target that
+goes away ends the drag for good, and a drag the X11 program gave up ends with the button. A fourth fix in the fork ends
+XWayland's transfers with its X connection (above): when it closes, the window manager's clipboard, middle-click selection
+and XdndSelection transfers end before the compositor lets the window manager go; a stale transfer replaced by a new request
+is removed before it is answered, so a failed answer can no longer leave its pipe watched; and a drop on an X11 window that
+was not finished yet is cancelled (`tests/dnd.rs`). Known limitations: the drag's icon and closed hand are drawn at the mouse
+pointer, also during a finger's drag; and while a Wayland program's drag is over an X11 window (or dropped there and not
+finished yet), any X11 program can ask for its data, since X11 cannot tell programs apart. X11 programs that read a drag's
+data before the drop (Wine; Chromium, Electron and CEF programs on X11) can take drops this way.
 
 **Our Smithay fork** (github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit in
-packages/compositor/Cargo.toml): since 2026-11-24, Smithay's main branch with five commits of ours, each for something the
-compositor's own code cannot fix well. They bind the X11 sockets apart from starting XWayland (XWayland on the first X11
-program, above); fix two X11 window manager bugs (close, and the events dropped after setting the primary screen: "Tried by
-hand", above); clamp a layer surface's size at i32::MAX and `_GTK_FRAME_EXTENTS` at what an X window can hold (a program's
-huge values ended a debug build: a negative size, an overflow in `X11Surface::geometry`; `tests/hostile.rs`, `tests/x11.rs`);
-and fix the three drag and drop bugs above. The rest of what our fork of Smithay 0.7 carried is Smithay main's own: a new X11
-window's first place and size at fractional scales; the session lock's checks (a program refused as a second locker can
-neither unlock the session nor show its lock screen in place of the real one, which would get the password; the compositor
-keeps its own check of which lock's surfaces it shows: docs/LOCKSCREEN.md); and the checks of what programs send (a region of
-negative size ended a debug build; negative size hints and window geometry of no size are protocol errors), with
-`tests/hostile.rs`: programs sending what the protocols forbid, which the compositor must survive.
+packages/compositor/Cargo.toml): since 2026-11-24, Smithay's main branch (54cf9c10) with six fixes of ours, each for something
+the compositor's own code cannot fix well (seven commits: the last only formats a line). They bind the X11 sockets apart from
+starting XWayland (XWayland on the first X11 program, above); fix two X11 window manager bugs (close, and the events dropped
+after setting the primary screen: "Tried by hand", above); clamp a layer surface's size at i32::MAX and `_GTK_FRAME_EXTENTS`
+at what an X window can hold (a program's huge values ended a debug build: a negative size, an overflow in
+`X11Surface::geometry`; `tests/hostile.rs`, `tests/x11.rs`); fix the three drag and drop bugs above; and end the window
+manager's transfers, and a drop not finished yet, when XWayland's X connection closes (above; `tests/dnd.rs`). The rest of
+what our fork of Smithay 0.7 carried is Smithay main's own: a new X11 window's first place and size at fractional scales; the
+session lock's checks (a program refused as a second locker can neither unlock the session nor show its lock screen in place
+of the real one, which would get the password; the compositor keeps its own check of which lock's surfaces it shows:
+docs/LOCKSCREEN.md); and the checks of what programs send (a region of negative size ended a debug build; negative size hints
+and window geometry of no size are protocol errors), with `tests/hostile.rs`: programs sending what the protocols forbid,
+which the compositor must survive.
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton
