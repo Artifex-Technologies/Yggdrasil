@@ -153,7 +153,7 @@ The session's behaviour is set in `packages/session/hyprland/yggdrasil.lua` (wit
 
 **Built but only tried nested (not in the headless tests):** games drawn opaque (OpenGL ES only), WM_STATE when a window is
 minimized and restored (Wine's), Super+T, the buttons of the window controls for server-side decoration, Super+drag's resize
-(the right button), xdg-activation, idle inhibit, the clipboard between programs and primary selection.
+(the right button), xdg-activation, idle inhibit, the clipboard and primary selection between Wayland programs (between X11 and Wayland programs: `tests/dnd.rs`).
 XWayland (`tests/x11.rs`, `tests/dnd.rs`, `tests/apps.rs`), tiling workspaces (`tests/look.rs`, `tests/tools.rs`), the
 window controls' grips (`tests/fullscreen.rs`, `tests/x11.rs`), a program's own move and resize requests (`tests/grabs.rs`)
 and Super+drag's move (`tests/dnd.rs`) are in the headless tests.
