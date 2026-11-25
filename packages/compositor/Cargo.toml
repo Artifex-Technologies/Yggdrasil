@@ -52,4 +52,4 @@ lto = "thin"
 # lock screen); and master's checks of client input (regions, size hints, window geometry). Our fork, pinned by commit (branch
 # yggdrasil/lazy-xwayland on the 0.7.0 tag).
 [patch.crates-io]
-smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "bb80bfa02378ac9892301c76418eba687029b77b" }
+smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "30816ea17065b2b46d331dff325ee107a68d28c5" }

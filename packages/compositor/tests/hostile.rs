@@ -117,5 +117,34 @@ fn hostile_requests_do_not_bring_the_compositor_down() {
         std::thread::sleep(Duration::from_millis(200));
         still_serving(&mut comp, &format!("a positioner of {pw}x{ph}"));
     }
+
+    // panels asking for absurd sizes, margins and reserved zones (Smithay main fixed integer overflows in arranging them)
+    use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
+    let all = Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right;
+    let cases: [(Anchor, (u32, u32), i32, i32); 5] = [
+        (all, (u32::MAX, u32::MAX), i32::MAX, i32::MAX),
+        (all, (0, 0), i32::MIN, i32::MIN),
+        (Anchor::Top | Anchor::Left | Anchor::Right, (0, u32::MAX), i32::MAX, i32::MAX),
+        (Anchor::Bottom, (u32::MAX, 30), i32::MAX, i32::MIN),
+        (Anchor::Left, (i32::MAX as u32, i32::MAX as u32), -2, i32::MAX),
+    ];
+    for (i, (anchor, size, zone, margin)) in cases.into_iter().enumerate() {
+        let c = comp.connect();
+        let s = c.compositor.create_surface(&c.qh, ());
+        let ls = c.layer_shell.get_layer_surface(&s, Some(&c.wl_outputs[0]), Layer::Top, "test-hostile".into(), &c.qh, 10_000 + i);
+        ls.set_anchor(anchor);
+        ls.set_size(size.0, size.1);
+        ls.set_exclusive_zone(zone);
+        ls.set_margin(margin, margin, margin, margin);
+        s.commit();
+        let _ = c.conn.flush();
+        std::thread::sleep(Duration::from_millis(200));
+        still_serving(&mut comp, &format!("panel case {i} alone"));
+        // a second panel and a maximised window make the compositor arrange around the first one again
+        let mut d = comp.connect();
+        let _bar = d.layer(30);
+        let _ = comp.ctl("maximize-active");
+        still_serving(&mut comp, &format!("panel case {i}: size {size:?} zone {zone} margin {margin}"));
+    }
     still_serving(&mut comp, "all of it");
 }
