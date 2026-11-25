@@ -132,16 +132,19 @@ impl App {
         }
         let inner = Rectangle::new(loc, geo.size).to_f64();
         let around = |by: f64| inner + FrameExtents::new(by, by, by, by);
-        let grips = self.bar_visible(w);
+        let decorated = self.bar_visible(w);
         // where the surface's own origin is (the window's geometry may start inside it, past a client-side shadow); an X11
-        // window's surface only as far out as X11_BORDER, and not past the window where the compositor's grips are
+        // window's surface only as far out as X11_BORDER, and not past a decorated window, where the compositor's grips are
         let render = loc - geo.loc;
-        if w.x11_surface().is_none() || around(if grips { 0.0 } else { X11_BORDER / self.x11_client_scale() }).contains(pos) {
+        if w.x11_surface().is_none() || around(if decorated { 0.0 } else { X11_BORDER / self.x11_client_scale() }).contains(pos) {
             if let Some((s, p)) = w.surface_under(pos - render.to_f64(), WindowSurfaceType::ALL) {
                 return Some(Under::Window(w.clone(), s, (p + render).to_f64()));
             }
         }
-        if !grips {
+        // grips around a decorated window, and around any floating one where its own surface does not reach (a program that
+        // draws its own frame without a shadow to resize by, as Chromium and Electron programs do, would have no edge to drag
+        // but a few pixels inside it)
+        if !decorated && !self.free_floating(w) {
             return None;
         }
         let outer = around(deco::GRIP as f64);

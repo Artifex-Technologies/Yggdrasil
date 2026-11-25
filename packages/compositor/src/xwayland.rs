@@ -450,6 +450,18 @@ impl App {
 
 /// With YGGDRASIL_COMPOSITOR_DEBUG set, an X11 window's steps go to the log: a menu that is never drawn (seen in CI only,
 /// YGG-115) then shows which step did not come.
+/// What a press (the pointer's grab) is on, for the debug log: an X11 window's id, a Wayland surface, nothing, or no press.
+fn press_of(start: &Option<GrabStartData<App>>) -> String {
+    match start {
+        None => "none".into(),
+        Some(s) => match &s.focus {
+            Some((PtrFocus::X11(x, _), _)) => format!("on X11 window {}", x.window_id()),
+            Some((PtrFocus::Wl(w), _)) => format!("on Wayland surface {w:?}"),
+            None => "on nothing".into(),
+        },
+    }
+}
+
 fn debug(what: impl FnOnce() -> String) {
     if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
         eprintln!("x11: {}", what());
@@ -707,6 +719,7 @@ impl XwmHandler for App {
     /// windows. Any X11 program may ask this for any window at any time; without a press on the window it is ignored.
     fn move_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32) {
         let pointer = self.pointer.clone();
+        debug(|| format!("move asked by {}, the press {}", window.window_id(), press_of(&pointer.grab_start_data())));
         let (Some(start), Some(w)) = (pointer.grab_start_data().filter(|s| pressed_on(s, &window)), self.x11_window(&window)) else {
             return;
         };
@@ -716,6 +729,7 @@ impl XwmHandler for App {
 
     fn resize_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32, edge: X11Edge) {
         let pointer = self.pointer.clone();
+        debug(|| format!("resize {edge:?} asked by {}, the press {}", window.window_id(), press_of(&pointer.grab_start_data())));
         let (Some(start), Some(w)) = (pointer.grab_start_data().filter(|s| pressed_on(s, &window)), self.x11_window(&window)) else {
             return;
         };
