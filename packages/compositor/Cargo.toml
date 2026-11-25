@@ -69,4 +69,4 @@ lto = "thin"
 #   7773aa92  a Wayland program's drag's data given to X11 programs only from a drop the X11 window accepted until the drop
 #             ends (before, any X11 program could read it while the drag was over any X11 window)
 [patch.crates-io]
-smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "cef101c1bd0f7c4b533fcbe19abd06a6b90ca7ce" }
+smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "7773aa9206821f00356a10ee13589a5b03802ea7" }

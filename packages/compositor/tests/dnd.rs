@@ -2275,7 +2275,6 @@ fn ask(
 /// told only its types (TARGETS). Let go before the target answered where the pointer moved, the drop waits for that answer,
 /// and so does the URI. Dropped there, the target reads it; once the target finished, nobody does.
 #[test]
-#[ignore = "needs the fork's fix that gives X11 programs a Wayland drag's data only after an accepted drop (YGG-125)"]
 fn an_x11_program_cannot_read_a_wayland_drag_before_the_drop() {
     if !xwayland_installed() {
         eprintln!("skipped: XWayland is not installed");
@@ -2340,7 +2339,6 @@ fn an_x11_program_cannot_read_a_wayland_drag_before_the_drop() {
 /// go there: the dragging program is told the drag is cancelled. Smithay tells the X11 program of a drop all the same
 /// (XdndDrop, where XDND has XdndLeave), yet no X11 program reads the file's URI: not one in the background, not the target.
 #[test]
-#[ignore = "needs the fork's fix that gives X11 programs a Wayland drag's data only after an accepted drop (YGG-125)"]
 fn an_x11_program_cannot_read_a_wayland_drag_its_target_refused() {
     if !xwayland_installed() {
         eprintln!("skipped: XWayland is not installed");
@@ -2395,7 +2393,6 @@ fn an_x11_program_cannot_read_a_wayland_drag_its_target_refused() {
 /// where the pointer last moved; its answer then refuses the drag. Smithay took the drop on the answer before and tells the X11
 /// program of it all the same (XdndDrop), yet no X11 program reads the file's URI: not one in the background, not the target.
 #[test]
-#[ignore = "needs the fork's fix that gives X11 programs a Wayland drag's data only after an accepted drop (YGG-125)"]
 fn an_x11_program_cannot_read_a_wayland_drag_its_target_refused_at_the_drop() {
     if !xwayland_installed() {
         eprintln!("skipped: XWayland is not installed");
