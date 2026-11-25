@@ -166,6 +166,11 @@ pub fn plain_signals(c: &mut std::process::Command) -> &mut std::process::Comman
     }
 }
 
+/// A YGGDRASIL_COMPOSITOR_* switch that is on unless it says 0, no, off or false (explicit sync, direct scanout).
+pub fn switched_on(var: Option<&str>) -> bool {
+    !matches!(var.map(|v| v.trim().to_ascii_lowercase()).as_deref(), Some("0" | "no" | "off" | "false"))
+}
+
 /// Start the --run programs: on this compositor's Wayland socket, and X11 ones on its XWayland (never the host's X server).
 fn start_programs(run: &[Vec<String>], wayland: &str, x11: Option<u32>) {
     for cmd in run {
@@ -445,7 +450,18 @@ fn run_nested(
 
 #[cfg(test)]
 mod tests {
-    use super::split_args;
+    use super::{split_args, switched_on};
+
+    #[test]
+    fn a_switch_is_on_unless_it_says_off() {
+        // YGGDRASIL_COMPOSITOR_EXPLICIT_SYNC, YGGDRASIL_COMPOSITOR_SCANOUT
+        assert!(switched_on(None));
+        assert!(switched_on(Some("1")));
+        assert!(switched_on(Some("")));
+        for off in ["0", "no", "OFF", " false "] {
+            assert!(!switched_on(Some(off)), "{off}");
+        }
+    }
 
     #[test]
     fn options_come_before_the_programs() {

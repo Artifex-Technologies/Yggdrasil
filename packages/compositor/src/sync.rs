@@ -28,15 +28,10 @@ use smithay::wayland::drm_syncobj::{supports_syncobj_eventfd, DrmSyncobjCachedSt
 
 use crate::state::App;
 
-/// Whether explicit sync may be offered: yes unless YGGDRASIL_COMPOSITOR_EXPLICIT_SYNC says 0, no, off or false.
-pub fn explicit_allowed(var: Option<&str>) -> bool {
-    !matches!(var.map(|v| v.trim().to_ascii_lowercase()).as_deref(), Some("0" | "no" | "off" | "false"))
-}
-
 /// Offers linux-drm-syncobj-v1 for the GPU behind `render_node` (the node programs render on), when it can wait on a
 /// timeline through an eventfd. Says which on stderr, once.
 pub fn offer(app: &mut App, dh: &DisplayHandle, render_node: &Path) {
-    if !explicit_allowed(std::env::var("YGGDRASIL_COMPOSITOR_EXPLICIT_SYNC").ok().as_deref()) {
+    if !crate::switched_on(std::env::var("YGGDRASIL_COMPOSITOR_EXPLICIT_SYNC").ok().as_deref()) {
         eprintln!("yggdrasil-compositor: explicit sync left out (YGGDRASIL_COMPOSITOR_EXPLICIT_SYNC)");
         return;
     }
@@ -102,19 +97,4 @@ pub fn wait_for_gpu(surface: &WlSurface) {
             }
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn explicit_sync_is_on_unless_switched_off() {
-        assert!(explicit_allowed(None));
-        assert!(explicit_allowed(Some("1")));
-        assert!(explicit_allowed(Some("")));
-        for off in ["0", "no", "OFF", " false "] {
-            assert!(!explicit_allowed(Some(off)), "{off}");
-        }
-    }
 }

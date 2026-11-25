@@ -1139,15 +1139,18 @@ mod tests {
 /// A window's element and its buffer: a Wayland program of its own on one end of a socket pair (wayland-client, in a thread),
 /// Smithay's compositor and shared memory on the other, the picture imported by the software renderer, as the headless backend
 /// does. Only the GPU renderer's elements reach a plane; whether an element offers its buffer does not depend on the renderer.
+/// The program and the GPU renderer on Mesa's software device are shared with the tests of xwayland::OpaqueElement and readback.
 #[cfg(test)]
-mod storage {
+pub(crate) mod storage {
     use std::os::fd::AsFd;
     use std::os::unix::net::UnixStream;
     use std::sync::Arc;
     use std::time::Duration;
 
+    use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
     use smithay::backend::renderer::element::surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement};
     use smithay::backend::renderer::element::{Kind, RenderElement, UnderlyingStorage};
+    use smithay::backend::renderer::gles::GlesRenderer;
     use smithay::backend::renderer::pixman::PixmanRenderer;
     use smithay::backend::renderer::utils::on_commit_buffer_handler;
     use smithay::reexports::wayland_server::backend::ClientData;
@@ -1164,7 +1167,7 @@ mod storage {
 
     use super::{clip_of, Camera, Change, Clipped, Look, RectF, Shape};
 
-    struct Server {
+    pub(crate) struct Server {
         compositor: CompositorState,
         shm: ShmState,
         surface: Option<wl_surface::WlSurface>,
@@ -1215,7 +1218,7 @@ mod storage {
     wayland_client::delegate_noop!(Program: ignore WlSurface);
 
     /// A program shows one picture of `size` (XRGB): the server's side of its surface, and the connection that keeps it.
-    fn one_picture(size: (i32, i32)) -> (Display<Server>, Server, wl_surface::WlSurface, Connection) {
+    pub(crate) fn one_picture(size: (i32, i32)) -> (Display<Server>, Server, wl_surface::WlSurface, Connection) {
         let mut display: Display<Server> = Display::new().unwrap();
         let mut dh = display.handle();
         let mut server =
@@ -1248,6 +1251,23 @@ mod storage {
         let conn = program.join().unwrap();
         let surface = server.surface.clone().expect("the program's surface was committed");
         (display, server, surface, conn)
+    }
+
+    /// The GPU renderer on Mesa's software OpenGL ES (llvmpipe, through its software EGL device: no GPU, no screen); None, and
+    /// the test skipped, where there is none.
+    pub(crate) fn software_gles() -> Option<GlesRenderer> {
+        let Some(device) = EGLDevice::enumerate().ok().and_then(|mut all| all.find(|d| d.is_software())) else {
+            eprintln!("no software EGL device (Mesa): skipped");
+            return None;
+        };
+        // SAFETY: the test makes no EGL display outside Smithay, which tracks its own; the context keeps the display
+        let Ok(display) = (unsafe { EGLDisplay::new(device) }) else {
+            eprintln!("the software EGL device gave no display: skipped");
+            return None;
+        };
+        let context = EGLContext::new(&display).expect("an EGL context");
+        // SAFETY: the context is current only on the test's thread
+        Some(unsafe { GlesRenderer::new(context) }.expect("OpenGL ES"))
     }
 
     #[test]

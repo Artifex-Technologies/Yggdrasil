@@ -47,10 +47,10 @@
 //!   explicit sync (linux-drm-syncobj-v1, which NVIDIA needs) where the GPU can, the buffer's own fences otherwise.
 //!
 //! - **Direct scanout**: a full screen window drawn exactly as the program made it offers its buffer (look::Clipped,
-//!   xwayland::OpaqueElement), and Smithay's DrmCompositor puts it on the primary plane when nothing is drawn over it and the
-//!   GPU takes it; while a full screen window covers a screen, a buffer of any format is tried there (`frame_flags`;
-//!   `YGGDRASIL_COMPOSITOR_SCANOUT=0` keeps every picture composited). The log says when a screen's picture starts going out
-//!   directly and why it is composited again (`why_composited`).
+//!   xwayland::OpaqueElement), and Smithay's DrmCompositor puts it on the primary plane when it covers the screen, nothing is
+//!   drawn over it and the GPU takes it; while a full screen window covers a screen, a buffer of any format is tried there
+//!   (`frame_flags`; `YGGDRASIL_COMPOSITOR_SCANOUT=0` keeps every picture composited). The log says when a screen's picture
+//!   starts going out directly and why it is composited again (`why_composited`).
 //!
 //! Known limitations (docs/COMPOSITOR.md): each GPU draws only its own screens (none draws for another, as a laptop's NVIDIA
 //! GPU behind the Intel one would need); only the primary plane takes a window, the overlay planes only the pointer; no
@@ -96,7 +96,7 @@ use crate::input::{DeviceInfo, Kind as InputKind};
 use crate::laptop::Switches;
 use smithay::reexports::rustix::fs::OFlags;
 use smithay::reexports::wayland_server::Display;
-use smithay::utils::{DeviceFd, Logical, Rectangle, Size, Transform};
+use smithay::utils::{DeviceFd, Logical, Physical, Rectangle, Size, Transform};
 use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 
 use crate::state::{App, Elem, PixElem};
@@ -1488,10 +1488,15 @@ macro_rules! frame {
                     PrimaryPlaneElement::Swapchain(_) => None,
                 };
                 let why = match (&direct, &$screen.direct) {
-                    (None, Some(was)) => Some(why_composited(
-                        elements.iter().find(|e| e.id() == was).and_then(|e| e.change()),
-                        r.states.element_render_state(was.clone()),
-                    )),
+                    (None, Some(was)) => {
+                        let el = elements.iter().find(|e| e.id() == was);
+                        let scale = output.current_scale().fractional_scale();
+                        Some(why_composited(
+                            el.and_then(|e| e.change()),
+                            el.is_some_and(|e| covers(e.geometry(scale.into()), &output)),
+                            r.states.element_render_state(was.clone()),
+                        ))
+                    }
                     _ => None,
                 };
                 let (empty, states) = (r.is_empty, r.states);
@@ -1709,12 +1714,8 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
 
 /// Whether a program's buffer may go to the screen directly: `YGGDRASIL_COMPOSITOR_SCANOUT` 0 (no, off, false) keeps every
 /// picture composited, for a driver that shows the switch badly and to measure the difference with one restart.
-fn scanout_wanted(v: Option<&str>) -> bool {
-    !matches!(v.map(|v| v.trim().to_ascii_lowercase()).as_deref(), Some("0" | "no" | "off" | "false"))
-}
-
 fn scanout_allowed() -> bool {
-    thread_local!(static A: bool = scanout_wanted(std::env::var("YGGDRASIL_COMPOSITOR_SCANOUT").ok().as_deref()));
+    thread_local!(static A: bool = crate::switched_on(std::env::var("YGGDRASIL_COMPOSITOR_SCANOUT").ok().as_deref()));
     A.with(|a| *a)
 }
 
@@ -1730,9 +1731,15 @@ fn frame_flags(scanout: bool, full: bool) -> FrameFlags {
     }
 }
 
-/// Why the picture that went to the screen directly is composited again, from the compositor's change to it (look::Change)
-/// and Smithay's state for it in this frame.
-fn why_composited(change: Option<crate::look::Change>, state: Option<RenderElementState>) -> String {
+/// Whether a picture at `geo` covers all of `output`'s mode, as the one Smithay puts on the primary plane must (with nothing
+/// below it showing).
+fn covers(geo: Rectangle<i32, Physical>, output: &Output) -> bool {
+    output.current_mode().is_some_and(|m| geo.contains_rect(Rectangle::from_size(output.current_transform().transform_size(m.size))))
+}
+
+/// Why the picture that went to the screen directly is composited again, from the compositor's change to it (look::Change),
+/// whether it still covers the screen, and Smithay's state for it in this frame.
+fn why_composited(change: Option<crate::look::Change>, covers: bool, state: Option<RenderElementState>) -> String {
     if let Some(c) = change {
         return c.to_string();
     }
@@ -1745,6 +1752,9 @@ fn why_composited(change: Option<crate::look::Change>, state: Option<RenderEleme
         }
         Some(RenderElementPresentationState::Rendering { reason: Some(RenderingReason::ScanoutFailed) }) => {
             "the GPU refused its buffer on the primary plane".into()
+        }
+        Some(RenderElementPresentationState::Rendering { reason: None }) if !covers => {
+            "it no longer covers the whole screen (moved or drawn smaller)".into()
         }
         Some(RenderElementPresentationState::Rendering { reason: None }) => {
             "something is drawn over it (the pointer without a cursor plane, a menu, a notification), or its new buffer cannot go \
@@ -1796,17 +1806,18 @@ mod tests {
 
     #[test]
     fn a_full_screen_window_may_go_out_in_any_format_and_the_log_says_why_it_stops() {
-        use super::{frame_flags, scanout_wanted, why_composited};
+        use super::{covers, frame_flags, why_composited};
         use crate::look::Change;
         use smithay::backend::drm::compositor::FrameFlags;
         use smithay::backend::renderer::element::{RenderElementPresentationState as P, RenderElementState, RenderingReason};
+        use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
+        use smithay::utils::{Physical, Rectangle, Transform};
         // the primary plane takes a program's buffer in its own format always, in any format while a window is full screen
         assert_eq!(frame_flags(true, false), FrameFlags::DEFAULT);
         assert!(frame_flags(true, true).contains(FrameFlags::DEFAULT | FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY));
         assert!(!frame_flags(true, true).contains(FrameFlags::SKIP_CURSOR_ONLY_UPDATES));
-        // YGGDRASIL_COMPOSITOR_SCANOUT=0: no primary plane for any picture, the pointer still on its plane
-        assert!(scanout_wanted(None) && scanout_wanted(Some("1")) && scanout_wanted(Some("")));
-        assert!(["0", "no", " Off ", "false"].into_iter().all(|v| !scanout_wanted(Some(v))));
+        // YGGDRASIL_COMPOSITOR_SCANOUT=0 (read with crate::switched_on): no primary plane for any picture, the pointer still on
+        // its plane
         for full in [false, true] {
             let f = frame_flags(false, full);
             assert!(!f.intersects(FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT | FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY));
@@ -1814,12 +1825,32 @@ mod tests {
         }
         let state = |presentation_state| Some(RenderElementState { visible_area: 1, presentation_state, needs_capture: false });
         // the compositor's own reason first, then the frame's
-        assert_eq!(why_composited(Some(Change::Stretched), state(P::Rendering { reason: None })), Change::Stretched.to_string());
-        assert_eq!(why_composited(None, None), "it is no longer drawn");
-        assert_eq!(why_composited(None, state(P::Skipped)), "it is hidden");
-        assert!(why_composited(None, state(P::Rendering { reason: Some(RenderingReason::FormatUnsupported) })).contains("format"));
-        assert!(why_composited(None, state(P::Rendering { reason: Some(RenderingReason::ScanoutFailed) })).contains("GPU refused"));
-        assert!(why_composited(None, state(P::Rendering { reason: None })).starts_with("something is drawn over it"));
+        let drawn = || state(P::Rendering { reason: None });
+        assert_eq!(why_composited(Some(Change::Stretched), false, drawn()), Change::Stretched.to_string());
+        assert_eq!(why_composited(None, false, None), "it is no longer drawn");
+        assert_eq!(why_composited(None, true, state(P::Skipped)), "it is hidden");
+        assert!(why_composited(None, true, state(P::Rendering { reason: Some(RenderingReason::FormatUnsupported) })).contains("format"));
+        assert!(why_composited(None, true, state(P::Rendering { reason: Some(RenderingReason::ScanoutFailed) })).contains("GPU refused"));
+        assert!(why_composited(None, true, drawn()).starts_with("something is drawn over it"));
+        assert!(why_composited(None, false, drawn()).starts_with("it no longer covers the whole screen"));
+        // covering the screen: all of its mode, turned as the screen is
+        let o = Output::new(
+            "DP-1".into(),
+            PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: Subpixel::Unknown,
+                make: "test".into(),
+                model: "test".into(),
+                serial_number: String::new(),
+            },
+        );
+        o.change_current_state(Some(Mode { size: (1920, 1080).into(), refresh: 60_000 }), Some(Transform::Normal), None, None);
+        let r = |x, y, w, h| Rectangle::<i32, Physical>::new((x, y).into(), (w, h).into());
+        assert!(covers(r(0, 0, 1920, 1080), &o) && covers(r(-10, -10, 1940, 1100), &o));
+        assert!(!covers(r(-200, -100, 1920, 1080), &o), "moved: the background shows at the right and the bottom");
+        assert!(!covers(r(0, 0, 1920, 1000), &o));
+        o.change_current_state(None, Some(Transform::_90), None, None);
+        assert!(covers(r(0, 0, 1080, 1920), &o) && !covers(r(0, 0, 1920, 1080), &o));
     }
 
     #[test]
