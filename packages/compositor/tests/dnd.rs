@@ -1824,6 +1824,18 @@ fn a_drop_an_x11_program_never_finishes_is_cancelled_after_10_seconds() {
     while let Some(e) = x.conn.poll_for_event().unwrap() {
         assert!(!matches!(&e, Event::ClientMessage(m) if m.type_ == x.leave), "the drag told left after its drop: {e:?}");
     }
+    // asked for the URI again now that the drop is over: refused (no property), not an empty answer reported as the data
+    // (YGG-142); the dragging program is not asked
+    let sent = log(|l| l.sent);
+    let late = x.conn.intern_atom(false, b"LATE").unwrap().reply().unwrap().atom;
+    x.conn.convert_selection(win, x.selection, x.uri, late, x11rb::CURRENT_TIME).unwrap();
+    x.conn.flush().unwrap();
+    let property = x.until(&mut [&mut s], "an answer to the late request", |e| match e {
+        Event::SelectionNotify(n) if n.requestor == win => Some(n.property),
+        _ => None,
+    });
+    assert_eq!(property, u32::from(AtomEnum::NONE), "a request after the drop ended is refused");
+    assert_eq!(log(|l| l.sent), sent, "the dragging program not asked after its drop ended");
 
     // the next X11 program's drag: it keeps XdndSelection, and the stand-in comes over the Wayland window
     let a = X11::connect(&display);
