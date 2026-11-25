@@ -293,7 +293,7 @@ enum Msg {
     /// Another `yggdrasil-settings PAGE` was started: turn to that page and come to the front (single.rs)
     Open(String),
     About(sys::About),
-    Network(sys::Network),
+    Network(Box<sys::Network>),
     Bluetooth(sys::Bluetooth),
     Displays(sys::Displays),
     Sound(sys::Sound),
@@ -888,7 +888,7 @@ impl App {
                 Msg::About(v) => self.data.about = Some(v),
                 Msg::Network(v) => {
                     self.wifi_shown.update(std::time::Instant::now(), &v);
-                    self.data.network = Some(v);
+                    self.data.network = Some(*v);
                 }
                 Msg::Bluetooth(v) => self.data.bluetooth = Some(v),
                 Msg::Displays(v) => self.data.displays = Some(v),
@@ -1394,7 +1394,7 @@ fn read_page(page: Page, tx: &Sender<Msg>) -> Vec<Msg> {
     let mut ahead = vec![];
     let msg = match page {
         Page::About => Msg::About(sys::about()),
-        Page::Network => Msg::Network(sys::network()),
+        Page::Network => Msg::Network(Box::new(sys::network())),
         Page::Bluetooth => Msg::Bluetooth(sys::bluetooth()),
         Page::Displays => {
             ahead.push(Msg::Tablet(laptop_ui::tablet()));

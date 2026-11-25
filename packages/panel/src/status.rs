@@ -15,6 +15,9 @@ pub enum Net {
     /// Wi-Fi, with its signal strength in percent.
     Wifi(u8),
     Wired,
+    /// A phone sharing its connection over USB carries the traffic (YGG-107: with the phone and a Wi-Fi both up, the bar
+    /// showed the Wi-Fi while everything went through the phone).
+    Phone,
 }
 
 impl Net {
@@ -23,6 +26,7 @@ impl Net {
         match self {
             Net::Off => "network-offline-symbolic",
             Net::Wired => "network-wired-symbolic",
+            Net::Phone => "phone-symbolic",
             Net::Wifi(sig) if sig >= 75 => "network-wireless-signal-excellent-symbolic",
             Net::Wifi(sig) if sig >= 50 => "network-wireless-signal-good-symbolic",
             Net::Wifi(sig) if sig >= 25 => "network-wireless-signal-ok-symbolic",
@@ -101,8 +105,27 @@ pub fn parse_bt(show: &str, connected: &str) -> Bt {
     }
 }
 
+/// The link the internet goes through decides (the lowest default route, /proc/net/route); without one, what is connected.
+pub fn net_from(route: &str, sys: &std::path::Path, devices: &str, wifi: &str) -> Net {
+    use yggdrasil_netjoin::list::{internet_link, link_kind, Link};
+    match internet_link(route, sys).map(|d| link_kind(sys, &d)) {
+        Some(Link::Wifi) => match parse_net("wifi:connected", wifi) {
+            Net::Wifi(s) => Net::Wifi(s),
+            _ => Net::Wifi(60),
+        },
+        Some(Link::Phone) => Net::Phone,
+        Some(Link::Wired) => Net::Wired,
+        None => parse_net(devices, wifi),
+    }
+}
+
 fn read_net() -> Net {
-    parse_net(&out("nmcli", &["-t", "-f", "TYPE,STATE", "device"]), &out("nmcli", &["-t", "-f", "IN-USE,SIGNAL", "dev", "wifi"]))
+    net_from(
+        &std::fs::read_to_string("/proc/net/route").unwrap_or_default(),
+        std::path::Path::new("/sys"),
+        &out("nmcli", &["-t", "-f", "TYPE,STATE", "device"]),
+        &out("nmcli", &["-t", "-f", "IN-USE,SIGNAL", "dev", "wifi"]),
+    )
 }
 
 fn read_bt() -> Bt {
@@ -486,6 +509,36 @@ mod tests {
     #[test]
     fn no_compositor_no_desktops() {
         assert_eq!(desktops(None), (vec![], 0));
+    }
+
+    #[test]
+    fn the_bar_shows_the_link_the_internet_goes_through() {
+        let sys = std::env::temp_dir().join(format!("panel-net-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&sys);
+        for (name, driver, wireless) in [("wlan0", "iwlwifi", true), ("usb0", "ipheth", false)] {
+            let d = sys.join("devices").join(name);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::create_dir_all(sys.join("drivers").join(driver)).unwrap();
+            std::os::unix::fs::symlink(sys.join("drivers").join(driver), d.join("driver")).unwrap();
+            let net = sys.join("class/net").join(name);
+            std::fs::create_dir_all(&net).unwrap();
+            std::os::unix::fs::symlink(&d, net.join("device")).unwrap();
+            if wireless {
+                std::fs::create_dir_all(net.join("wireless")).unwrap();
+            }
+        }
+        let head = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n";
+        let line = |i: &str, metric: u32| format!("{i}\t00000000\t010200C0\t0003\t0\t0\t{metric}\t00000000\t0\t0\t0\n");
+        let both = "wifi:connected\nethernet:connected\n";
+        // the phone and a Wi-Fi both up, the phone's route first: the phone, not the Wi-Fi
+        let route = format!("{head}{}{}", line("wlan0", 600), line("usb0", 100));
+        assert_eq!(net_from(&route, &sys, both, "*:78\n"), Net::Phone);
+        assert_eq!(Net::Phone.icon(), "phone-symbolic");
+        // only the Wi-Fi's route: the Wi-Fi with its signal
+        assert_eq!(net_from(&format!("{head}{}", line("wlan0", 600)), &sys, both, "*:78\n"), Net::Wifi(78));
+        // no default route at all (being set up): what is connected, as before
+        assert_eq!(net_from(head, &sys, both, "*:40\n"), Net::Wifi(40));
+        std::fs::remove_dir_all(&sys).unwrap();
     }
 
     #[test]

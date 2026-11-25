@@ -1441,6 +1441,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-netjoin"
+version = "0.1.0"
+dependencies = [
+ "zbus",
+]
+
+[[package]]
 name = "yggdrasil-panel"
 version = "0.1.0"
 dependencies = [
@@ -1459,6 +1466,7 @@ dependencies = [
  "wayland-protocols-wlr",
  "xkbcommon",
  "yggdrasil-conf",
+ "yggdrasil-netjoin",
  "yggdrasil-wm",
  "zbus",
 ]

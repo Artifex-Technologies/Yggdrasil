@@ -189,6 +189,8 @@ pub struct Network {
     /// each Wi-Fi network a private address of its own (NetworkManager's configuration): the join window shows them.
     pub addresses: Vec<yggdrasil_netjoin::mac::Adapter>,
     pub private_wifi: bool,
+    /// The link the internet goes through (its interface: the lowest default route; YGG-107), None with a fixture or none.
+    pub through: Option<String>,
 }
 
 impl Network {
@@ -336,6 +338,14 @@ pub fn network() -> Network {
         memory: Default::default(),
         addresses: if crate::fixture::get().is_some() { vec![] } else { yggdrasil_netjoin::mac::adapters() },
         private_wifi: crate::fixture::get().is_none() && yggdrasil_netjoin::mac::nm_private_wifi(),
+        through: if crate::fixture::get().is_some() {
+            None
+        } else {
+            yggdrasil_netjoin::list::internet_link(
+                &std::fs::read_to_string("/proc/net/route").unwrap_or_default(),
+                std::path::Path::new("/sys"),
+            )
+        },
     };
     // the connection to the router (not a VPN or Tailscale's tunnel)
     let home = n.live.iter().filter(|(_, l)| !l.router.is_empty()).map(|(u, _)| u.clone()).min();
