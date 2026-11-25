@@ -658,19 +658,36 @@ pub fn window_size(w: &Window) -> smithay::utils::Size<i32, Logical> {
     }
 }
 
-/// The widest client-side shadow believed, on any side: GTK's are about 25 pixels. A program may write anything there (Smithay
-/// takes each side as 0 to i32::MAX): a window's place plus such a side overflowed (a debug build ended), and its X window was
-/// made that much bigger than the window.
+/// The widest client-side shadow believed, on any side: GTK's are about 25 pixels. A program may write anything there (our
+/// Smithay fork takes each side as 0 to 65535), and its X window was made that much bigger than the window (before the fork
+/// did, a window's place plus such a side overflowed: a debug build ended).
 const MAX_SHADOW: i32 = 256;
 
 /// An X11 window's client-side shadow: `_GTK_FRAME_EXTENTS`, which GTK and Chromium draw inside their X window once the window
-/// manager says it reads it, as Smithay's does. None when a side is wider than any real shadow (`MAX_SHADOW`).
+/// manager says it reads it, as Smithay's does. None when a side is wider than any real shadow (`MAX_SHADOW`), or when it
+/// leaves nothing of the X window as it is now (a 100x100 one that says 60 on each side): no program draws either, and the
+/// window is then all of its X window. Taken when the window is placed and when the program sizes its X window itself.
 pub fn shadow(x: &X11Surface) -> FrameExtents<i32, Logical> {
     let s = x.frame_extents();
-    if [s.left, s.right, s.top, s.bottom].iter().all(|v| (0..=MAX_SHADOW).contains(v)) {
+    let size = x.last_configure().size;
+    let sides = [s.left, s.right, s.top, s.bottom].iter().all(|v| (0..=MAX_SHADOW).contains(v));
+    if sides && s.left + s.right < size.w && s.top + s.bottom < size.h {
         s
     } else {
         FrameExtents::default()
+    }
+}
+
+/// A window's geometry: the part of its surface that is the window, without a client-side shadow, from the surface's origin.
+/// Drawing, hit tests, previews and copies take it from here. For an X11 window it is the surface less the shadow its X window
+/// was placed with (`placed_shadow`), as it is listed (`x11_rect`): whether a shadow is believed depends on the X window's
+/// size, so both take the one decided when it was placed. Smithay's own geometry takes any _GTK_FRAME_EXTENTS: a window whose
+/// shadow was not believed was listed as all of its X window, but drawn and clicked as nothing of it or a strip. Smithay's
+/// `Space` still uses its own to work out which outputs a window is on.
+pub fn window_geometry(w: &Window) -> Rectangle<i32, Logical> {
+    match w.x11_surface() {
+        Some(x) => x.bbox() - placed_shadow(x),
+        None => w.geometry(),
     }
 }
 
@@ -683,7 +700,7 @@ pub fn placed_shadow(x: &X11Surface) -> FrameExtents<i32, Logical> {
 }
 
 /// An X11 window's place and size as the compositor keeps them: its X window less the shadow it was placed with, as a Wayland
-/// window's geometry leaves its shadow out. Smithay's `Space` holds X11 windows there too (its geometry is the same part).
+/// window's geometry leaves its shadow out. Smithay's `Space` holds X11 windows there too (`window_geometry` is the same part).
 pub fn x11_rect(x: &X11Surface) -> Rectangle<i32, Logical> {
     x.last_configure() - placed_shadow(x)
 }
@@ -1106,7 +1123,7 @@ impl App {
         }
         let o = self.window_output(w);
         let (screen, zone) = (output_rect(&o), self.free_area(&o));
-        let size = w.geometry().size;
+        let size = window_geometry(w).size;
         // centred in the free room; one bigger than the room is made as big as it less the outer gap (keep-clear's open)
         let start = crate::placement::centred((size.w, size.h), zone);
         let opened = crate::placement::open(start, screen, zone, self.look.gaps_out).unwrap_or(start);
@@ -1286,7 +1303,9 @@ impl App {
     /// (udev.rs).
     pub fn fullscreen_on(&self, output: &Output) -> bool {
         self.space.elements().any(|w| {
-            win_has(w, xdg_toplevel::State::Fullscreen) && w.geometry().size.w > 0 && self.space.outputs_for_element(w).contains(output)
+            win_has(w, xdg_toplevel::State::Fullscreen)
+                && window_geometry(w).size.w > 0
+                && self.space.outputs_for_element(w).contains(output)
         })
     }
 
@@ -2304,7 +2323,7 @@ impl App {
             return None;
         }
         let loc = self.space.element_location(w)?;
-        let size = w.geometry().size;
+        let size = window_geometry(w).size;
         Some(Rectangle::new(
             (loc.x + size.w - deco::PILL_W - deco::MARGIN_X, loc.y + deco::MARGIN_Y).into(),
             (deco::PILL_W, deco::PILL_H).into(),
@@ -2499,7 +2518,7 @@ impl App {
         let windows: Vec<Window> = self.space.elements().rev().cloned().collect();
         for w in windows {
             let Some(loc) = self.space.element_location(&w) else { continue };
-            let geo = w.geometry();
+            let geo = window_geometry(&w);
             if geo.size.w <= 0 || geo.size.h <= 0 {
                 // nothing drawn yet (a window waiting for its first picture)
                 continue;
@@ -3222,8 +3241,11 @@ impl CompositorHandler for App {
             let found = self.space.elements().find(|w| is_window_of(w, &root)).cloned();
             if let Some(w) = found {
                 w.on_commit();
-                if self.unplaced.contains(&root) && w.geometry().size.w > 0 && w.geometry().size.h > 0 {
-                    self.place_new(&w);
+                if self.unplaced.contains(&root) {
+                    let size = window_geometry(&w).size;
+                    if size.w > 0 && size.h > 0 {
+                        self.place_new(&w);
+                    }
                 }
             }
         }
@@ -3645,7 +3667,7 @@ impl XdgShellHandler for App {
             return;
         };
         let origin = self.space.element_location(&window).unwrap_or_default();
-        let size = window.geometry().size;
+        let size = window_geometry(&window).size;
         pointer.set_grab(self, ResizeGrab { start, window, edges, origin, size }, serial, Focus::Clear);
     }
 

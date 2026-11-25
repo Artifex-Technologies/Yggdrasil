@@ -20,13 +20,14 @@ use smithay::utils::{FrameExtents, Logical, Point, Rectangle};
 use smithay::wayland::shell::wlr_layer::Layer;
 use smithay::xwayland::X11Surface;
 
-use super::{win_has, App, PtrFocus};
+use super::{win_has, window_geometry, App, PtrFocus};
 use crate::deco::{self, Hit};
 
 /// How far out from its window an X11 program's surface takes clicks. A program that draws its own shadow (GTK, Chromium) keeps
 /// its resize border at the inner edge of the shadow and lets clicks on the rest through to what is behind, by an X input
 /// shape that XWayland does not hand on: the surface would take them all over the shadow, which is not drawn. GTK 3 takes
-/// them 10 pixels out, GTK 4 12 (a click past GTK 3's would be lost: the X server finds no window of it there).
+/// them 10 pixels out, GTK 4 12 (a click past GTK 3's would be lost: the X server finds no window of it there). In the
+/// program's own pixels: X11 programs draw at XWayland's scale, so at 125 % this is 8 logical pixels.
 const X11_BORDER: f64 = 10.0;
 
 /// What is under a point of the space, the frontmost thing there.
@@ -119,7 +120,7 @@ impl App {
     /// The part of one window at `pos`: its controls (drawn over its picture), its picture or menus, its grips (outside it).
     fn window_part(&self, w: &Window, pos: Point<f64, Logical>) -> Option<Under> {
         let loc = self.space.element_location(w)?;
-        let geo = w.geometry();
+        let geo = window_geometry(w);
         if geo.size.w <= 0 || geo.size.h <= 0 {
             // nothing drawn yet: `scene` skips it, so the pointer passes through it too
             return None;
@@ -135,7 +136,7 @@ impl App {
         // where the surface's own origin is (the window's geometry may start inside it, past a client-side shadow); an X11
         // window's surface only as far out as X11_BORDER, and not past the window where the compositor's grips are
         let render = loc - geo.loc;
-        if w.x11_surface().is_none() || around(if grips { 0.0 } else { X11_BORDER }).contains(pos) {
+        if w.x11_surface().is_none() || around(if grips { 0.0 } else { X11_BORDER / self.x11_client_scale() }).contains(pos) {
             if let Some((s, p)) = w.surface_under(pos - render.to_f64(), WindowSurfaceType::ALL) {
                 return Some(Under::Window(w.clone(), s, (p + render).to_f64()));
             }
@@ -185,7 +186,10 @@ impl App {
         self.space
             .elements()
             .rev()
-            .filter(|w| w.geometry().size.w > 0 && w.geometry().size.h > 0)
+            .filter(|w| {
+                let size = window_geometry(w).size;
+                size.w > 0 && size.h > 0
+            })
             .find(|w| self.window_output(w) == *o)
             .is_some_and(|w| win_has(w, xdg_toplevel::State::Fullscreen))
     }

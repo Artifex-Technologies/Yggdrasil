@@ -577,8 +577,9 @@ impl XwmHandler for App {
     ) {
         self.wake();
         let mut geo = window.last_configure();
-        match self.x11_window(&window) {
-            Some(win) if self.placed_by_layout(&win) => {
+        let shown = self.x11_window(&window);
+        match &shown {
+            Some(win) if self.placed_by_layout(win) => {
                 let _ = window.configure(None);
                 return;
             }
@@ -595,12 +596,22 @@ impl XwmHandler for App {
             geo.size.h = h as i32;
         }
         // a shown window may grow only as far as the free space (a full screen one was answered above)
-        if self.x11_window(&window).is_some() {
+        if shown.is_some() {
             let zone = smithay::desktop::layer_map_for_output(&self.output).non_exclusive_zone();
             geo.size.w = geo.size.w.min(zone.size.w.max(1));
             geo.size.h = geo.size.h.min(zone.size.h.max(1));
         }
+        let at = state::x11_rect(&window).loc;
         let _ = window.configure(geo);
+        // The shadow is taken again for the new size: an X window made smaller than its shadow is all window (a shadow that
+        // leaves nothing of it is not believed), one made big enough for it has it again. Either way the window keeps its
+        // place, and its X window is placed around it anew.
+        if let Some(win) = shown {
+            let s = state::shadow(&window);
+            if s != state::placed_shadow(&window) {
+                state::x11_place(&win, at, (geo - s).size);
+            }
+        }
     }
 
     /// Something moved or changed size in the X server. Managed windows are placed by the compositor and already known; menus
