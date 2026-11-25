@@ -46,13 +46,19 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 opt-level = 2
 lto = "thin"
 
-# Smithay's main branch (54cf9c10; its version is still 0.7.0, so it stands in for the 0.7 above) with five commits of ours:
-# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit. They bind the
-# X11 sockets apart from starting XWayland (X11Sockets, XWayland::spawn_with_sockets), so XWayland starts on the first X11
-# program (xwayland.rs); fix two X11 window manager bugs (every event was dropped after set_randr_primary_output until the
-# next request; close left a client that cannot be asked running without its window, and now ends it with XKillClient);
-# clamp a layer surface's set_size at i32::MAX and _GTK_FRAME_EXTENTS at 0..=u16::MAX (a program's huge values ended a debug
-# build: a negative size, an overflow in X11Surface::geometry); and fix three XDND bugs (only a drag started on XWayland's
-# surfaces can become an X11 drag, a vanished drop target ends the drag, a drag the X11 program gave up ends with the grab).
+# Smithay's main branch (54cf9c10; its version is still 0.7.0, so it stands in for the 0.7 above) with seven commits of ours:
+# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit (5bb77de9).
+#   514b9ae1  the X11 sockets bound apart from starting XWayland (X11Sockets, XWayland::spawn_with_sockets), so XWayland
+#             starts on the first X11 program (xwayland.rs)
+#   3c8ca3a4  two X11 window manager fixes: every event was dropped after set_randr_primary_output until the next request;
+#             close left a client that cannot be asked running without its window, and now ends it with XKillClient
+#   0b9ef80c  a layer surface's set_size clamped at i32::MAX (a program's huge size ended a debug build: a negative size)
+#   77d67ca1  _GTK_FRAME_EXTENTS clamped at 0..=u16::MAX (a program's huge values ended a debug build: an overflow in
+#             X11Surface::geometry)
+#   be625ae9  three XDND fixes: only a drag started on XWayland's surfaces can become an X11 drag, a vanished drop target
+#             ends the drag, a drag the X11 program gave up ends with the grab
+#   9107c377  the window manager's clipboard, primary-selection and XdndSelection transfers, and a drop not finished yet,
+#             end when XWayland's X connection closes (before, such a transfer's pipe becoming ready ended the compositor)
+#   5bb77de9  rustfmt only
 [patch.crates-io]
 smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "5bb77de946b466e031a63deef6c200bed091990b" }
