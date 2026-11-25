@@ -299,8 +299,8 @@ pub struct App {
     pub xwayland_source: Option<smithay::reexports::calloop::RegistrationToken>,
     /// When GTK's settings.ini last changed: XSETTINGS are published again when it does (reload_config).
     gtk_ini_time: Option<std::time::SystemTime>,
-    /// The second connection to XWayland, on a thread of its own: the active X11 window, programs' own icons, XSETTINGS and
-    /// WM_STATE (x11asked.rs).
+    /// The second connection to XWayland, on a thread of its own: the active X11 window, programs' own icons and WM_STATE
+    /// (x11asked.rs).
     pub x11_reader: Option<crate::x11asked::Reader>,
     /// the X11 window last marked active (_NET_ACTIVE_WINDOW), while one has the keyboard
     pub x11_active: Option<u32>,
@@ -1280,7 +1280,9 @@ impl App {
     }
 
     /// Tells the programs whose windows are on `output` how to allocate their GPU buffers: the scanout feedback for a window
-    /// the screen tried to show directly (or does), the renderer's otherwise (Smithay's choice from the frame's states).
+    /// the screen tried to show directly (or does), the renderer's otherwise (Smithay's choice from the frame's states). No
+    /// window is tried: each is drawn through look::Clipped or xwayland::OpaqueElement, which offer Smithay's DrmCompositor no
+    /// buffer to put on a plane, so every window is told the renderer's.
     pub fn send_dmabuf_feedback(
         &self,
         output: &Output,
@@ -1572,10 +1574,10 @@ impl App {
         self.saved.retain(|(s, _)| s != surface);
         self.saved.push((surface.clone(), Rectangle::new(loc, window_size(&window))));
         self.space.unmap_elem(&window);
-        // an X11 program is told it is hidden (_NET_WM_STATE_HIDDEN), so a game may stop drawing
+        // an X11 program is told it is hidden (_NET_WM_STATE_HIDDEN, and WM_STATE Iconic from Smithay), so a game may stop drawing
         if let Some(x) = window.x11_surface() {
             let _ = x.set_hidden(true);
-            // and minimized in ICCCM's WM_STATE, which Wine watches (see x11asked.rs)
+            // and WM_STATE Iconic from our own connection, sent at once, which Wine watches (see x11asked.rs)
             if let Some(r) = &self.x11_reader {
                 r.iconic(x.window_id(), true);
             }

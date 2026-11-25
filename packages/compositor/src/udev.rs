@@ -46,8 +46,9 @@
 //! - **Waiting for programs' GPUs** (sync.rs): a commit with a GPU buffer is applied once the buffer is drawn, through
 //!   explicit sync (linux-drm-syncobj-v1, which NVIDIA needs) where the GPU can, the buffer's own fences otherwise.
 //!
-//! Not yet (later milestones, docs/COMPOSITOR.md): several GPUs drawing for each other (a laptop's NVIDIA GPU behind the Intel
-//! one), direct scanout of full screen games tuned per GPU, VRR, tearing control.
+//! Known limitations (docs/COMPOSITOR.md): each GPU draws only its own screens (none draws for another, as a laptop's NVIDIA
+//! GPU behind the Intel one would need); no window goes to a plane, so a full screen game is always composited
+//! (`App::send_dmabuf_feedback` says why); no tearing control (Smithay's DRM compositor has no asynchronous page flips).
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -182,7 +183,8 @@ struct Screen {
     /// variable refresh can be switched on this screen without a modeset (the monitor and the GPU say so)
     vrr_capable: bool,
     /// what programs on this screen are told to allocate their GPU buffers as (linux-dmabuf feedback): the renderer's
-    /// formats, and for a window the screen could show directly (a full screen game) the formats its planes scan out first
+    /// formats, and for a window the screen tried to show directly the formats its planes scan out first (no window is tried:
+    /// `App::send_dmabuf_feedback`)
     feedback: Option<Feedback>,
     /// the last frame's picture went to the screen as it is, a program's buffer on the primary plane (direct scanout)
     direct: bool,

@@ -15,7 +15,8 @@ yggdrasil-conf = { path = "../yggdrasil-conf" }
 yggdrasil-wm = { path = "../wm" }
 smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "backend_drm", "backend_gbm", "backend_udev", "backend_libinput", "backend_session_libseat", "renderer_gl", "renderer_pixman", "desktop", "wayland_frontend", "use_system_lib", "xwayland"] }
 tiny-skia = "0.12"
-# x11asked.rs: one property read on its own connection (already in the tree through smithay)
+# x11asked.rs and xwayland.rs: X11 properties read and written on connections of their own (the active window and the input
+# focus, programs' own icons, WM_STATE, XWayland's X resources); 0.13, beside the 0.14 Smithay main and winit use
 x11rb = "0.13"
 ab_glyph = "0.2"
 wayland-protocols-wlr = { version = "0.3", features = ["server"] }
@@ -45,11 +46,13 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 opt-level = 2
 lto = "thin"
 
-# Smithay 0.7.0 with changes of ours: the X11 sockets bound apart from starting XWayland (X11Sockets,
-# XWayland::spawn_with_sockets), so XWayland starts on the first X11 program (xwayland.rs); and three X11 window manager fixes
-# (no events dropped after set_randr_primary_output, a new window's first geometry at fractional scales, close ending a
-# client that cannot be asked); a session lock security fix (a refused locker could unlock the session or pass for the
-# lock screen); and master's checks of client input (regions, size hints, window geometry). Our fork, pinned by commit (branch
-# yggdrasil/lazy-xwayland on the 0.7.0 tag).
+# Smithay's main branch (54cf9c10; its version is still 0.7.0, so it stands in for the 0.7 above) with five commits of ours:
+# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit. They bind the
+# X11 sockets apart from starting XWayland (X11Sockets, XWayland::spawn_with_sockets), so XWayland starts on the first X11
+# program (xwayland.rs); fix two X11 window manager bugs (every event was dropped after set_randr_primary_output until the
+# next request; close left a client that cannot be asked running without its window, and now ends it with XKillClient);
+# clamp a layer surface's set_size at i32::MAX and _GTK_FRAME_EXTENTS at 0..=u16::MAX (a program's huge values ended a debug
+# build: a negative size, an overflow in X11Surface::geometry); and fix three XDND bugs (only a drag started on XWayland's
+# surfaces can become an X11 drag, a vanished drop target ends the drag, a drag the X11 program gave up ends with the grab).
 [patch.crates-io]
 smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "be625ae980ad27e799d1c822dcbb7856d5fadf00" }
