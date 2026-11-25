@@ -16,6 +16,7 @@ mod common;
 use std::cell::RefCell;
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
 use common::*;
@@ -1057,11 +1058,28 @@ fn place_x11(comp: &Compositor, app: &str, at: (i32, i32)) {
     comp.wait(10, &format!("{app} placed"), |c| c.ctl(&format!("place {} {} {} 300 200", id_of(c, app), at.0, at.1)).is_ok());
 }
 
-/// Kills this test's XWayland (as when it crashes) and waits until the compositor has seen it go. Its process number.
-fn kill_xwayland(comp: &Compositor) -> u32 {
+/// Kills this test's XWayland (as when it crashes) and waits until it has ended, its connections closed. Its process number.
+fn end_xwayland(comp: &Compositor) -> u32 {
     let xwayland = xwayland_of(comp).expect("an Xwayland");
     unsafe { libc::kill(xwayland as i32, libc::SIGKILL) };
+    let start = Instant::now();
+    // xwayland_of passes over one that has ended and is not reaped yet
+    while xwayland_of(comp) == Some(xwayland) {
+        assert!(start.elapsed() < Duration::from_secs(5), "XWayland did not end");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    xwayland
+}
+
+/// Waits until the compositor has seen XWayland go.
+fn seen_gone(comp: &Compositor) {
     comp.wait(10, "XWayland gone", |c| c.log.lock().unwrap().iter().any(|l| l.contains("XWayland went away")));
+}
+
+/// Kills this test's XWayland (as when it crashes) and waits until the compositor has seen it go. Its process number.
+fn kill_xwayland(comp: &Compositor) -> u32 {
+    let xwayland = end_xwayland(comp);
+    seen_gone(comp);
     xwayland
 }
 
@@ -1077,13 +1095,12 @@ fn goes_on(comp: &mut Compositor, display: &str, gone: u32) {
     assert!(xwayland_of(comp).is_some_and(|x| x != gone), "a new XWayland");
 }
 
-/// XWayland goes away while the Wayland program an X11 program asked for a file holds the pipe (`held`); then the program
-/// writes the file and closes the pipe. The transfer ended with XWayland, its pipe closed: the write fails, as nobody reads it
+/// XWayland (`gone`) went away while the Wayland program an X11 program asked for data held the pipe (`held`); now the program
+/// writes `what` and closes the pipe. The transfer ended with XWayland, its pipe closed: the write fails, as nobody reads it
 /// any more. The compositor goes on (`goes_on`).
-fn written_after_xwayland_went_away(comp: &mut Compositor, display: &str) {
-    let gone = kill_xwayland(comp);
+fn written_after_xwayland_went_away(comp: &mut Compositor, display: &str, gone: u32, what: &[u8]) {
     let held = log(|l| l.held.take()).expect("the pipe held");
-    let wrote = std::fs::File::from(held).write_all(URI);
+    let wrote = std::fs::File::from(held).write_all(what);
     goes_on(comp, display, gone);
     assert!(matches!(&wrote, Err(e) if e.kind() == ErrorKind::BrokenPipe), "the transfer ended with XWayland: {wrote:?}");
 }
@@ -1091,7 +1108,7 @@ fn written_after_xwayland_went_away(comp: &mut Compositor, display: &str) {
 /// XWayland goes away (it crashed, or was killed) while an X11 program pastes a file a Wayland program copied, before the
 /// Wayland program has written it (a slow one): the paste ends, and the compositor and the next X11 program go on.
 #[test]
-#[ignore = "needs the fork's fix that ends XWayland's transfers when it goes away (YGG-113)"]
+#[ignore = "needs the fork's fix that ends a transfer or a drop when XWayland goes away (YGG-113)"]
 fn a_paste_into_an_x11_program_ends_when_xwayland_goes_away() {
     if !xwayland_installed() {
         eprintln!("skipped: XWayland is not installed");
@@ -1132,13 +1149,94 @@ fn a_paste_into_an_x11_program_ends_when_xwayland_goes_away() {
     until(&mut [&mut s], "the copying program asked for the file", |l| l.held.is_some());
 
     // XWayland goes away; then the copying program writes the file
-    written_after_xwayland_went_away(&mut comp, &display);
+    let gone = kill_xwayland(&comp);
+    written_after_xwayland_went_away(&mut comp, &display, gone, URI);
+}
+
+/// An X11 program pastes text a Wayland program copied and, before the Wayland program has written it (a slow one), asks again
+/// from the same window. The window manager drops the first paste for the second (a program reads only the answer to its last
+/// request), but the compositor is busy and gets to the second only after XWayland went away. The first paste ends all the
+/// same, and the compositor and the next X11 program go on. (The window manager once told the program the first paste failed
+/// before it dropped it: with XWayland gone that failed, the paste's pipe stayed watched, and the Wayland program's write into
+/// it ended the compositor.)
+#[test]
+#[ignore = "needs the fork's fix that ends a transfer or a drop when XWayland goes away (YGG-113)"]
+fn a_paste_asked_for_twice_ends_when_xwayland_goes_away() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a paste asked for twice when XWayland goes away");
+    let (mut comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program that pastes, on the right
+    let x = X11::connect(&display);
+    let win = x.window(b"x11paste\0X11paste\0", EventMask::NO_EVENT);
+    place_x11(&comp, "X11paste", (600, 100));
+    // the Wayland program that copies text, with the keyboard; asked for the text, it keeps the pipe
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.copy", "Copy");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    s.until("the keyboard on the copying program", |st| st.kb_focus == Some(sw.surface.id()));
+    log(|l| l.hold = true);
+    let m: WlDataDeviceManager = s.globals.bind(&s.qh, 3..=3, ()).expect("wl_data_device_manager 3");
+    let device: WlDataDevice = m.get_data_device(&s.seat, &s.qh, ());
+    let source: WlDataSource = m.create_data_source(&s.qh, Dragged);
+    source.offer(MIME.into());
+    device.set_selection(Some(&source), 0);
+    s.roundtrip();
+
+    // the X11 program gets the keyboard and pastes the text, as UTF8_STRING (a type the window manager knows without asking
+    // XWayland, so it still gets to the second paste once XWayland is gone): the copying program is asked for it
+    comp.must(&format!("activate {}", id_of(&comp, "X11paste")));
+    comp.wait(10, "the keyboard on the X11 program", |c| c.focus().contains("X11paste"));
+    let start = Instant::now();
+    while x.conn.get_selection_owner(x.clipboard).unwrap().reply().unwrap().owner == x11rb::NONE {
+        assert!(start.elapsed() < Duration::from_secs(5), "the copy not offered to X11 programs");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let text = x.conn.intern_atom(false, b"UTF8_STRING").unwrap().reply().unwrap().atom;
+    let into = x.conn.intern_atom(false, b"PASTED").unwrap().reply().unwrap().atom;
+    x.conn.convert_selection(win, x.clipboard, text, into, x11rb::CURRENT_TIME).unwrap();
+    x.conn.flush().unwrap();
+    until(&mut [&mut s], "the copying program asked for the text", |l| l.held.is_some());
+
+    // The compositor is kept busy: it is sent half a control command and waits for the rest (2 s at most) on its main thread,
+    // the one that handles X11 events too. It waits once it has read the half: nothing of it is left unread (SIOCOUTQ, which
+    // libc calls TIOCOUTQ). Nothing on the Wayland side meanwhile, as it answers nobody.
+    let mut busy = UnixStream::connect(&comp.ctl).expect("the control socket");
+    busy.write_all(b"outputs").unwrap();
+    let start = Instant::now();
+    loop {
+        let mut unread: libc::c_int = 0;
+        unsafe { libc::ioctl(busy.as_raw_fd(), libc::TIOCOUTQ, &mut unread) };
+        if unread == 0 {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(1), "the compositor did not read the command");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // The X11 program asks for the text again. XWayland hands the request to the window manager (it has once the round trip
+    // returns), whose thread for X11 events reads it at once (a moment is plenty), but the window manager gets to it only when
+    // the compositor is no longer busy.
+    x.conn.convert_selection(win, x.clipboard, text, into, x11rb::CURRENT_TIME).unwrap();
+    x.conn.get_input_focus().unwrap().reply().unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+
+    // XWayland goes away; then the compositor reads the rest of its command and gets to the second paste, after XWayland
+    let gone = end_xwayland(&comp);
+    busy.write_all(b"\n").unwrap();
+    seen_gone(&comp);
+    // the copying program writes the text; it was asked for it once, as the second paste came too late
+    written_after_xwayland_went_away(&mut comp, &display, gone, WORDS);
+    s.roundtrip();
+    assert_eq!(log(|l| l.sent), 1, "the window manager got to the second paste while XWayland was there");
 }
 
 /// XWayland goes away while a Wayland program pastes the files an X11 program copied, before it has read them all (more than
 /// its pipe holds): the paste ends with what was in the pipe, and the compositor and the next X11 program go on.
 #[test]
-#[ignore = "needs the fork's fix that ends XWayland's transfers when it goes away (YGG-113)"]
+#[ignore = "needs the fork's fix that ends a transfer or a drop when XWayland goes away (YGG-113)"]
 fn a_paste_from_an_x11_program_ends_when_xwayland_goes_away() {
     if !xwayland_installed() {
         eprintln!("skipped: XWayland is not installed");
@@ -1193,9 +1291,10 @@ fn a_paste_from_an_x11_program_ends_when_xwayland_goes_away() {
 }
 
 /// XWayland goes away while an X11 program asks for the file a Wayland program dropped on it, before the Wayland program has
-/// written it (a slow one): the drop's transfer ends, and the compositor and the next X11 program go on.
+/// written it (a slow one): the drop ends, its transfer too, and the Wayland program is told the drop was cancelled (the X11
+/// program will never say it finished it). The compositor and the next X11 program go on.
 #[test]
-#[ignore = "needs the fork's fix that ends XWayland's transfers when it goes away (YGG-113)"]
+#[ignore = "needs the fork's fix that ends a transfer or a drop when XWayland goes away (YGG-113)"]
 fn a_drop_on_an_x11_program_ends_when_xwayland_goes_away() {
     if !xwayland_installed() {
         eprintln!("skipped: XWayland is not installed");
@@ -1233,6 +1332,9 @@ fn a_drop_on_an_x11_program_ends_when_xwayland_goes_away() {
     x.conn.flush().unwrap();
     until(&mut [&mut s], "the dragging program asked for the file", |l| l.held.is_some());
 
-    // XWayland goes away; then the dragging program writes the file
-    written_after_xwayland_went_away(&mut comp, &display);
+    // XWayland goes away; then the dragging program writes the file, and hears the drop was cancelled
+    let gone = kill_xwayland(&comp);
+    written_after_xwayland_went_away(&mut comp, &display, gone, URI);
+    until(&mut [&mut s], "the dragging program told the drop was cancelled", |l| l.cancelled);
+    assert!(!log(|l| l.finished), "the drop finished");
 }
