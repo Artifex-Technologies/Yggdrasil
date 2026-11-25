@@ -200,7 +200,7 @@ mod tests {
         {"id": "vivaldi", "name": "Vivaldi", "chosen": true, "packages": ["vivaldi", "vivaldi-ffmpeg-codecs"], "desktop": ["vivaldi-stable.desktop"]},
         {"id": "firefox", "name": "Firefox", "packages": ["firefox"], "desktop": ["firefox.desktop"]},
         {"id": "librewolf", "name": "LibreWolf", "packages": ["librewolf"], "desktop": ["librewolf.desktop"]},
-        {"id": "opera-gx", "name": "Opera GX", "flatpak": "com.opera.opera-gx", "desktop": ["com.opera.opera-gx.desktop"]},
+        {"id": "example", "name": "Example Browser", "flatpak": "org.example.Browser", "desktop": ["org.example.Browser.desktop"]},
         {"name": "no id"}]}"#;
     const EXTRAS: &str = r#"{"extras": [{"id": "assistant", "name": "Assistant", "components": ["assistant"]},
         {"id": "monitor", "name": "Monitor", "components": ["monitor"]}]}"#;
@@ -225,7 +225,7 @@ mod tests {
     fn entries_without_an_id_are_left_out() {
         let d = Dir::new();
         let cat = entries(Some(&written(&d, "b.json", BROWSERS)), "browsers");
-        assert_eq!(ids(&cat), ["vivaldi", "firefox", "librewolf", "opera-gx"]);
+        assert_eq!(ids(&cat), ["vivaldi", "firefox", "librewolf", "example"]);
         assert!(entries(Some("/nonexistent.json"), "browsers").is_empty());
         assert!(entries(None, "browsers").is_empty());
         assert!(entries(Some(&written(&d, "l.json", r#"[{"id": "x"}]"#)), "browsers").is_empty(), "not an object at the top");
@@ -243,10 +243,10 @@ mod tests {
     fn a_choice_removes_the_others_and_installs_its_own() {
         let d = Dir::new();
         let cat = entries(Some(&written(&d, "b.json", BROWSERS)), "browsers");
-        let p = browser_plan(&cat, &sv(&["librewolf", "opera-gx"]));
+        let p = browser_plan(&cat, &sv(&["librewolf", "example"]));
         assert_eq!(p.remove, ["vivaldi", "vivaldi-ffmpeg-codecs", "firefox"]);
         assert_eq!(p.install, ["librewolf"]);
-        assert_eq!(p.flatpaks, ["com.opera.opera-gx"]);
+        assert_eq!(p.flatpaks, ["org.example.Browser"]);
         let none = browser_plan(&cat, &[]);
         assert!(none.install.is_empty() && none.flatpaks.is_empty());
         let odd = entries(

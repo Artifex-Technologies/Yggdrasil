@@ -159,7 +159,7 @@ fn a_refused_plan_runs_nothing() {
         (&plan_with(&[("timezone", "\"/etc/hostname\"")]), "ERROR unknown time zone"),
         (&manual_plan(&[("new_table", "\"false\"")]), "ERROR a new partition table is chosen with true or false"),
         (&manual_plan(&[("delete", "[true]")]), "ERROR a partition to delete is not a number"),
-        (&plan_with(&[("browsers", r#"["opera"]"#)]), "ERROR unknown browser chosen"),
+        (&plan_with(&[("browsers", r#"["no-such-browser"]"#)]), "ERROR unknown browser chosen"),
         (&plan_with(&[("font", "\"Comic Sans MS\"")]), "ERROR unknown font chosen"),
         (&plan_with(&[("font", "\"opendyslexic-mono\"")]), "ERROR unknown font chosen"),
         (&plan_with(&[("font_mono", "\"lexend\"")]), "ERROR unknown font chosen"),

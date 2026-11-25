@@ -156,7 +156,7 @@ BROWSERS = {"browsers": [
     {"id": "vivaldi", "name": "Vivaldi", "chosen": True, "packages": ["vivaldi", "vivaldi-ffmpeg-codecs"], "desktop": ["vivaldi-stable.desktop"]},
     {"id": "firefox", "name": "Firefox", "packages": ["firefox"], "desktop": ["firefox.desktop"]},
     {"id": "librewolf", "name": "LibreWolf", "packages": ["librewolf"], "desktop": ["librewolf.desktop"]},
-    {"id": "opera-gx", "name": "Opera GX", "flatpak": "com.opera.opera-gx", "desktop": ["com.opera.opera-gx.desktop"]},
+    {"id": "example", "name": "Example Browser", "flatpak": "org.example.Browser", "desktop": ["org.example.Browser.desktop"]},
     {"name": "no id"}]}
 EXTRAS = {"title": "More", "extras": [{"id": "assistant", "name": "Assistant", "components": ["assistant"]},
                                       {"id": "monitor", "name": "Monitor", "components": ["monitor"]},
@@ -212,7 +212,7 @@ def world(**kw):
             "needs": {},
             "sync_ok": ["librewolf", "firefox", "vivaldi", "vivaldi-ffmpeg-codecs"],
             "syu_ok": [],
-            "flathub_ok": ["com.opera.opera-gx"],
+            "flathub_ok": ["org.example.Browser"],
             "desktop_of": {"librewolf": "librewolf.desktop", "firefox": "firefox.desktop", "vivaldi": "vivaldi-stable.desktop"},
             "groups": ["users", "lp", "video", "network", "storage", "wheel", "audio", "kvm"],
             "programs": {"/usr/local/bin/example-install-cleanup": {"code": 0, "stdout": "cleaned\n"},
@@ -511,10 +511,10 @@ def cases_install(jobs):
     add("erase, no efivars", world(efivars=False))
     add("an OS that says nothing", world(conf={}, os_release="", sfs="/run/archiso/bootmnt/linux/x86_64/airootfs.sfs"))
     add("Labyrinth-like names", world(conf={"l.conf": CONF.replace("name = Example\n", "name = Laby rinth\n")}, os_release='NAME="Labyrinth OS"\nID=example\n'))
-    add("browsers: two chosen, one from Flathub", p=plan(browsers=["librewolf", "opera-gx"], default_browser="opera-gx"))
+    add("browsers: two chosen, one from Flathub", p=plan(browsers=["librewolf", "example"], default_browser="example"))
     add("browsers: the first chosen is the default", p=plan(browsers=["firefox", "librewolf"], default_browser=""))
     add("browsers: pacman -S fails, -Syu works", world(state={"sync_ok": [], "syu_ok": ["librewolf"]}), plan(browsers=["librewolf"], default_browser="librewolf"))
-    add("browsers: nothing can be had", world(state={"sync_ok": [], "flathub_ok": []}), plan(browsers=["librewolf", "opera-gx"], default_browser="librewolf"))
+    add("browsers: nothing can be had", world(state={"sync_ok": [], "flathub_ok": []}), plan(browsers=["librewolf", "example"], default_browser="librewolf"))
     add("browsers: none chosen", p=plan(browsers=[], default_browser=""))
     add("browsers: one kept as another program needs it", world(state={"needs": {"steam": ["firefox"]}}), plan(browsers=["librewolf"], default_browser="librewolf"))
     add("browsers: removal in rounds", world(state={"installed": ["vivaldi", "vivaldi-ffmpeg-codecs", "firefox"], "needs": {"vivaldi": ["vivaldi-ffmpeg-codecs"]}}),
@@ -738,7 +738,7 @@ def fuzz_installs(rng, n):
                  keymap=rng.choice(["us", "gb", "fr", "de"]), keymap_variant=rng.choice(["", "", "dvorak", "nodeadkeys"]),
                  timezone=rng.choice(["UTC", "Europe/Lisbon", "Asia/Tokyo", "Pacific/Auckland"]))
         if rng.random() < 0.6:
-            chosen = rng.sample(["vivaldi", "firefox", "librewolf", "opera-gx"], rng.randrange(5))
+            chosen = rng.sample(["vivaldi", "firefox", "librewolf", "example"], rng.randrange(5))
             p["browsers"] = chosen
             p["default_browser"] = rng.choice(chosen) if chosen and rng.random() < 0.7 else ""
         if rng.random() < 0.6:
