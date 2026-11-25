@@ -126,11 +126,12 @@ worlds; the launcher runs inside the world, so only the program is measured. Pyt
 | `boot`, the start that is the attempt (writes trying, runs logger), wall time | 54.8 ms | 1.67 ms | −97 %, 53.2 ms faster |
 | `verify` on a normal start while armed, wall time | 52.8 ms | 0.48 ms | −99 %, 52.3 ms faster |
 | the fragment while armed (entry.cfg checked and printed), wall time | 6.41 ms (sh, head, tail, grep x6, cat) | 1.49 ms (sh and gpuunlock) | −77 %, 4.92 ms faster |
-| the fragment with nothing armed (every grub-mkconfig), wall time | 0.89 ms | 1.44 ms | **+62 %, 0.55 ms slower** |
-| on disk | 37.4 KB script + 1.6 KB fragment (and Python, which the package no longer needs) | 693 KB binary + 0.9 KB fragment | |
+| the fragment with nothing armed (every grub-mkconfig), wall time (2026-11-25, after its own test) | 0.83 ms | 0.84 ms | the same (sh alone in both) |
+| on disk | 37.4 KB script + 1.6 KB fragment (and Python, which the package no longer needs) | 693 KB binary + 1.4 KB fragment | |
 
-Where Rust is worse: with nothing armed, the old fragment ended at its first test, and the new one starts the program to
-find there is no file. Half a millisecond per kernel update. yggdrasil-settings no longer depends on Python at all.
+With nothing armed the new fragment first started the program to find there was no file (1.44 ms against 0.89, +62 %);
+since 2026-11-25 it tests for the file with the shell's own test first, as the old one did, so both are sh alone (0.83 and
+0.84 ms), and the program, which alone judges the entry, runs only when something is there. yggdrasil-settings no longer depends on Python at all.
 
 More accurate:
 
