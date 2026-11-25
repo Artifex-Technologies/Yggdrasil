@@ -61,10 +61,13 @@ the laptop's text console with `packages/compositor/tests/laptop-tty.sh`. What e
 My friends will not edit monitors.lua, so the defaults have to be right on a machine nobody set up, and one switch should tell a
 driver's fault from mine. A screen no rule names now runs at its own size at the fastest rate it has for it, as the Hyprland
 session gives it (an ultrawide came up at the 60 Hz its EDID names first), and at its own mode when the GPU refuses that one at
-the first modeset; `highrr` and `highres` stay at the screen's own shape, so a cinema 4096x2160 or a monitor's 800x600 at
-60.32 Hz is never chosen. The GL context is asked for at high priority, with the default as the fallback, and each GPU's line
-says what EGL granted. `YGGDRASIL_COMPOSITOR_CURSOR_PLANE=0` draws the pointer into each frame instead of on a cursor plane.
-A laptop's or handheld's panel mounted turned in its case starts upright from its 'panel orientation'. When the compositor
+the first modeset; a mode the GPU refuses, then or later from Settings, leaves the screen at the mode it has for programs and
+Settings too, so nothing shows a rate the screen is not running. `highrr` and `highres` stay at the screen's own shape, so a
+cinema 4096x2160 or a monitor's 800x600 at 60.32 Hz is never chosen. The GL context is asked for at high priority, with the
+default as the fallback, and each GPU's line says what EGL granted. `YGGDRASIL_COMPOSITOR_CURSOR_PLANE=0` draws the pointer
+into each frame instead of on a cursor plane. A laptop's or handheld's panel mounted turned in its case starts upright from its
+'panel orientation'; where the session runs the tablet watcher (a machine with an accelerometer or a tablet-mode switch), the
+watcher's turn, counted from a panel that sits upright, replaces it a moment later. When the compositor
 ends, the Night Light tint is taken off the CRTCs before the GPUs are let go, so the next session is not tinted. The GPU
 priority, the cursor plane switch, the panel orientation and the tint at the end are ideas from reading Valve's gamescope (no
 code taken). Unit tests cover the rules, the mode choice with two real monitors' mode lists as Hyprland listed them; none of

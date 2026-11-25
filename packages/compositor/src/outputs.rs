@@ -382,6 +382,18 @@ impl App {
         self.heads.leaving.iter().filter_map(|(n, _)| self.head(n)).map(|h| h.output.clone()).collect()
     }
 
+    /// The hardware backend could not set the mode asked for a screen (its GPU refused it, or the screen has no such mode): the
+    /// screen is put back at `kept`,
+    /// the mode its CRTC still has, as a change like any other (wl_output, Settings through wlr-output-management, X11 programs,
+    /// the layout and the windows on it), so nothing goes on showing a mode it does not run.
+    pub fn mode_kept(&mut self, name: &str, kept: Mode) {
+        let Some(h) = self.head(name) else { return };
+        let w = Want { mode: kept, ..h.now() };
+        if let Err(e) = self.configure_outputs(vec![(name.to_string(), w)], false) {
+            eprintln!("yggdrasil-compositor: {name}: not put back at the mode it has: {e}");
+        }
+    }
+
     /// Set screens to what `changes` says (the others stay as they are). With `test_only` nothing changes: only whether it could.
     /// A mode is matched to the screen's own within half a hertz (`closest_mode`).
     pub fn configure_outputs(&mut self, changes: Vec<(String, Want)>, test_only: bool) -> Result<(), String> {

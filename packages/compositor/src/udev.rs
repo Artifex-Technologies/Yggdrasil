@@ -15,7 +15,9 @@
 //!   does not name runs at its own size at the fastest rate it has for it, and one it gives no scale gets one from its size,
 //!   laptop.rs). A laptop's panel mounted turned in its case (a handheld's, a tablet's: the connector's "panel orientation")
 //!   starts turned upright unless monitors.lua turns it. A mode changed later (wlr-output-management) is set on the CRTC at
-//!   the next frame (a mode within half a hertz of the one asked: 60 for a panel's 60.003 Hz). A screen unplugged gives its CRTC
+//!   the next frame (a mode within half a hertz of the one asked: 60 for a panel's 60.003 Hz); one the screen cannot have (its
+//!   GPU refuses it, at the first modeset or later, or it is not one of its modes) leaves the CRTC as it is, and the screen is
+//!   put back at that mode, so programs and Settings never see a mode it does not run. A screen unplugged gives its CRTC
 //!   back (its DrmCompositor goes, which switches the CRTC off) but stays a screen for 2 s (outputs.rs, UNPLUG_GRACE): a monitor
 //!   whose link bounces comes back with its windows and panels, only its CRTC set up again; one plugged in is set up once its
 //!   link has stayed for 0.7 s (SETTLE). A connector
@@ -174,8 +176,8 @@ struct Screen {
     modes: Vec<smithay::reexports::drm::control::Mode>,
     /// the mode the CRTC is set to
     mode: Mode,
-    /// a mode asked for that the screen has not (or that did not set): told once, not tried again until another is asked
-    missed: Option<Mode>,
+    /// the mode its GPU refused when it was set up (`scan`), which its first frame does not ask again (`follow_mode`)
+    refused: Option<Mode>,
     /// a frame was queued and its page flip has not happened yet
     queued: bool,
     /// something changed since it was last drawn
@@ -1063,8 +1065,11 @@ fn scan(
         };
         let mut made = set_up(&mut dev.gpu, crtc, start, conn.handle(), &output, planes.clone());
         // a fast mode the GPU refuses at this first modeset (two fast monitors can need more than it has together): the
-        // screen's own mode, so it still gets a picture
+        // screen's own mode on the CRTC, so it still gets a picture. The output keeps asking the refused one until its first
+        // frame, which puts the screen back at the CRTC's mode through the App (follow_mode, App::mode_kept: programs,
+        // Settings and the layout told) without asking the GPU for it again; add_output's rules would ask it again otherwise
         let mut mode = Mode::from(start);
+        let mut refused = None;
         if let (Err(e), true) = (&made, start != preferred) {
             eprintln!(
                 "yggdrasil-compositor: {name}: {}x{} at {} Hz did not set ({e}): its own mode instead",
@@ -1072,8 +1077,8 @@ fn scan(
                 mode.size.h,
                 mode.refresh as f64 / 1000.0
             );
+            refused = Some(mode);
             mode = Mode::from(preferred);
-            output.change_current_state(Some(mode), None, None, None);
             made = set_up(&mut dev.gpu, crtc, preferred, conn.handle(), &output, planes);
         }
         match made {
@@ -1113,7 +1118,7 @@ fn scan(
                         drm,
                         modes,
                         mode,
-                        missed: None,
+                        refused,
                         queued: false,
                         dirty: true,
                         not_before: Instant::now(),
@@ -1634,32 +1639,52 @@ macro_rules! frame {
     }};
 }
 
-/// Set the mode Settings chose (when it changed) on the CRTC.
+/// The mode a screen's output asks (`asked`: Settings', monitors.lua's) against the one its CRTC has (`now`): None when they
+/// are the same, else the mode asked and either where its connector's mode within half a hertz of it is in `offered` (the
+/// connector's modes, as Smithay's; outputs.rs matched it so already) or why the screen cannot have it. `refused` is the mode its
+/// GPU did not take when the screen was set up (`scan`): not asked of it again.
+fn mode_to_set(asked: Option<Mode>, now: Mode, refused: Option<Mode>, offered: &[Mode]) -> Option<(Mode, Result<usize, &'static str>)> {
+    let want = asked.filter(|w| *w != now)?;
+    if refused == Some(want) {
+        return Some((want, Err("its GPU did not take it when the screen was set up")));
+    }
+    let at = crate::outputs::closest_mode(offered, want).and_then(|c| offered.iter().position(|m| *m == c));
+    Some((want, at.ok_or("not one of its modes")))
+}
+
+/// Set the mode Settings chose (when it changed) on the CRTC. True when the screen cannot have it (its GPU refuses it, or it is
+/// not one of its modes): the CRTC stays at the mode it has, which the screen is to be put back at (`App::mode_kept`), so a
+/// refused mode is neither shown to programs nor tried again on every frame. The mode refused at the set-up counts only at the
+/// first frame (asked again by add_output's rules); asked later, it is tried as any other.
 macro_rules! follow_mode {
     ($renderer:expr, $out:expr, $screen:expr, $elem:ty) => {{
-        let want = $screen.output.current_mode();
-        if let Some(want) = want.filter(|w| *w != $screen.mode && $screen.missed != Some(*w)) {
-            // the screen's own mode within half a hertz of the one asked (outputs.rs; set so already by configure_outputs)
-            let offered: Vec<Mode> = $screen.modes.iter().map(|m| Mode::from(*m)).collect();
-            let found = crate::outputs::closest_mode(&offered, want).and_then(|c| $screen.modes.iter().find(|m| Mode::from(**m) == c));
-            match found {
-                Some(m) => match $out.use_mode::<_, $elem>(*m, &mut **$renderer, &DrmOutputRenderElements::default()) {
-                    Ok(()) => $screen.mode = want,
-                    Err(e) => {
-                        // told once: not tried on every frame
-                        eprintln!("yggdrasil-compositor: {}: mode not set: {e}", $screen.output.name());
-                        $screen.missed = Some(want);
+        let offered: Vec<Mode> = $screen.modes.iter().map(|m| Mode::from(*m)).collect();
+        match mode_to_set($screen.output.current_mode(), $screen.mode, $screen.refused.take(), &offered) {
+            None => false,
+            Some((want, at)) => {
+                let set = at.map_err(String::from).and_then(|i| {
+                    $out.use_mode::<_, $elem>($screen.modes[i], &mut **$renderer, &DrmOutputRenderElements::default())
+                        .map_err(|e| e.to_string())
+                });
+                match set {
+                    Ok(()) => {
+                        $screen.mode = want;
+                        false
                     }
-                },
-                None => {
-                    eprintln!(
-                        "yggdrasil-compositor: {}: the screen has no mode {}x{} at {} Hz",
-                        $screen.output.name(),
-                        want.size.w,
-                        want.size.h,
-                        want.refresh as f64 / 1000.0
-                    );
-                    $screen.missed = Some(want);
+                    Err(e) => {
+                        let now = $screen.mode;
+                        eprintln!(
+                            "yggdrasil-compositor: {}: {}x{} at {} Hz not set ({e}): it stays at {}x{} at {} Hz",
+                            $screen.output.name(),
+                            want.size.w,
+                            want.size.h,
+                            want.refresh as f64 / 1000.0,
+                            now.size.w,
+                            now.size.h,
+                            now.refresh as f64 / 1000.0
+                        );
+                        true
+                    }
                 }
             }
         }
@@ -1784,15 +1809,22 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
         }
         None => {}
     }
+    let refused = match (&mut dev.gpu, &mut screen.drm) {
+        (Gpu::Gles { renderer, .. }, Out::Gles(out)) => follow_mode!(renderer, out, screen, Elem),
+        (Gpu::Pixman { renderer, .. }, Out::Pixman(out)) => follow_mode!(renderer, out, screen, PixElem),
+        _ => false,
+    };
+    if refused {
+        // the screen goes back to the mode its CRTC kept, its layout, windows and Settings with it; that wakes it, and it is
+        // drawn at that mode on the next pass (the App is told with the backend let go)
+        let (name, kept) = (screen.output.name(), screen.mode);
+        drop(guard);
+        app.mode_kept(&name, kept);
+        return;
+    }
     let result = match (&mut dev.gpu, &mut screen.drm) {
-        (Gpu::Gles { renderer, .. }, Out::Gles(out)) => {
-            follow_mode!(renderer, out, screen, Elem);
-            frame!(b.pointer, app, renderer, out, screen, Elem)
-        }
-        (Gpu::Pixman { renderer, .. }, Out::Pixman(out)) => {
-            follow_mode!(renderer, out, screen, PixElem);
-            frame!(b.pointer, app, renderer, out, screen, PixElem)
-        }
+        (Gpu::Gles { renderer, .. }, Out::Gles(out)) => frame!(b.pointer, app, renderer, out, screen, Elem),
+        (Gpu::Pixman { renderer, .. }, Out::Pixman(out)) => frame!(b.pointer, app, renderer, out, screen, PixElem),
         _ => Err("the screen and its GPU do not match".into()),
     };
     let Some(dev) = b.devices.get_mut(&node) else { return };
@@ -2017,6 +2049,29 @@ mod tests {
         assert_eq!(n("Upside Down"), Some(2));
         assert_eq!(n("Right Side Up"), Some(3), "a Steam Deck's, which Hyprland users turn with transform 3");
         assert_eq!(n("Sideways"), None);
+    }
+
+    #[test]
+    fn a_mode_the_screen_cannot_have_leaves_it_as_it_is() {
+        use super::mode_to_set;
+        let m = |w: i32, h: i32, mhz: i32| Mode { size: (w, h).into(), refresh: mhz };
+        // an ultrawide's own size at 60 (its EDID's first), 144 and 180, and a smaller size
+        let offered = [m(3440, 1440, 59_973), m(3440, 1440, 144_000), m(3440, 1440, 180_000), m(2560, 1440, 59_951)];
+        let now = offered[0];
+        // nothing asked, or the mode the CRTC has: nothing to set
+        assert_eq!(mode_to_set(None, now, None, &offered), None);
+        assert_eq!(mode_to_set(Some(now), now, Some(offered[2]), &offered), None);
+        // another of its modes: that one, also when asked within half a hertz of it
+        assert_eq!(mode_to_set(Some(offered[1]), now, None, &offered), Some((offered[1], Ok(1))));
+        assert_eq!(mode_to_set(Some(m(3440, 1440, 180_400)), now, None, &offered), Some((m(3440, 1440, 180_400), Ok(2))));
+        // the mode the GPU refused at the set-up (scan) is not asked of it again: the screen stays as it is
+        let refused = mode_to_set(Some(offered[2]), now, Some(offered[2]), &offered);
+        assert!(matches!(refused, Some((w, Err(_))) if w == offered[2]), "{refused:?}");
+        // that refusal holds for that mode only
+        assert_eq!(mode_to_set(Some(offered[1]), now, Some(offered[2]), &offered), Some((offered[1], Ok(1))));
+        // a mode the connector does not have (another size; a rate more than half a hertz off)
+        assert!(matches!(mode_to_set(Some(m(3840, 1600, 60_000)), now, None, &offered), Some((_, Err(_)))));
+        assert!(matches!(mode_to_set(Some(m(3440, 1440, 165_000)), now, None, &offered), Some((_, Err(_)))));
     }
 
     #[test]
