@@ -2391,6 +2391,61 @@ fn an_x11_program_cannot_read_a_wayland_drag_its_target_refused() {
     assert!(ask(&x, &mut [&mut s], win, x.uri, dropped[2]).is_none(), "the URI refused once the target finished");
 }
 
+/// A Wayland program drags a file over an X11 program that takes it, and the button is let go before the X11 program answered
+/// where the pointer last moved; its answer then refuses the drag. Smithay took the drop on the answer before and tells the X11
+/// program of it all the same (XdndDrop), yet no X11 program reads the file's URI: not one in the background, not the target.
+#[test]
+#[ignore = "needs the fork's fix that gives X11 programs a Wayland drag's data only after an accepted drop (YGG-125)"]
+fn an_x11_program_cannot_read_a_wayland_drag_its_target_refused_at_the_drop() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a Wayland drag refused at the drop read from X11");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program the drag is let go over, on the right
+    let x = X11::connect(&display);
+    let win = x.window(b"x11target\0X11target\0", EventMask::NO_EVENT);
+    x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[XDND]).unwrap();
+    x.conn.flush().unwrap();
+    place_x11(&comp, "X11target", (600, 100));
+    // an X11 program in the background: no window shown, only one of its own for the answers
+    let b = X11::connect(&display);
+    let hidden = b.conn.generate_id().unwrap();
+    let aux = CreateWindowAux::new();
+    b.conn.create_window(x11rb::COPY_DEPTH_FROM_PARENT, hidden, b.root, 0, 0, 1, 1, 0, WindowClass::INPUT_OUTPUT, 0, &aux).unwrap();
+    b.conn.flush().unwrap();
+    // the Wayland program dragging, on the left
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.source")));
+    s.roundtrip();
+    let (si, xi) = (comp.window("test.source").unwrap(), comp.window("X11target").unwrap());
+    drag_from(&comp, &mut s, &sw, si.at, URI_MIME);
+    // over the X11 window, which takes it
+    x11_drawn(&comp, xi.at);
+    comp.must(&format!("pointer {} {}", xi.at.0 + 150, xi.at.1 + 100));
+    let source = x.message(&mut [&mut s], x.enter, "XdndEnter")[0];
+    x.message(&mut [&mut s], x.position, "XdndPosition");
+    x.send(source, x.status, [win, 1, 0, 0, x.copy]);
+    until(&mut [&mut s], "the dragging program told the X11 program's choice", |l| l.action == Some(DndAction::Copy));
+
+    // let go before the target answered where the pointer moved: the drop waits for the answer, which refuses
+    comp.must(&format!("pointer {} {}", xi.at.0 + 160, xi.at.1 + 100));
+    x.message(&mut [&mut s], x.position, "the next XdndPosition");
+    comp.must("release");
+    x.send(source, x.status, [win, 0, 0, 0, 0]);
+    let dropped = x.message(&mut [&mut s], x.drop, "XdndDrop");
+    assert!(ask(&b, &mut [&mut s], hidden, b.uri, x11rb::CURRENT_TIME).is_none(), "the URI refused to the program in the background");
+    assert!(ask(&x, &mut [&mut s], win, x.uri, dropped[2]).is_none(), "the URI refused to the target that refused it");
+    assert_eq!(log(|l| l.sent), 0, "the dragging program not asked for the URI");
+    // the target finishes, not having taken it: still nobody reads it
+    x.send(source, x.finished, [win, 0, 0, 0, 0]);
+    assert!(ask(&x, &mut [&mut s], win, x.uri, dropped[2]).is_none(), "the URI refused once the target finished");
+}
+
 // ------------------------------------------------------------------ XWayland going away in the middle of a transfer
 
 /// Places the X11 program's window `app` at `at` once XWayland has made its surface. The window is listed a moment before
