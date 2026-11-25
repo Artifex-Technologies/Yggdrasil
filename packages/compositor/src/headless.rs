@@ -213,7 +213,7 @@ fn runtime_ok(dir: &Path, uid: u32, allow_shared: bool) -> Result<(), String> {
 pub fn make_output(name: String, s: &OutputSpec) -> Output {
     let o = Output::new(
         name,
-        PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "headless".into() },
+        PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "headless".into(), serial_number: String::new() },
     );
     let mode = Mode { size: (s.w, s.h).into(), refresh: 60_000 };
     o.change_current_state(Some(mode), Some(Transform::Normal), Some(Scale::Fractional(s.scale)), None);

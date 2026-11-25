@@ -880,7 +880,8 @@ fn scan(
                 let (w, h) = conn.size().unwrap_or((0, 0));
                 let o = Output::new(
                     name.clone(),
-                    PhysicalProperties { size: (w as i32, h as i32).into(), subpixel: Subpixel::Unknown, make, model },
+                    // no serial number: programs would get one more way to tell this machine apart
+                    PhysicalProperties { size: (w as i32, h as i32).into(), subpixel: Subpixel::Unknown, make, model, serial_number: String::new() },
                 );
                 for m in &modes {
                     o.add_mode(Mode::from(*m));

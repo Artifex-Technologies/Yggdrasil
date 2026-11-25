@@ -332,7 +332,7 @@ fn run_nested(
     let mode = Mode { size: backend.borrow().window_size(), refresh: 60_000 };
     let output = Output::new(
         "yggdrasil-1".into(),
-        PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "nested window".into() },
+        PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "nested window".into(), serial_number: String::new() },
     );
     let _global = output.create_global::<App>(&dh);
     toplevels::create_global(&dh);
@@ -354,12 +354,12 @@ fn run_nested(
             CursorImageStatus::Hidden => b.window().set_cursor_visible(false),
             CursorImageStatus::Named(icon) => {
                 b.window().set_cursor_visible(true);
-                b.window().set_cursor(*icon);
+                b.window().set_cursor((*icon).into());
             }
             // a picture of the program's own: shown as the default arrow until the compositor draws pointers itself
             CursorImageStatus::Surface(_) => {
                 b.window().set_cursor_visible(true);
-                b.window().set_cursor(smithay::input::pointer::CursorIcon::Default);
+                b.window().set_cursor(smithay::input::pointer::CursorIcon::Default.into());
             }
         }
     }));

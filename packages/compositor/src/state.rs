@@ -479,7 +479,7 @@ pub fn is_window_of(w: &Window, s: &WlSurface) -> bool {
 /// Whether a window is maximized or full screen: a Wayland window's xdg state, an X11 window's _NET_WM_STATE.
 pub fn win_has(w: &Window, st: xdg_toplevel::State) -> bool {
     if let Some(t) = w.toplevel() {
-        return t.current_state().states.contains(st);
+        return t.with_committed_state(|c| c.is_some_and(|c| c.states.contains(st)));
     }
     match (w.x11_surface(), st) {
         (Some(x), xdg_toplevel::State::Maximized) => x.is_maximized(),
@@ -520,7 +520,7 @@ pub fn ignores_maximize(w: &Window) -> bool {
 pub fn asked_size(w: &Window) -> Option<smithay::utils::Size<i32, Logical>> {
     let t = w.toplevel()?;
     let pending = t.with_pending_state(|p| p.size);
-    pending.filter(|p| p.w > 0 && p.h > 0 && Some(*p) != t.current_state().size)
+    pending.filter(|p| p.w > 0 && p.h > 0 && Some(*p) != t.with_committed_state(|c| c.and_then(|c| c.size)))
 }
 
 /// A window's size as it will be: the one asked for while the program has not drawn it yet, else its own.
@@ -1300,7 +1300,7 @@ impl App {
         let surface = surface_of(&w);
         let at = self.saved.iter().find(|(s, _)| Some(s) == surface.as_ref()).map(|(_, r)| r.loc).unwrap_or((80, 80).into());
         if let Some(x) = w.x11_surface() {
-            let _ = x.set_suspended(false);
+            let _ = x.set_hidden(false);
             if let Some(r) = &self.x11_reader {
                 r.iconic(x.window_id(), false);
             }
@@ -1384,7 +1384,7 @@ impl App {
         self.space.unmap_elem(&window);
         // an X11 program is told it is hidden (_NET_WM_STATE_HIDDEN), so a game may stop drawing
         if let Some(x) = window.x11_surface() {
-            let _ = x.set_suspended(true);
+            let _ = x.set_hidden(true);
             // and minimized in ICCCM's WM_STATE, which Wine watches (see x11asked.rs)
             if let Some(r) = &self.x11_reader {
                 r.iconic(x.window_id(), true);
@@ -2991,7 +2991,7 @@ impl App {
 
     /// The lock surfaces: their output and the size the locker drew at (None until it has).
     pub fn lock_infos(&self) -> Vec<(Output, Option<smithay::utils::Size<u32, Logical>>)> {
-        self.lock_surfaces.iter().map(|(o, l)| (o.clone(), l.current_state().size)).collect()
+        self.lock_surfaces.iter().map(|(o, l)| (o.clone(), l.with_committed_state(|c| c.and_then(|c| c.size)))).collect()
     }
 }
 
@@ -3233,9 +3233,8 @@ impl SelectionHandler for App {
         _seat: Seat<Self>,
         _: &(),
     ) {
-        let handle = self.loop_handle.clone();
         if let Some(wm) = self.xwm.as_mut() {
-            if let Err(e) = wm.send_selection(ty, mime_type, fd, handle) {
+            if let Err(e) = wm.send_selection(ty, mime_type, fd) {
                 eprintln!("yggdrasil-compositor: could not paste from an X11 program: {e}");
             }
         }
@@ -3450,7 +3449,7 @@ impl SessionLockHandler for App {
     /// lock that holds the session are taken: a program refused as a second locker may still make lock surfaces (for a lock of
     /// its own), and showing one would put up its lock screen in place of the real one, with the keyboard and so the password.
     fn new_surface(&mut self, surface: LockSurface, output: WlOutput) {
-        if surface.lock().is_none() || surface.lock() != self.lock_owner {
+        if self.lock_owner.as_ref() != Some(surface.ext_session_lock()) {
             return;
         }
         let output = Output::from_resource(&output).unwrap_or_else(|| self.output.clone());
@@ -3487,6 +3486,13 @@ impl XdgDecorationHandler for App {
     }
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
         self.use_server_side(&toplevel);
+    }
+    /// The program withdrew its decoration object: the protocol says no server-side decoration from then on, so our bar goes
+    /// (its mode is already back to none; nothing is configured).
+    fn decoration_destroyed(&mut self, toplevel: ToplevelSurface) {
+        self.decorated.retain(|s| s != toplevel.wl_surface());
+        self.bars.remove(toplevel.wl_surface());
+        self.retile();
     }
 }
 
