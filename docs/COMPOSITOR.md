@@ -445,6 +445,9 @@ a window of its own that takes XDND and stands in for the Wayland windows, and s
 programs still speak XDND to each other. An X11 program's drag icon under the pointer is passed over while a button is held
 (only then can a drag go on, so X11 menus take the pointer again after a drag was given up), and XWayland going away in the
 middle of a drag ends only its own part: a Wayland program's drag goes on to the Wayland windows, and a Wayland program whose drop on an X11 window was not finished yet is told the drop was cancelled (`tests/dnd.rs`).
+A drag made with a finger goes the same way: a Wayland program's, onto a Wayland or an X11 window, dropped where the finger
+lifts. An X11 program hears a finger as the pointer and its left button (XWayland emulates them for programs that do not
+take touch themselves), so it starts a drag with one as with a mouse (`tests/dnd.rs`).
 Smithay main's drag and drop needed three fixes, carried in our fork: only a drag started on XWayland's surfaces can become
 an X11 program's drag (so an X11 program can no longer take over a press on a Wayland window, or the compositor's own move or
 resize; X11 programs are not told apart there, so one can still take over a press on another's window), a drop target that
@@ -455,7 +458,11 @@ is removed before it is answered, so a failed answer can no longer leave its pip
 was not finished yet is cancelled (`tests/dnd.rs`). Known limitations: the drag's icon and closed hand are drawn at the mouse
 pointer, also during a finger's drag; and while a Wayland program's drag is over an X11 window (or dropped there and not
 finished yet), any X11 program can ask for its data, since X11 cannot tell programs apart. X11 programs that read a drag's
-data before the drop (Wine; Chromium, Electron and CEF programs on X11) can take drops this way.
+data before the drop (Wine; Chromium, Electron and CEF programs on X11) can take drops this way. And with the pinned Smithay
+fork (the ignored tests in `tests/dnd.rs` show it), an X11 program's drag made with a finger never drops, as the lift does
+not reach XWayland, which keeps the finger, and the pointer's left button, down; and an X11 program that takes a drop and
+then hangs without ending (it never says it finished, XdndFinished) leaves the dragging program waiting, and stops every
+X11 program's drag, until it ends.
 
 **Our Smithay fork** (github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit in
 packages/compositor/Cargo.toml): since 2026-11-24, Smithay's main branch (54cf9c10) with six commits of ours, each for

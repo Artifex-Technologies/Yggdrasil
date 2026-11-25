@@ -160,12 +160,17 @@ impl Dispatch<WlTouch, Finger> for State {
 
 /// Dispatches the programs until `done`, at most 5 s.
 fn until(programs: &mut [&mut Client], what: &str, done: impl Fn(&Log) -> bool) {
+    until_in(5, programs, what, done);
+}
+
+/// Dispatches the programs until `done`, at most `secs` seconds.
+fn until_in(secs: u64, programs: &mut [&mut Client], what: &str, done: impl Fn(&Log) -> bool) {
     let start = Instant::now();
     while !log(|l| done(l)) {
         for p in programs.iter_mut() {
             p.roundtrip();
         }
-        assert!(start.elapsed() < Duration::from_secs(5), "{what}");
+        assert!(start.elapsed() < Duration::from_secs(secs), "{what}");
         std::thread::sleep(Duration::from_millis(10));
     }
 }
@@ -652,6 +657,15 @@ impl X11 {
         })
     }
 
+    /// The time the program hears a finger move to `at`, give or take a pixel: XWayland passes a finger to a program as the
+    /// pointer (`x11_finger_drag_from`), through its touch device's range (0 to 65535 across the screen), which loses one.
+    fn finger_motion(&self, programs: &mut [&mut Client], at: (i32, i32)) -> u32 {
+        self.until(programs, &format!("the X11 program hears the finger at {at:?}"), |e| match e {
+            Event::MotionNotify(m) if (m.root_x as i32 - at.0).abs() <= 1 && (m.root_y as i32 - at.1).abs() <= 1 => Some(m.time),
+            _ => None,
+        })
+    }
+
     /// The next request for `selection` (XdndSelection: what it drags; the clipboard: what it copied), which this program owns.
     fn asked(&self, programs: &mut [&mut Client], selection: Atom) -> SelectionRequestEvent {
         self.until(programs, "the X11 program asked for what it owns", |e| match e {
@@ -701,9 +715,8 @@ fn x11_drawn(comp: &Compositor, at: (i32, i32)) {
     });
 }
 
-/// The button held on the X11 program's window `win` (placed at `at`), and the program takes XdndSelection, as an X11 program
-/// starting a drag does. The window manager's stand-in for the Wayland windows comes: a window of its own that takes XDND, over
-/// the whole screen while the drag lasts (looked for at `over`). The stand-in.
+/// The button held on the X11 program's window `win` (placed at `at`), and the program starts a drag with it
+/// (`x11_takes_the_drag`). The stand-in.
 fn x11_drag_from(comp: &Compositor, x: &X11, win: XWindow, at: (i32, i32), over: (i32, i32)) -> XWindow {
     x11_drawn(comp, at);
     comp.must(&format!("pointer {} {}", at.0 + 100, at.1 + 100));
@@ -713,6 +726,27 @@ fn x11_drag_from(comp: &Compositor, x: &X11, win: XWindow, at: (i32, i32), over:
         Event::ButtonPress(b) => Some(b.time),
         _ => None,
     });
+    x11_takes_the_drag(x, win, pressed, over)
+}
+
+/// A finger (slot 1) put down on the X11 program's window `win` (placed at `at`), and the program starts a drag with it
+/// (`x11_takes_the_drag`). XWayland passes a finger to a program that does not take touch (XInput 2) as the pointer and its
+/// left button, so the program drags as with a mouse. XWayland takes touch once the seat says it has it (from the first finger
+/// on): a finger put down before that is lost to it, so a test gives the seat touch before XWayland starts. The stand-in.
+fn x11_finger_drag_from(comp: &Compositor, x: &X11, win: XWindow, at: (i32, i32), over: (i32, i32)) -> XWindow {
+    x11_drawn(comp, at);
+    comp.must(&format!("touch-down 1 {} {}", at.0 + 100, at.1 + 100));
+    let pressed = x.until(&mut [], "the finger heard as a press", |e| match e {
+        Event::ButtonPress(b) => Some(b.time),
+        _ => None,
+    });
+    x11_takes_the_drag(x, win, pressed, over)
+}
+
+/// The X11 program takes XdndSelection with its press (heard at `pressed`), as an X11 program starting a drag does. The window
+/// manager's stand-in for the Wayland windows comes: a window of its own that takes XDND, over the whole screen while the drag
+/// lasts (looked for at `over`). The stand-in.
+fn x11_takes_the_drag(x: &X11, win: XWindow, pressed: u32, over: (i32, i32)) -> XWindow {
     x.conn.set_selection_owner(win, x.selection, pressed).unwrap();
     assert_eq!(x.conn.get_selection_owner(x.selection).unwrap().reply().unwrap().owner, win, "XdndSelection taken");
     let start = Instant::now();
@@ -806,6 +840,81 @@ fn a_file_dragged_from_a_wayland_program_onto_an_x11_program_arrives_there() {
     assert!(!log(|l| l.cancelled), "not cancelled");
 }
 
+/// The same with a finger, as on a 2-in-1's screen: a Wayland program drags a file with a finger onto an X11 program, which is
+/// told the drag came and where the finger is, takes it, and once the finger lifts over it is told of the drop and reads the
+/// file's URI; the Wayland program is told the drop finished.
+#[test]
+fn a_file_dragged_with_a_finger_from_a_wayland_program_onto_an_x11_program_arrives_there() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a finger's drag onto an X11 program");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program that takes the drop, on the right
+    let x = X11::connect(&display);
+    let win = x.window(b"x11target\0X11target\0", EventMask::NO_EVENT);
+    x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[XDND]).unwrap();
+    x.conn.flush().unwrap();
+    place_x11(&comp, "X11target", (600, 100));
+    // the Wayland program dragging, on the left; the first touch gives the seat its touch, and the program then takes it
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.source")));
+    s.roundtrip();
+    let (si, xi) = (comp.window("test.source").unwrap(), comp.window("X11target").unwrap());
+    let (fx, fy) = (si.at.0 + 100, si.at.1 + 100);
+    comp.must(&format!("touch-down 0 {fx} {fy}"));
+    comp.must("touch-up 0");
+    s.until("the seat has touch", |st| st.seat_caps & 4 != 0);
+    let _touch = s.seat.get_touch(&s.qh, Finger);
+    s.roundtrip();
+
+    // a finger down on its window, and the program drags its file with it
+    comp.must(&format!("touch-down 1 {fx} {fy}"));
+    until(&mut [&mut s], "the finger down", |l| l.touched.is_some());
+    let m: WlDataDeviceManager = s.globals.bind(&s.qh, 3..=3, ()).expect("wl_data_device_manager 3");
+    let device: WlDataDevice = m.get_data_device(&s.seat, &s.qh, ());
+    let file: WlDataSource = m.create_data_source(&s.qh, Dragged);
+    file.offer(URI_MIME.into());
+    file.set_actions(DndAction::Copy);
+    device.start_drag(Some(&file), &sw.surface, None, log(|l| l.touched.unwrap()));
+    s.roundtrip();
+
+    // the finger over the X11 window: it is told a drag came, offering a URI (XdndEnter), and where the finger is (XdndPosition)
+    x11_drawn(&comp, xi.at);
+    let (px, py) = (xi.at.0 + 150, xi.at.1 + 100);
+    comp.must(&format!("touch-move 1 {px} {py}"));
+    let enter = x.message(&mut [&mut s], x.enter, "XdndEnter");
+    let source = enter[0];
+    assert!(enter[2..].contains(&x.uri), "a URI offered: {enter:?}");
+    let position = x.message(&mut [&mut s], x.position, "XdndPosition");
+    assert_eq!(position[2], xy(px, py), "the finger where it is on the X screen: {:?}", (position[2] >> 16, position[2] & 0xffff));
+    // it takes it, as a copy (XdndStatus): the dragging program is told the action
+    x.send(source, x.status, [win, 1, 0, 0, x.copy]);
+    until(&mut [&mut s], "the dragging program told the X11 program's choice", |l| l.action == Some(DndAction::Copy));
+
+    // the finger lifts over it: the X11 program is told (XdndDrop) and asks for the URI, which the dragging program is asked for
+    comp.must("touch-up 1");
+    let dropped = x.message(&mut [&mut s], x.drop, "XdndDrop");
+    assert_eq!(dropped[0], source, "from the source that entered");
+    let into = x.conn.intern_atom(false, b"DROPPED").unwrap().reply().unwrap().atom;
+    x.conn.convert_selection(win, x.selection, x.uri, into, dropped[2]).unwrap();
+    x.conn.flush().unwrap();
+    let property = x.until(&mut [&mut s], "the URI given to the X11 program", |e| match e {
+        Event::SelectionNotify(n) if n.requestor == win => Some(n.property),
+        _ => None,
+    });
+    assert_eq!(property, into, "the URI given, not refused");
+    let got = x.conn.get_property(true, win, into, AtomEnum::ANY, 0, 1 << 16).unwrap().reply().unwrap().value;
+    assert_eq!(got, URI, "what was dropped arrived");
+    x.send(source, x.finished, [win, 1, x.copy, 0, 0]);
+    until(&mut [&mut s], "the dragging program told the drop finished", |l| l.finished);
+    assert!(!log(|l| l.cancelled), "not cancelled");
+}
+
 /// An X11 program, an XDND source, drags a file onto a Wayland program: it sends its XDND messages to the window under the
 /// pointer, the window manager's stand-in, and its drag icon under the pointer is passed over; the Wayland program is offered
 /// the URI, takes it, and reads it through the pipe; the X11 program is told the drop finished.
@@ -874,6 +983,88 @@ fn a_file_dragged_from_an_x11_program_onto_a_wayland_program_arrives_there() {
     // let go: the X11 program drops (XdndDrop), and the Wayland program is told
     comp.must("release");
     let released = x.until(&mut [&mut t], "the release", |e| match e {
+        Event::ButtonRelease(b) => Some(b.time),
+        _ => None,
+    });
+    x.send(stand_in, x.drop, [win, 0, released, 0, 0]);
+    until(&mut [&mut t], "the drop", |l| l.dropped);
+    // it reads the URI through the pipe: the X11 program is asked for it through XdndSelection, and gives it
+    let (read, write) = std::io::pipe().unwrap();
+    offer.receive(URI_MIME.into(), write.as_fd());
+    drop(write);
+    let asked = x.asked(&mut [&mut t], x.selection);
+    assert_eq!(asked.target, x.uri, "asked for the URI's type");
+    x.give(&asked, URI);
+    assert_eq!(read_all(read), URI, "what was dropped arrived");
+    // it is done: the X11 program is told the drop finished, taken as a copy (XdndFinished)
+    offer.finish();
+    t.roundtrip();
+    let finished = x.message(&mut [&mut t], x.finished, "XdndFinished");
+    assert_eq!((finished[0], finished[1] & 1, finished[2]), (stand_in, 1, x.copy), "the drop finished: {finished:?}");
+}
+
+/// The same with a finger: an X11 program drags a file with a finger onto a Wayland program. It hears the finger as the pointer
+/// and its left button (`x11_finger_drag_from`), so it finds the stand-in under the finger and speaks XDND to it as with a
+/// mouse; the Wayland program is offered the URI where the finger is and takes it; the finger's lift reaches the X11 program as
+/// the release it drops on (XWayland keeps the finger down until it is told); the URI arrives through the pipe and the X11
+/// program is told the drop finished.
+#[test]
+#[ignore = "needs the fork's fix that passes the finger's lift to XWayland at the end of an X11 program's drag (YGG-121)"]
+fn a_file_dragged_with_a_finger_from_an_x11_program_onto_a_wayland_program_arrives_there() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a finger's drag from an X11 program");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the seat gets touch from a first finger before XWayland starts (with the first X11 program), which takes it as it starts
+    comp.must("touch-down 0 500 500");
+    comp.must("touch-up 0");
+    // the X11 program dragging, on the right
+    let x = X11::connect(&display);
+    let win = x.window(b"x11source\0X11source\0", pointer_events());
+    place_x11(&comp, "X11source", (600, 100));
+    // the Wayland program that takes the drop, in the top left corner
+    let mut t = comp.connect();
+    let (_tk, _tp) = t.input();
+    let tw = t.window("test.target", "Target");
+    t.draw(&tw, (300, 200), 0xff00ff00);
+    comp.must(&format!("place {} 0 0 300 200", id_of(&comp, "test.target")));
+    t.roundtrip();
+    let (xi, ti) = (comp.window("X11source").unwrap(), comp.window("test.target").unwrap());
+    assert!(ti.at.0 + 300 <= xi.at.0, "side by side: {ti:?} {xi:?}");
+    let _tdev = data_device(&mut t);
+    let (px, py) = (ti.at.0 + 32, ti.at.1 + 32);
+    let stand_in = x11_finger_drag_from(&comp, &x, win, xi.at, (px, py));
+
+    // the finger over the Wayland window: the X11 program follows it and finds the window under it, the stand-in
+    comp.must(&format!("touch-move 1 {px} {py}"));
+    let moved = x.finger_motion(&mut [&mut t], (px, py));
+    assert_eq!(x.target_under_pointer(), Some(stand_in), "the window under the finger");
+    let version = x.aware_of(stand_in).unwrap().min(XDND);
+    // it tells the stand-in the drag came, offering a URI (XdndEnter), and where (XdndPosition): not taken, nobody was offered it
+    x.send(stand_in, x.enter, [win, version << 24, x.uri, 0, 0]);
+    x.send(stand_in, x.position, [win, 0, xy(px, py), moved, x.copy]);
+    let status = x.message(&mut [&mut t], x.status, "XdndStatus");
+    assert_eq!((status[0], status[1] & 1), (stand_in, 0), "not taken before the Wayland program says so: {status:?}");
+
+    // the finger moves on: the Wayland program is offered the URI, and takes it as a copy
+    comp.must(&format!("touch-move 1 {} {py}", px + 10));
+    until(&mut [&mut t], "the Wayland program offered the drag", |l| l.entered.is_some() && l.mimes.iter().any(|m| m == URI_MIME));
+    let (serial, offer) = log(|l| l.entered.clone()).unwrap();
+    offer.accept(serial, Some(URI_MIME.into()));
+    offer.set_actions(DndAction::Copy, DndAction::Copy);
+    t.roundtrip();
+    // the X11 program's next position is answered: taken, as a copy
+    comp.must(&format!("touch-move 1 {} {py}", px + 20));
+    let moved = x.finger_motion(&mut [&mut t], (px + 20, py));
+    x.send(stand_in, x.position, [win, 0, xy(px + 20, py), moved, x.copy]);
+    let status = x.message(&mut [&mut t], x.status, "XdndStatus once the Wayland program took it");
+    assert_eq!((status[1] & 1, status[4]), (1, x.copy), "taken as a copy: {status:?}");
+
+    // the finger lifts: the X11 program hears it as the release and drops (XdndDrop), and the Wayland program is told
+    comp.must("touch-up 1");
+    let released = x.until(&mut [&mut t], "the lift heard as the release", |e| match e {
         Event::ButtonRelease(b) => Some(b.time),
         _ => None,
     });
@@ -1312,6 +1503,171 @@ fn a_drag_over_an_x11_program_that_ends_is_cancelled_on_the_drop() {
     }
     let _l = limit(60, "a drag over an X11 program that ends");
     an_x11_target_ends_unfinished(false);
+}
+
+/// The Wayland program `s` (its window `sw` at `from`) drags a file onto the X11 program `x`'s window `win` (at `to`), which
+/// takes it as a copy, and lets go there: the X11 program is told (XdndDrop). The source window the X11 program speaks XDND to
+/// (the window manager's), and XdndDrop's data.
+fn drop_on_x11(
+    comp: &Compositor,
+    s: &mut Client,
+    sw: &Window,
+    from: (i32, i32),
+    x: &X11,
+    win: XWindow,
+    to: (i32, i32),
+) -> (XWindow, [u32; 5]) {
+    drag_from(comp, s, sw, from, URI_MIME);
+    x11_drawn(comp, to);
+    comp.must(&format!("pointer {} {}", to.0 + 150, to.1 + 100));
+    let source = x.message(&mut [&mut *s], x.enter, "XdndEnter")[0];
+    x.message(&mut [&mut *s], x.position, "XdndPosition");
+    x.send(source, x.status, [win, 1, 0, 0, x.copy]);
+    until(&mut [&mut *s], "the dragging program told the X11 program's choice", |l| l.action == Some(DndAction::Copy));
+    comp.must("release");
+    (source, x.message(&mut [&mut *s], x.drop, "XdndDrop"))
+}
+
+/// A Wayland program drops a file on an X11 program, which takes it, reads it, and then hangs without ending: it never says it
+/// finished (XdndFinished). The window manager waits 10 s from the drop for that, then takes the X11 program for hung: the
+/// dragging program is told the drop is cancelled (not finished: had it offered a move, it would keep its file), a finish sent
+/// after that is not passed on, and the next X11 program's drag works (while a drop waits for its finish, the window manager
+/// takes XdndSelection back from any X11 program that takes it).
+#[test]
+#[ignore = "needs the fork's fix that ends a drop whose X11 target never finishes it (YGG-121)"]
+fn a_drop_an_x11_program_never_finishes_is_cancelled_after_10_seconds() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a drop an X11 program never finishes");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program that takes the drop, on the right
+    let x = X11::connect(&display);
+    let win = x.window(b"x11target\0X11target\0", EventMask::NO_EVENT);
+    x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[XDND]).unwrap();
+    x.conn.flush().unwrap();
+    place_x11(&comp, "X11target", (600, 100));
+    // the Wayland program dragging, on the left
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.source")));
+    s.roundtrip();
+    let (si, xi) = (comp.window("test.source").unwrap(), comp.window("X11target").unwrap());
+
+    // the file dropped on the X11 program, which asks for the URI and reads it, and hangs: no XdndFinished
+    let let_go = Instant::now();
+    let (source, dropped) = drop_on_x11(&comp, &mut s, &sw, si.at, &x, win, xi.at);
+    let into = x.conn.intern_atom(false, b"DROPPED").unwrap().reply().unwrap().atom;
+    x.conn.convert_selection(win, x.selection, x.uri, into, dropped[2]).unwrap();
+    x.conn.flush().unwrap();
+    let property = x.until(&mut [&mut s], "the URI given to the X11 program", |e| match e {
+        Event::SelectionNotify(n) if n.requestor == win => Some(n.property),
+        _ => None,
+    });
+    assert_eq!(property, into, "the URI given, not refused");
+    let got = x.conn.get_property(true, win, into, AtomEnum::ANY, 0, 1 << 16).unwrap().reply().unwrap().value;
+    assert_eq!(got, URI, "what was dropped arrived");
+    s.roundtrip();
+    assert!(!log(|l| l.cancelled || l.finished), "the drop waits for the X11 program's finish");
+
+    // 10 s after the drop, the dragging program is told the drop is cancelled
+    until_in(20, &mut [&mut s], "the dragging program told the drop is cancelled", |l| l.cancelled);
+    let waited = let_go.elapsed();
+    assert!(waited >= Duration::from_secs(9), "cancelled only once the X11 program had its time: after {waited:?}");
+    assert!(!log(|l| l.finished), "not finished");
+    // the X11 program's finish, late: not passed on. Once the window manager manages a window the program shows after it, it
+    // has read the finish too (it reads the X events in order)
+    x.send(source, x.finished, [win, 1, x.copy, 0, 0]);
+    x.window(b"after\0After\0", EventMask::NO_EVENT);
+    place_x11(&comp, "After", (50, 350));
+    s.roundtrip();
+    assert!(!log(|l| l.finished), "a finish after the drop was cancelled is not passed on");
+
+    // the next X11 program's drag: it keeps XdndSelection, and the stand-in comes over the Wayland window
+    let a = X11::connect(&display);
+    let awin = a.window(b"x11source\0X11source\0", pointer_events());
+    place_x11(&comp, "X11source", (600, 350));
+    let ai = comp.window("X11source").unwrap();
+    x11_drag_from(&comp, &a, awin, ai.at, (si.at.0 + 150, si.at.1 + 100));
+    assert_eq!(a.conn.get_selection_owner(a.selection).unwrap().reply().unwrap().owner, awin, "XdndSelection kept");
+    comp.must("release");
+}
+
+/// A Wayland program drops a file on an X11 program that never finishes the drop, and drags another file onto another X11
+/// program before the 10 s are up. XdndSelection serves the new drag from then on (the first X11 program could no longer read
+/// its own drop), so the first drop is over at once and its program is told it is cancelled. The first drop's 10 s do not end
+/// the new drag: held over the other X11 program past them, it is still taken there, and its drop arrives and finishes.
+#[test]
+#[ignore = "needs the fork's fix that ends a drop whose X11 target never finishes it (YGG-121)"]
+fn a_drop_still_waiting_on_an_x11_program_ends_when_the_next_drag_comes() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a drop still waiting when the next drag comes");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program that takes the first drop, top right, and the one that takes the second, below it
+    let x = X11::connect(&display);
+    let win = x.window(b"x11target\0X11target\0", EventMask::NO_EVENT);
+    x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[XDND]).unwrap();
+    x.conn.flush().unwrap();
+    place_x11(&comp, "X11target", (600, 50));
+    let y = X11::connect(&display);
+    let other = y.window(b"x11other\0X11other\0", EventMask::NO_EVENT);
+    y.conn.change_property32(PropMode::REPLACE, other, y.aware, AtomEnum::ATOM, &[XDND]).unwrap();
+    y.conn.flush().unwrap();
+    place_x11(&comp, "X11other", (600, 350));
+    // the Wayland program dragging, on the left
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.source")));
+    s.roundtrip();
+    let (si, xi, yi) = (comp.window("test.source").unwrap(), comp.window("X11target").unwrap(), comp.window("X11other").unwrap());
+
+    // the first file dropped on the first X11 program, which never finishes it
+    let first = Instant::now();
+    drop_on_x11(&comp, &mut s, &sw, si.at, &x, win, xi.at);
+
+    // the second file over the other X11 program: it is told the drag came, and the first drop is over at once
+    log(|l| *l = Log::default());
+    s.state.button_serial = 0;
+    drag_from(&comp, &mut s, &sw, si.at, URI_MIME);
+    x11_drawn(&comp, yi.at);
+    let (px, py) = (yi.at.0 + 150, yi.at.1 + 100);
+    comp.must(&format!("pointer {px} {py}"));
+    let source = y.message(&mut [&mut s], y.enter, "XdndEnter at the other X11 program")[0];
+    until(&mut [&mut s], "the first drop's program told it is cancelled", |l| l.cancelled);
+    assert!(first.elapsed() < Duration::from_secs(5), "cancelled when the next drag came, not after 10 s: {:?}", first.elapsed());
+    log(|l| l.cancelled = false);
+    y.message(&mut [&mut s], y.position, "XdndPosition at the other X11 program");
+    y.send(source, y.status, [other, 1, 0, 0, y.copy]);
+    until(&mut [&mut s], "the dragging program told the other X11 program's choice", |l| l.action == Some(DndAction::Copy));
+
+    // held there until the first drop's 10 s are over: the drag is still taken, and its drop arrives and finishes
+    std::thread::sleep(Duration::from_secs(11).saturating_sub(first.elapsed()));
+    comp.must(&format!("pointer {} {py}", px + 10));
+    y.message(&mut [&mut s], y.position, "XdndPosition after the first drop's 10 s");
+    y.send(source, y.status, [other, 1, 0, 0, y.copy]);
+    comp.must("release");
+    let dropped = y.message(&mut [&mut s], y.drop, "XdndDrop at the other X11 program");
+    let into = y.conn.intern_atom(false, b"DROPPED").unwrap().reply().unwrap().atom;
+    y.conn.convert_selection(other, y.selection, y.uri, into, dropped[2]).unwrap();
+    y.conn.flush().unwrap();
+    let property = y.until(&mut [&mut s], "the URI given to the other X11 program", |e| match e {
+        Event::SelectionNotify(n) if n.requestor == other => Some(n.property),
+        _ => None,
+    });
+    assert_eq!(property, into, "the URI given, not refused");
+    let got = y.conn.get_property(true, other, into, AtomEnum::ANY, 0, 1 << 16).unwrap().reply().unwrap().value;
+    assert_eq!(got, URI, "what was dropped arrived");
+    y.send(source, y.finished, [other, 1, y.copy, 0, 0]);
+    until(&mut [&mut s], "the dragging program told the second drop finished", |l| l.finished);
+    assert!(!log(|l| l.cancelled), "neither drop cancelled since the second drag came");
 }
 
 /// An X11 program takes XdndSelection while a Wayland program drags between two Wayland windows (any X11 program can, at any
