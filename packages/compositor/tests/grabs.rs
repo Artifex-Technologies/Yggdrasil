@@ -2,8 +2,9 @@
 //! window (xdg_toplevel's move and resize for a Wayland program, _NET_WM_MOVERESIZE for an X11 one), or while a finger is down
 //! on it (a Wayland program), and the window follows the pointer until the button is let go, or the finger until it lifts.
 //! Only the program the button or finger went down on may ask: Smithay checks a Wayland request's serial alone, serials are one
-//! counter every program sees, and any X11 program may ask for any window at any time. The X11 test is skipped where XWayland
-//! is not installed.
+//! counter every program sees, and any X11 program may ask for any window at any time. A finger counts only while it is still
+//! down (Smithay keeps the first finger's serial until every finger is up). The X11 test is skipped where XWayland is not
+//! installed.
 
 mod common;
 
@@ -187,6 +188,77 @@ fn a_window_moves_and_resizes_with_a_finger_only_on_its_own_program() {
     comp.must("touch-cancel");
     elsewhere(&comp);
     assert_eq!(comp.window("test.a").unwrap().at, moved, "the move ended with the cancel");
+}
+
+/// A program moves or resizes its window only with a finger still down. Smithay keeps the first finger's serial (with its slot)
+/// until every finger is up, so a program can ask with a finger that has already lifted while another is still down (a palm
+/// beside it, or a program late with its request): nothing moves or changes size, and the next finger reaches the program under
+/// it. The same when a new finger has taken the lifted one's slot.
+#[test]
+fn a_window_moves_and_resizes_only_with_a_finger_still_down() {
+    let _l = limit(60, "a finger that has lifted");
+    let comp = Compositor::start(&["--size", "1000x600"]);
+    let mut a = comp.connect();
+    let aw = a.window("test.a", "A");
+    a.draw(&aw, (300, 200), BLUE);
+    let mut b = comp.connect();
+    let bw = b.window("test.b", "B");
+    b.draw(&bw, (300, 200), GREEN);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.a")));
+    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "test.b")));
+    a.roundtrip();
+    b.roundtrip();
+    let (ai, bi) = (comp.window("test.a").unwrap(), comp.window("test.b").unwrap());
+    let a_size = a.state.wins[aw.index].size;
+    // the first touch gives the seat its touch; both programs then take it
+    comp.must("touch-down 0 960 560");
+    comp.must("touch-up 0");
+    a.until("the seat has touch", |st| st.seat_caps & 4 != 0);
+    b.until("the seat has touch", |st| st.seat_caps & 4 != 0);
+    let (_ta, _tb) = (a.touch(), b.touch());
+    let (fx, fy) = (ai.at.0 + 100, ai.at.1 + 100);
+    // finger 0 down on A's window, finger 1 down below it (a palm), and finger 0 lifts: the serial A was told for finger 0
+    let lifted = |a: &mut Client| {
+        a.state.touch_serial = 0;
+        comp.must(&format!("touch-down 0 {fx} {fy}"));
+        a.until("finger 0 down", |st| st.touch_serial != 0);
+        let serial = a.state.touch_serial;
+        comp.must(&format!("touch-down 1 {fx} 560"));
+        comp.must("touch-up 0");
+        serial
+    };
+
+    // A asks to move its window with finger 0 after it lifted: nothing moves, and once finger 1 lifts too, a finger on B's
+    // window reaches B
+    let serial = lifted(&mut a);
+    aw.toplevel._move(&a.seat, serial);
+    a.roundtrip();
+    comp.must(&format!("touch-move 1 {} 570", fx + 20));
+    comp.must("touch-up 1");
+    a.until("A told finger 1 lifted", |st| st.touches.iter().any(|t| t.0 == "up" && t.1 == 1));
+    b.roundtrip();
+    let heard = b.state.touches.len();
+    let (gx, gy) = (bi.at.0 + 100, bi.at.1 + 100);
+    comp.must(&format!("touch-down 0 {gx} {gy}"));
+    comp.must(&format!("touch-move 0 {} {}", gx + 50, gy + 20));
+    assert_eq!(comp.window("test.a").unwrap().at, ai.at, "A's window not moved");
+    comp.must("touch-up 0");
+    b.until("B told of the finger on its window", |st| {
+        st.touches[heard..].iter().map(|t| t.0).filter(|e| *e != "frame").eq(["down", "motion", "up"])
+    });
+
+    // a new finger takes finger 0's slot on A's window, and A asks to resize with the lifted finger: the new finger moving
+    // resizes nothing
+    let serial = lifted(&mut a);
+    comp.must(&format!("touch-down 0 {fx} {fy}"));
+    aw.toplevel.resize(&a.seat, serial, ResizeEdge::BottomRight);
+    a.roundtrip();
+    comp.must(&format!("touch-move 0 {} {}", fx + 60, fy + 40));
+    a.roundtrip();
+    assert_eq!(a.state.wins[aw.index].size, a_size, "A not asked to take another size");
+    comp.must("touch-up 0");
+    comp.must("touch-up 1");
+    assert_eq!(comp.window("test.a").unwrap().rect(), ai.rect(), "A's window where it was, as it was");
 }
 
 /// An X11 program asks to move its window, then to resize it (_NET_WM_MOVERESIZE, as on a press on its own title bar or edge),

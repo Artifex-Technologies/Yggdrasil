@@ -230,8 +230,9 @@ pub struct App {
     pub touch_wake_at: Option<std::time::Instant>,
     /// Fingers that went down on a screen that was off: their moves and lifts reach no program either.
     pub touch_swallowed: Vec<smithay::backend::input::TouchSlot>,
-    /// Where each finger on the touchscreen is now (touch.rs): a finger's drag draws its icon there.
-    pub fingers: Vec<(smithay::backend::input::TouchSlot, Point<f64, Logical>)>,
+    /// The fingers down on the touchscreen now (touch.rs): a finger's drag draws its icon at its finger, and a program moves,
+    /// resizes or drags only with a finger still down.
+    pub fingers: Vec<crate::touch::Finger>,
     pub bindings: Vec<Binding>,
     /// A modifier key with a tap binding went down and nothing else was pressed since (its key code and what letting go does):
     /// Super on its own opens the start menu, Ctrl on its own is a tap of Find my mouse.
@@ -2575,7 +2576,8 @@ impl App {
                 out.extend(crate::look::closing_piece(renderer, c, buffer, geo, alpha).map(R::Elem::from));
             }
         }
-        let grabbed = self.pointer.is_grabbed();
+        // a button or a finger held: a window moved or resized by hand is drawn where the hand puts it, not animated after it
+        let grabbed = self.pointer.is_grabbed() || self.seat.get_touch().is_some_and(|t| t.is_grabbed());
         let front = self.front_window();
         let windows: Vec<Window> = self.space.elements().rev().cloned().collect();
         for w in windows {
@@ -3557,7 +3559,8 @@ impl WaylandDndGrabHandler for App {
     /// A program started dragging, with the left button held or a finger down on its own window: the drag grab that routes the
     /// offer to the window under the pointer or the finger, and the drag's look: with the button, a closed hand and its icon
     /// under the pointer; with a finger, its icon under the finger (the pointer stays as it is). A program asking with a press
-    /// or finger that is not its own is told its drag is cancelled, and nothing changes.
+    /// or finger that is not its own, or with a finger that has lifted (`finger_down`), is told its drag is cancelled, and
+    /// nothing changes.
     fn dnd_requested<S: Source>(&mut self, source: S, icon: Option<WlSurface>, seat: Seat<Self>, serial: Serial, type_: GrabType) {
         // the program asking: its data source's, or without one (a drag within the program) its origin surface's
         let any: &dyn std::any::Any = &source;
@@ -3581,7 +3584,9 @@ impl WaylandDndGrabHandler for App {
             }
             GrabType::Touch => {
                 let Some(touch) = seat.get_touch() else { return source.cancel() };
-                let Some(start) = touch.grab_start_data().filter(|s| pressed_by(s.focus.as_ref(), &asker)) else {
+                // Smithay found the touchscreen's grab under `serial`, which outlasts its finger while another is down
+                let Some(start) = touch.grab_start_data().filter(|s| self.finger_down(serial) && pressed_by(s.focus.as_ref(), &asker))
+                else {
                     return source.cancel();
                 };
                 let slot = start.slot;
@@ -3729,19 +3734,20 @@ impl App {
     /// at the pointer, a finger's at that finger.
     fn drag_icons(&self) -> impl Iterator<Item = (&WlSurface, Point<f64, Logical>, Point<i32, Logical>)> + '_ {
         let pointer = self.pointer_drag.as_ref().map(|d| (d, self.pointer_location));
-        let finger = self.finger_drag.as_ref().and_then(|(slot, d)| Some((d, self.fingers.iter().find(|(s, _)| s == slot)?.1)));
+        let finger = self.finger_drag.as_ref().and_then(|(slot, d)| Some((d, self.fingers.iter().find(|f| f.slot == *slot)?.at)));
         pointer.into_iter().chain(finger).filter_map(|(d, at)| Some((d.icon.as_ref()?, at, d.offset)))
     }
 
     /// What a program may move or resize its window with: the pointer's grab under `serial`, else the touchscreen's, if that
-    /// button or finger went down on one of the program's own surfaces (`pressed_by`).
+    /// button or finger went down on one of the program's own surfaces (`pressed_by`), and a finger only while it is still down
+    /// (`finger_down`).
     fn own_press(&self, surface: &ToplevelSurface, serial: Serial) -> Option<Press> {
         let asker = surface.wl_surface().id();
         if let Some(start) = self.pointer.with_grab(|s, g| (s == serial).then(|| g.start_data().clone())).flatten() {
             return pressed_by(start.focus.as_ref(), &asker).then_some(Press::Button(start));
         }
         let start = self.seat.get_touch()?.with_grab(|s, g| (s == serial).then(|| g.start_data().clone())).flatten()?;
-        pressed_by(start.focus.as_ref(), &asker).then_some(Press::Finger(start))
+        (self.finger_down(serial) && pressed_by(start.focus.as_ref(), &asker)).then_some(Press::Finger(start))
     }
 
     /// The window does `what` (a move or a resize) as the button or finger of a program's own request goes, until that button

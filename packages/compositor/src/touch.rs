@@ -1,10 +1,12 @@
 //! The touchscreen and the screen's pen, on the laptop's own screen (eDP, LVDS or DSI; the main screen when there is none or it is
 //! off), as the Hyprland session maps them (`hl.device({ output = panel })`): a touch on the glass lands on that screen even when
 //! a monitor is plugged in beside it.
-//! - **Touch** goes to programs as wl_touch (down, motion, up, frame, cancel, one slot a finger): the seat gets its touch the
-//!   first time a touchscreen is used. A finger put down on a window gives it the keyboard and raises it, as a click does. With
-//!   a finger down on its own window a program may move or resize that window, which then follows the finger (grabs.rs), or
-//!   start a drag, whose icon is drawn under that finger (`App::fingers`; the pointer keeps its own look).
+//! - **Touch** goes to programs as wl_touch (down, motion, up, frame, one slot a finger): the seat gets its touch the first time
+//!   a touchscreen is used. A finger put down on a window gives it the keyboard and raises it, as a click does. With a finger
+//!   still down on its own window a program may move or resize that window, which then follows the finger (grabs.rs), or start
+//!   a drag, whose icon is drawn under that finger (`App::fingers`; the pointer keeps its own look). The touchscreen's cancel
+//!   ends every finger and a move, resize or drag made with one, but programs are not told it: Smithay sends wl_touch.cancel
+//!   only with another touch change in the same frame, and libinput's cancel comes in a frame of its own.
 //! - **The pen** moves the pointer, and its tip is the left button, its first side button the right one and its second the
 //!   middle one, so every program takes it (tablet-v2, pressure and tilt for drawing programs, is not offered yet).
 //!
@@ -21,11 +23,11 @@
 use smithay::backend::input::InputTime;
 use smithay::backend::input::{
     AbsolutePositionEvent, ButtonState, Event, InputBackend, InputEvent, ProximityState, TabletToolButtonEvent, TabletToolProximityEvent,
-    TabletToolTipEvent, TabletToolTipState, TouchEvent,
+    TabletToolTipEvent, TabletToolTipState, TouchEvent, TouchSlot,
 };
 use smithay::input::touch::{DownEvent, MotionEvent, UpEvent};
 use smithay::output::Output;
-use smithay::utils::{Logical, Point, Rectangle, Size, Transform, SERIAL_COUNTER};
+use smithay::utils::{Logical, Point, Rectangle, Serial, Size, Transform, SERIAL_COUNTER};
 
 use crate::state::{output_rect, App};
 
@@ -56,6 +58,15 @@ pub fn on_glass(t: Transform, size: Size<i32, Logical>, u: f64, v: f64) -> Point
     (x * w, y * h).into()
 }
 
+/// A finger down on the touchscreen that goes to the programs (`App::fingers`; one on a screen that is off does not).
+pub struct Finger {
+    pub slot: TouchSlot,
+    /// the serial it went down with: its program is told it, and asks with it to move, resize or drag (`App::finger_down`)
+    pub serial: Serial,
+    /// where it is now: a drag made with it draws its icon there
+    pub at: Point<f64, Logical>,
+}
+
 impl App {
     /// The screen a touchscreen and the screen's pen belong to: the laptop's own while it is on, else the main screen.
     pub fn touch_output(&self) -> Output {
@@ -68,7 +79,7 @@ impl App {
     }
 
     /// A finger went down at `pos` (in the space of all screens).
-    pub fn touch_down(&mut self, slot: smithay::backend::input::TouchSlot, pos: Point<f64, Logical>, time: InputTime) {
+    pub fn touch_down(&mut self, slot: TouchSlot, pos: Point<f64, Logical>, time: InputTime) {
         self.wake();
         if !self.power.is_on(&self.touch_output()) {
             self.tap_on_dark_screen(slot, std::time::Instant::now());
@@ -85,44 +96,47 @@ impl App {
         if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
             eprintln!("touch down {slot:?} at {:.0},{:.0}", pos.x, pos.y);
         }
-        self.finger_at(slot, pos);
+        self.fingers.retain(|f| f.slot != slot);
+        self.fingers.push(Finger { slot, serial, at: pos });
         touch.down(self, under, &DownEvent { slot, location: pos, serial, time });
     }
 
-    pub fn touch_motion(&mut self, slot: smithay::backend::input::TouchSlot, pos: Point<f64, Logical>, time: InputTime) {
+    pub fn touch_motion(&mut self, slot: TouchSlot, pos: Point<f64, Logical>, time: InputTime) {
         self.wake();
         if self.touch_swallowed.contains(&slot) {
             return;
         }
         let Some(touch) = self.seat.get_touch() else { return };
-        self.finger_at(slot, pos);
+        if let Some(f) = self.fingers.iter_mut().find(|f| f.slot == slot) {
+            f.at = pos;
+        }
         let under = self.target_under(pos);
         touch.motion(self, under, &MotionEvent { slot, location: pos, time });
     }
 
-    pub fn touch_up(&mut self, slot: smithay::backend::input::TouchSlot, time: InputTime) {
+    pub fn touch_up(&mut self, slot: TouchSlot, time: InputTime) {
         self.wake();
         if let Some(i) = self.touch_swallowed.iter().position(|s| *s == slot) {
             self.touch_swallowed.remove(i);
             return;
         }
-        self.fingers.retain(|(s, _)| *s != slot);
+        self.fingers.retain(|f| f.slot != slot);
         let Some(touch) = self.seat.get_touch() else { return };
         touch.up(self, &UpEvent { slot, serial: SERIAL_COUNTER.next_serial(), time });
     }
 
-    /// A finger is at `pos` now (`App::fingers`, where a finger's drag draws its icon).
-    fn finger_at(&mut self, slot: smithay::backend::input::TouchSlot, pos: Point<f64, Logical>) {
-        match self.fingers.iter_mut().find(|(s, _)| *s == slot) {
-            Some(f) => f.1 = pos,
-            None => self.fingers.push((slot, pos)),
-        }
+    /// The finger that went down with `serial` is still down. A program asks to move, resize or drag with a finger's serial, and
+    /// Smithay keeps the first finger's (the touchscreen's grab, with that finger's slot) until every finger is up: without this a
+    /// program could ask with a finger that has lifted while another is still down (a palm beside it, or a program late with its
+    /// request), and what it asked for would wait for the next finger in that slot, wherever that went down.
+    pub fn finger_down(&self, serial: Serial) -> bool {
+        self.fingers.iter().any(|f| f.serial == serial)
     }
 
     /// A finger down while the touchscreen's screen is off: the first tap is remembered, a second within `DOUBLE_TAP` turns
     /// every screen that is off on again and counts as activity (idle starts over, the lock screen shows). Neither reaches a
     /// program, nor does what the finger does until it lifts.
-    fn tap_on_dark_screen(&mut self, slot: smithay::backend::input::TouchSlot, now: std::time::Instant) {
+    fn tap_on_dark_screen(&mut self, slot: TouchSlot, now: std::time::Instant) {
         self.touch_swallowed.push(slot);
         if !second_tap(self.touch_wake_at, now) {
             self.touch_wake_at = Some(now);

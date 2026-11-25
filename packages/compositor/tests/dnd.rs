@@ -418,6 +418,66 @@ fn a_program_cannot_drag_with_another_programs_finger() {
     until(&mut [&mut a], "the first program told the finger lifted", |l| l.lifted);
 }
 
+/// A program can make a drag only of a finger still down. Smithay keeps the first finger's serial (with its slot) until every
+/// finger is up, so a program can ask with a finger that has already lifted while another is still down (a palm beside it, or
+/// a program late with its request): it is told its drag is cancelled and no icon is drawn, and the next finger reaches the
+/// window under it, which is offered nothing.
+#[test]
+fn a_program_cannot_drag_with_a_finger_that_has_lifted() {
+    let _l = limit(60, "a drag with a finger that has lifted");
+    let comp = Compositor::start(&["--size", "1000x600"]);
+    // the program touched, on the left; the one the next finger goes down on, on the right, which takes text
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    let mut t = comp.connect();
+    let (_tk, _tp) = t.input();
+    let tw = t.window("test.target", "Target");
+    t.draw(&tw, (300, 200), 0xff00ff00);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.source")));
+    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "test.target")));
+    s.roundtrip();
+    t.roundtrip();
+    let (si, ti) = (comp.window("test.source").unwrap(), comp.window("test.target").unwrap());
+    let _tdev = data_device(&mut t);
+    // the first touch gives the seat its touch; both programs then take it
+    let (x, y) = (si.at.0 + 100, si.at.1 + 100);
+    comp.must(&format!("touch-down 0 {x} {y}"));
+    comp.must("touch-up 0");
+    s.until("the seat has touch", |st| st.seat_caps & 4 != 0);
+    t.until("the seat has touch", |st| st.seat_caps & 4 != 0);
+    let _touch = s.seat.get_touch(&s.qh, Finger);
+    let _ttouch = t.touch();
+    s.roundtrip();
+
+    // finger 0 down on the window, finger 1 down below it (a palm), finger 0 lifts; then the program drags with finger 0
+    comp.must(&format!("touch-down 0 {x} {y}"));
+    until(&mut [&mut s], "finger 0 down", |l| l.touched.is_some());
+    let serial = log(|l| l.touched.unwrap());
+    comp.must(&format!("touch-down 1 {x} 560"));
+    comp.must("touch-up 0");
+    let m: WlDataDeviceManager = s.globals.bind(&s.qh, 3..=3, ()).expect("wl_data_device_manager 3");
+    let device: WlDataDevice = m.get_data_device(&s.seat, &s.qh, ());
+    device.start_drag(Some(&text(&s, &m)), &sw.surface, Some(&icon(&s, RED)), serial);
+    until(&mut [&mut s], "the program told its drag is cancelled", |l| l.cancelled);
+    assert_eq!(icon_at(&comp, RGB_RED), None, "no drag's icon");
+
+    // finger 1 lifts; the next finger, on the window on the right, reaches it, and it is offered nothing
+    comp.must("touch-up 1");
+    t.roundtrip();
+    let heard = t.state.touches.len();
+    let (tx, ty) = (ti.at.0 + 150, ti.at.1 + 100);
+    comp.must(&format!("touch-down 0 {tx} {ty}"));
+    comp.must(&format!("touch-move 0 {} {}", tx + 20, ty + 10));
+    comp.must("touch-up 0");
+    t.until("the window on the right told of the finger", |st| {
+        st.touches[heard..].iter().map(|e| e.0).filter(|e| *e != "frame").eq(["down", "motion", "up"])
+    });
+    s.roundtrip();
+    assert!(log(|l| l.entered.is_none() && !l.dropped), "nothing offered to the window under the finger");
+}
+
 /// A program that starts its drag again with the same press (the button still held) replaces its first drag: that one is told it
 /// is cancelled, and the closed hand stays for the new one until the button is let go.
 #[test]
