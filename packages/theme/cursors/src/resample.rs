@@ -134,18 +134,22 @@ fn premultiply(p: u32) -> [i32; 4] {
 /// given). `runs` is room to reuse. Returns the output pixels that may not be 0, lo..hi.
 fn horizontal_row(row: &[u8], wt: &Weights, runs: &mut Vec<(usize, usize, [i32; 4])>, out: &mut [u8]) -> (usize, usize) {
     runs.clear();
-    let (mut start, mut prev) = (0, 0u32);
-    for (x, &p) in row.as_chunks::<4>().0.iter().enumerate() {
-        let v = u32::from_ne_bytes(p);
-        if v != prev {
-            if prev != 0 {
-                runs.push((start, x, premultiply(prev)));
-            }
-            (start, prev) = (x, v);
+    let px = row.as_chunks::<4>().0;
+    let mut x = 0;
+    while x < px.len() {
+        let v = px[x];
+        // the run's end, eight pixels at a time while they are all the same (compared all at once), then one by one
+        let mut end = x + 1;
+        while end + 8 <= px.len() && px[end..end + 8].iter().fold(true, |same, &p| same & (p == v)) {
+            end += 8;
         }
-    }
-    if prev != 0 {
-        runs.push((start, row.len() / 4, premultiply(prev)));
+        while end < px.len() && px[end] == v {
+            end += 1;
+        }
+        if v != [0; 4] {
+            runs.push((x, end, premultiply(u32::from_ne_bytes(v))));
+        }
+        x = end;
     }
     let (mut lo, mut hi) = (usize::MAX, 0);
     let mut r = 0;
