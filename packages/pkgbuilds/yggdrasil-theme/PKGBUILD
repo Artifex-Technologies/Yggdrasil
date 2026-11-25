@@ -2,7 +2,7 @@
 # font: packages/theme.
 # It replaces the WhiteSur KDE, GTK and cursor themes: a colour scheme (used with Qt's own Fusion style), GTK colours on GTK's own Adwaita,
 # and cursors drawn by ygg-cursors. Nothing is downloaded and no other theme package is needed. ygg-theme and ygg-cursors are
-# Rust (packages/theme/src). ygg-cursors
+# Rust (packages/theme: src/ and the cursors/ crate). ygg-cursors
 # draws the cursors once here at build time, every pixel as the Python script drew it with Pillow (the help cursor's "?" with
 # FreeType, laid out by libraqm, in the font fc-match names; Pillow's own default font when there is none).
 pkgname=yggdrasil-theme
@@ -34,6 +34,7 @@ _version "$startdir" "$_src"
 build() {
   cd "$_src"
   cargo build --release --locked --target-dir "$srcdir/target"
+  # on up to four threads, no more than MAKEFLAGS' -jN (makepkg.conf) allows
   "$srcdir/target/release/ygg-cursors" "$srcdir/cursors"
 }
 
@@ -47,7 +48,7 @@ check() {
 package() {
   install -Dm755 "$srcdir/target/release/ygg-theme" "$pkgdir/usr/bin/ygg-theme"
   install -Dm755 "$srcdir/target/release/ygg-cursors" "$pkgdir/usr/bin/ygg-cursors"
-  install -Dm644 "$_src/src/cursors/NOTICE-Pillow" "$pkgdir/usr/share/licenses/$pkgname/NOTICE-Pillow"
+  install -Dm644 "$_src/cursors/src/NOTICE-Pillow" "$pkgdir/usr/share/licenses/$pkgname/NOTICE-Pillow"
   # the cursors (an X cursor theme, which Wayland programs use as well)
   install -d "$pkgdir/usr/share/icons"
   cp -a "$srcdir/cursors" "$pkgdir/usr/share/icons/Yggdrasil"

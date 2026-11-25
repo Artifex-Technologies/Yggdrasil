@@ -138,7 +138,8 @@ CI's `compositor-headless` job runs it on Settings' pages, so it keeps working.
 ## Why Rust: measured
 
 Every program I ported from Python runs 60-99 % faster in Rust in most cases (`casefan get` 39.9 → 2.16 ms) and needs up to 98 % less
-memory; `ygg-cursors` got slower. Every program, its numbers and where Rust is worse: [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md).
+memory; `ygg-cursors`, slower at first, draws the cursor theme in 40 ms where Python took a second. Every program, its numbers
+and where Rust is worse: [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md).
 
 ## Building
 

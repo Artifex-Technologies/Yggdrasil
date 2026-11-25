@@ -6,11 +6,9 @@
 //!   files.rs   this user's files: appearance.conf, GTK's settings.ini and gtk.css, xsettingsd, the pointer, KDE's files
 //!              only when a program built on KDE's libraries is installed
 //!
-//!   cursors/   ygg-cursors: the cursor theme, drawn as the Python script drew it with Pillow (the package runs it when it
-//!              is built)
+//! ygg-cursors, the cursor theme drawn as the Python script drew it with Pillow, is the crate in cursors/.
 
 pub mod colors;
-pub mod cursors;
 pub mod files;
 
 use colors::{gtk3_theme_css, gtk4_theme_css, gtk_colors, parse_accent, rgb, scheme, DEFAULT_ACCENT};

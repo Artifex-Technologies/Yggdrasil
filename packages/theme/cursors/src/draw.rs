@@ -18,8 +18,11 @@ pub type Ink = [u8; 4];
 impl Img {
     pub fn new(w: i32, h: i32, ps: usize, fill: Ink) -> Img {
         let mut px = vec![0u8; w as usize * h as usize * ps];
-        for p in px.chunks_mut(ps) {
-            p.copy_from_slice(&fill[..ps]);
+        // a canvas starts transparent: zeros are what the allocator gives
+        if fill[..ps].iter().any(|&v| v != 0) {
+            for p in px.chunks_mut(ps) {
+                p.copy_from_slice(&fill[..ps]);
+            }
         }
         Img { w, h, ps, px }
     }
@@ -46,12 +49,16 @@ impl Img {
         } else if x1 >= self.w {
             x1 = self.w - 1;
         }
+        if x0 > x1 {
+            return;
+        }
         let row = y0 as usize * self.w as usize;
-        let mut x = x0;
-        while x <= x1 {
-            let i = (row + x as usize) * self.ps;
-            self.px[i..i + self.ps].copy_from_slice(&ink[..self.ps]);
-            x += 1;
+        let span = &mut self.px[(row + x0 as usize) * self.ps..(row + x1 as usize + 1) * self.ps];
+        if self.ps == 4 {
+            // whole pixels of a known size: plain stores, no copy call per pixel
+            span.as_chunks_mut::<4>().0.fill(*ink);
+        } else {
+            span.fill(ink[0]);
         }
     }
 }

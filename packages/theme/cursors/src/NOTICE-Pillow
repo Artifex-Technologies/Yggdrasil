@@ -1,4 +1,4 @@
-src/cursors/draw.rs, resample.rs and text.rs are translated from Pillow 13.0.0 (libImaging/Draw.c, Resample.c, Convert.c, Paste.c, AlphaComposite.c, _imagingft.c, PIL/ImageDraw.py, PIL/ImageFont.py, PIL/ImageText.py, PIL/Image.py), so ygg-cursors draws every pixel as Pillow does. Pillow's licence:
+cursors/src/draw.rs, resample.rs and text.rs (in packages/theme) are translated from Pillow 13.0.0 (libImaging/Draw.c, Resample.c, Convert.c, Paste.c, AlphaComposite.c, _imagingft.c, PIL/ImageDraw.py, PIL/ImageFont.py, PIL/ImageText.py, PIL/Image.py), so ygg-cursors draws every pixel as Pillow does. Pillow's licence:
 
 The Python Imaging Library (PIL) is
 
@@ -31,4 +31,4 @@ LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
 OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 
-src/cursors/aileron-subset.ttf is the subset of Aileron Regular (Sora Sagano, dotcolon.net, CC0 1.0) that Pillow carries as its default font (ImageFont.load_default); ygg-cursors uses it where Pillow did, when no font of the system's can be had.
+cursors/src/aileron-subset.ttf is the subset of Aileron Regular (Sora Sagano, dotcolon.net, CC0 1.0) that Pillow carries as its default font (ImageFont.load_default); ygg-cursors uses it where Pillow did, when no font of the system's can be had.

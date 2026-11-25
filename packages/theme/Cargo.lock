@@ -188,6 +188,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-cursors"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "miniz_oxide",
+ "yggdrasil-pycompat",
+]
+
+[[package]]
 name = "yggdrasil-pycompat"
 version = "0.1.0"
 dependencies = [
@@ -200,7 +209,6 @@ name = "yggdrasil-theme-tools"
 version = "0.1.0"
 dependencies = [
  "libc",
- "miniz_oxide",
  "regex",
  "yggdrasil-pycompat",
  "yggdrasil-wm",

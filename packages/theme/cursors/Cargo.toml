@@ -1,0 +1,19 @@
+[package]
+name = "yggdrasil-cursors"
+version = "0.1.0"
+edition = "2021"
+description = "ygg-cursors in Rust: Yggdrasil's cursor theme, drawn as the Python script drew it with Pillow (replacing it at the same path)"
+license = "MPL-2.0"
+
+# installed as /usr/bin/ygg-cursors; the package runs it to draw the cursor theme (packages/pkgbuilds/yggdrasil-theme). Its
+# own crate so it can be built for speed while ygg-theme is built for size (the profile is in ../Cargo.toml)
+[[bin]]
+name = "ygg-cursors"
+path = "src/main.rs"
+
+# libfreetype and libraqm are opened at run time (dlopen), only for the help cursor's "?"
+[dependencies]
+libc = "0.2"
+# the preview sheet is written as a PNG (zlib)
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
+yggdrasil-pycompat = { path = "../../pycompat" }

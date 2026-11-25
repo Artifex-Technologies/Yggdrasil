@@ -58,10 +58,11 @@ Machine: my desktop, 16 threads, Linux 7.3, Python 3.14.9.
 
 ## Results (2026-11-11)
 
-Every case of the run. The ygg-cursors and Liki cases are from a second run of those two alone: during the first one
+Every case of the run. The ygg-cursors and Liki cases were from a second run of those two alone: during the first one
 another build was running on the computer, and their 10th to 90th percentiles were twice as wide. The medians moved (Liki:
-up to 45 ms for Python and 6 ms for Rust; ygg-cursors: 26 and 49 ms), the conclusions did not. Where the Rust one is worse,
-the package's README says why.
+up to 45 ms for Python and 6 ms for Rust; ygg-cursors: 26 and 49 ms), the conclusions did not. The ygg-cursors case is
+now from 2026-11-25, both sides measured again after its speed work (below its table). Where the Rust one is worse, the
+package's README says why.
 
 Four cases are from a later run the same day, after `gpu-run`, `labyrinth-appusage --once` and `ygg-theme apply` stopped
 looking every 10, 20 or 5 ms whether the programs they start had ended and began to wait for them instead (a pidfd, in
@@ -222,10 +223,32 @@ before that change, the Rust one took 2.4 MB RSS and 0.3 MB PSS, 0 wake-ups and 
 
 | case | metric | old (Python) | Rust | change |
 | --- | --- | --- | --- | --- |
-| ygg-cursors OUTDIR --preview | wall (median; p10–p90) | 1057 ms (1036 ms–1075 ms) | 1604 ms (1586 ms–1630 ms) | +52 %, 547 ms slower |
-| | CPU time | 1054 ms | 1599 ms | +52 %, 545 ms more |
-| | peak RSS | 31.5 MB | 15.1 MB | −52 %, 16.5 MB less |
-| on disk | | ygg-cursors 13.9 KB (scripts; the interpreter is shared) | ygg-cursors 447 KB (binaries) | |
+| ygg-cursors OUTDIR --preview (2026-11-25) | wall (median; p10–p90) | 1028 ms (1021 ms–1032 ms) | 40.3 ms (39.5 ms–40.6 ms) | −96 %, 987 ms faster |
+| | CPU time | 1026 ms | 115 ms | −89 %, 910 ms less |
+| | peak RSS | 31.6 MB | 16.1 MB | −49 %, 15.5 MB less |
+| on disk | | ygg-cursors 13.9 KB (scripts; the interpreter is shared) | ygg-cursors 664 KB (binaries) | |
+
+ygg-cursors was measured again on 2026-11-25, both sides, with this script as it is (10 runs each after two unmeasured,
+alternating). Until then it was slower than its script: 1604 ms wall and 1599 ms CPU against 1057 and
+1054 ms, at 15.1 MB, with a 447 KB binary. What changed, each step measured on its own the same day with the same kind of
+launcher (median of 7 to 9 runs, one thread, Rust before → after):
+
+| step | wall and CPU (one thread) | peak RSS |
+| --- | --- | --- |
+| the Lanczos shrink in runs of equal pixels and stretches of equal rows, the weights once a size | 1561 → 605 ms | 14.9 → 11.1 MB |
+| the busy ring's hole drawn as a transparent disc, not a blend of the whole canvas through a mask | 605 → 350 ms | 10.7 MB |
+| a transparent canvas from the allocator's zeros, not filled pixel by pixel | 350 → 315 ms | 10.8 MB |
+| fc-match asked once, not once for each of the five sizes | 315 → 264 ms | 10.6 MB |
+| drawn spans written as whole pixels | 264 → 187 ms | 10.7 MB |
+| runs of transparent black left out of the shrink | 187 → 166 ms | 10.5 MB |
+| ygg-cursors its own crate, built at opt-level 3 (ygg-theme stays at "s", the same size) | 163 → 109 ms | 10.6 MB |
+| a run's end looked for eight pixels at a time | 114 → 107 ms | 10.4 MB |
+
+The frames are then drawn on up to four threads (the CPUs it may use, fewer when MAKEFLAGS' `-jN` or CARGO_BUILD_JOBS
+asks for fewer jobs), each with its own 8x canvas, kept and cleared from frame to frame: one thread 108 ms and 10.4 MB, two
+60.1 ms wall and 11.3 MB, three 46.2 ms and 13.4 MB, four 39.5 ms wall, 113 ms CPU and 16.2 MB; six took 34 ms at 21 MB and
+eight 34 ms at 27 MB, so four is the most it uses. The step from 109 to 114 ms on one thread is the canvas kept from frame
+to frame (fresh canvases cost 4 to 5 MB more at three or four threads). The binary grew to 664 KB (opt-level 3, threads).
 
 ### liki-build, liki-icns, liki-icon-import ([packages/liki](../packages/liki/README.md))
 
