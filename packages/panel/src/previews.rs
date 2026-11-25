@@ -15,14 +15,13 @@ use crate::paint::{self, Fonts, Icons};
 use crate::shell::Model;
 use crate::trayui::{Rect, RowAct};
 
-const BROWSERS: [(&str, &[&str]); 11] = [
+const BROWSERS: [(&str, &[&str]); 10] = [
     ("vivaldi", &["Vivaldi"]),
     ("firefox", &["Mozilla Firefox", "Firefox"]),
     ("librewolf", &["LibreWolf"]),
     ("brave", &["Brave"]),
     ("chromium", &["Chromium"]),
     ("google-chrome", &["Google Chrome"]),
-    ("opera", &["Opera", "Opera GX"]),
     ("mullvad", &["Mullvad Browser"]),
     ("waterfox", &["Waterfox"]),
     ("torbrowser", &["Tor Browser"]),

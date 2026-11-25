@@ -1523,18 +1523,18 @@ mod tests {
     #[test]
     fn browsers_come_from_the_os_and_the_default_stays_chosen() {
         let list = parse_browsers(
-            r#"{"browsers":[{"id":"vivaldi","name":"Vivaldi","note":"n","chosen":true,"packages":["vivaldi"]},{"id":"firefox","name":"Firefox"},{"name":"no id"},{"id":"opera","name":"Opera","flatpak":"com.opera.Opera"}]}"#,
+            r#"{"browsers":[{"id":"vivaldi","name":"Vivaldi","note":"n","chosen":true,"packages":["vivaldi"]},{"id":"firefox","name":"Firefox"},{"name":"no id"},{"id":"example","name":"Example Browser","flatpak":"org.example.Browser"}]}"#,
         );
-        assert_eq!(list.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["vivaldi", "firefox", "opera"]);
+        assert_eq!(list.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["vivaldi", "firefox", "example"]);
         assert!(parse_browsers("not json").is_empty());
         let mut app = App::new();
         app.set_browsers(list);
         assert_eq!((app.chosen_browsers.clone(), app.default_browser.as_str()), (vec!["vivaldi".to_string()], "vivaldi"));
-        app.toggle_browser("opera");
+        app.toggle_browser("example");
         app.toggle_browser("firefox");
-        assert_eq!(app.chosen_browsers, ["vivaldi", "firefox", "opera"], "kept in the list's order");
-        app.default_browser = "opera".into();
-        app.toggle_browser("opera");
+        assert_eq!(app.chosen_browsers, ["vivaldi", "firefox", "example"], "kept in the list's order");
+        app.default_browser = "example".into();
+        app.toggle_browser("example");
         assert_eq!(app.default_browser, "vivaldi", "un-choosing the default picks another chosen one");
         let plan = app.plan();
         assert_eq!(plan["browsers"], serde_json::json!(["vivaldi", "firefox"]));
