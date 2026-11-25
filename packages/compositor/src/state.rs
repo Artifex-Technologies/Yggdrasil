@@ -277,7 +277,8 @@ pub struct App {
     chooser: Option<(usize, usize)>,
     chooser_art: Option<((usize, usize), MemoryRenderBuffer)>,
     asked_at_start: bool,
-    conf_times: (Option<std::time::SystemTime>, Option<std::time::SystemTime>, Option<std::time::SystemTime>),
+    /// workspaces.conf's, shortcuts.conf's and opaque.conf's stamps as last read (configs.rs)
+    conf_stamps: (crate::configs::Stamp, crate::configs::Stamp, crate::configs::Stamp),
     /// Programs always drawn opaque (opaque.conf, one app id per line: games that fill their alpha channel with junk), besides
     /// the ones recognised as games (xwayland::is_game).
     pub opaque_apps: Vec<String>,
@@ -299,8 +300,8 @@ pub struct App {
     pub x11_watches: Vec<smithay::reexports::calloop::RegistrationToken>,
     /// The running XWayland's event source: removed when XWayland has gone away, which lets its display go (xwayland.rs).
     pub xwayland_source: Option<smithay::reexports::calloop::RegistrationToken>,
-    /// When GTK's settings.ini last changed: XSETTINGS are published again when it does (reload_config).
-    gtk_ini_time: Option<std::time::SystemTime>,
+    /// GTK's settings.ini's stamp as last seen (configs.rs): XSETTINGS are published again when it changes (reload_config).
+    gtk_ini_stamp: crate::configs::Stamp,
     /// The second connection to XWayland, on a thread of its own: the active X11 window, programs' own icons and WM_STATE
     /// (x11asked.rs).
     pub x11_reader: Option<crate::x11asked::Reader>,
@@ -310,8 +311,8 @@ pub struct App {
     pub overlays: Vec<X11Surface>,
     /// XWayland as a Wayland client: its client scale is the scale X11 programs draw at (xwayland.rs, follow_scale).
     pub xwayland_client: Option<smithay::reexports::wayland_server::Client>,
-    /// When xwayland.conf last changed, as `reload_config` last saw it.
-    pub xwayland_conf_time: Option<std::time::SystemTime>,
+    /// xwayland.conf's stamp, as `reload_config` last saw it (configs.rs).
+    xwayland_conf_stamp: crate::configs::Stamp,
     pub loop_handle: LoopHandle<'static, App>,
     /// The shader that draws full screen X11 windows opaque, made the first time one is drawn (None if it failed to build).
     opaque_shader: Option<Option<smithay::backend::renderer::gles::GlesTexProgram>>,
@@ -323,11 +324,11 @@ pub struct App {
     pub zoom: f64,
     /// The pointer's theme and size as Yggdrasil's tools set it on the running compositor (ygg-theme); None: the files' (pointer.rs).
     pub cursor_theme: Option<(String, u32)>,
-    /// Settings > Peripherals' mouse and keyboard settings (input.rs) and when their file was changed as last seen.
+    /// Settings > Peripherals' mouse and keyboard settings (input.rs) and their file's stamp as last seen (configs.rs).
     pub input: yggdrasil_wm::input::InputConf,
     /// the hardware backend's input devices (udev.rs), for `devices` and `input`; empty on the other backends
     pub input_devices: Vec<crate::input::DeviceInfo>,
-    input_time: Option<std::time::SystemTime>,
+    input_stamp: crate::configs::Stamp,
     /// The pointer the compositor draws (pointer.rs): what programs asked it to look like, when it last moved, the theme's pictures.
     pub cursor: crate::pointer::Pointer,
     /// A drag and drop a program started (a file dragged out of Minos): while it lasts the pointer is a closed hand whatever
@@ -343,25 +344,26 @@ pub struct App {
     /// The keyboard layout and variant in use: the system's (keymap.rs), or one set from outside (the installer's try-out);
     /// None: xkb's default.
     pub kb_layout: Option<(String, String)>,
-    /// When the system's keyboard files (keymap.rs) were changed as last seen: a change brings their layout in.
-    kb_times: [Option<std::time::SystemTime>; 2],
+    /// The system's keyboard files' stamps (keymap.rs, configs.rs) as last seen: a change brings their layout in.
+    kb_stamps: [crate::configs::Stamp; 2],
     /// Where programs' windows were when their last one closed (places.rs: the session's window-places).
     places: std::collections::BTreeMap<String, crate::places::Rect>,
     /// Windows that opened on a screen set to tile (they tile there, as the session's `tile-on-SCREEN` rules), and those
-    /// screens (~/.config/yggdrasil/tiling, Settings > Displays) with when the file was changed as last seen.
+    /// screens (~/.config/yggdrasil/tiling, Settings > Displays) with the file's stamp as last seen (configs.rs).
     screen_tiled: Vec<WlSurface>,
     tiling_screens: Vec<String>,
-    tiling_time: Option<std::time::SystemTime>,
-    /// The main display chosen in Settings > Displays (yggdrasil_conf::display), and when its file was changed as last seen.
+    tiling_stamp: crate::configs::Stamp,
+    /// The main display chosen in Settings > Displays (yggdrasil_conf::display), and its file's stamp as last seen (configs.rs).
     pub main_choice: Option<yggdrasil_conf::display::MainDisplay>,
-    main_time: Option<std::time::SystemTime>,
+    main_stamp: crate::configs::Stamp,
     /// The screens, on or off, their settings and wlr-output-management (outputs.rs). Headless only: nested has its window.
     pub heads: crate::outputs::Heads,
     /// The session's window look (look.rs): border, rounding, shadow, gaps, animations; its pictures per scale; the clock the
     /// animations run on; closing windows still shrinking away.
     pub look: crate::look::Look,
     art: Vec<(u64, crate::look::Look, std::sync::Arc<crate::look::Art>)>,
-    look_times: [Option<std::time::SystemTime>; 2],
+    /// appearance.conf's and panel.conf's stamps as last read (configs.rs)
+    look_stamps: [crate::configs::Stamp; 2],
     pub clock: crate::look::Clock,
     /// the screens' colour matrices (ctm.rs: Night Light)
     pub ctm: crate::ctm::Ctm,
@@ -827,7 +829,7 @@ impl App {
             chooser: None,
             chooser_art: None,
             asked_at_start: false,
-            conf_times: (None, None, None),
+            conf_stamps: (None, None, None),
             opaque_apps: crate::xwayland::parse_opaque(&std::fs::read_to_string(crate::xwayland::opaque_path()).unwrap_or_default()),
             parked: vec![],
             x11_snapped: vec![],
@@ -838,13 +840,13 @@ impl App {
             x11_sockets: None,
             x11_watches: vec![],
             xwayland_source: None,
-            gtk_ini_time: None,
+            gtk_ini_stamp: None,
             x11_reader: None,
             x11_active: None,
             xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(dh),
             overlays: vec![],
             xwayland_client: None,
-            xwayland_conf_time: None,
+            xwayland_conf_stamp: None,
             loop_handle,
             opaque_shader: None,
             pointer_timeout: 0.0,
@@ -854,23 +856,23 @@ impl App {
             dragging: false,
             dnd_icon: None,
             dnd_offset: Point::from((0, 0)),
-            input_time: std::fs::metadata(yggdrasil_wm::input::InputConf::path()).and_then(|m| m.modified()).ok(),
+            input_stamp: crate::configs::stamp(yggdrasil_wm::input::InputConf::path()),
             input: input_conf,
             input_devices: vec![],
             toplevel_list: smithay::wayland::foreign_toplevel_list::ForeignToplevelListState::new::<Self>(dh),
             capture: Default::default(),
             kb_layout,
-            kb_times: crate::keymap::files().map(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok()),
+            kb_stamps: crate::keymap::files().map(crate::configs::stamp),
             places: crate::places::load(),
             screen_tiled: vec![],
             tiling_screens: yggdrasil_conf::tiling::outputs(),
-            tiling_time: std::fs::metadata(yggdrasil_conf::tiling::path()).and_then(|m| m.modified()).ok(),
+            tiling_stamp: crate::configs::stamp(yggdrasil_conf::tiling::path()),
             main_choice: yggdrasil_conf::display::load(),
-            main_time: std::fs::metadata(yggdrasil_conf::display::path()).and_then(|m| m.modified()).ok(),
+            main_stamp: crate::configs::stamp(yggdrasil_conf::display::path()),
             heads: Default::default(),
             look: crate::look::Look::load(),
             art: vec![],
-            look_times: [None, None],
+            look_stamps: [None, None],
             clock: Default::default(),
             ctm: Default::default(),
             closing: vec![],
@@ -1963,32 +1965,34 @@ impl App {
         self.retile();
     }
 
-    /// Read workspaces.conf, shortcuts.conf and opaque.conf again when they changed (Settings writes the first).
+    /// Read the config files again that changed (their stamps, configs.rs): when the watch saw one of them change, and on
+    /// `reload` (yggdrasil-wm asks for one after Settings saved a file). Every file read here is one of configs::files, the
+    /// files the watch wakes the loop for.
     pub fn reload_config(&mut self) {
         self.wake();
-        let mtime = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-        let (ws_t, sc_t) = (mtime(tiling::config_path()), mtime(shortcuts::config_path()));
-        if ws_t != self.conf_times.0 {
-            self.conf_times.0 = ws_t;
+        use crate::configs::stamp;
+        let (ws_t, sc_t) = (stamp(tiling::config_path()), stamp(shortcuts::config_path()));
+        if ws_t != self.conf_stamps.0 {
+            self.conf_stamps.0 = ws_t;
             self.ws_conf = tiling::parse(&std::fs::read_to_string(tiling::config_path()).unwrap_or_default());
             self.retile();
             self.maybe_ask();
         }
         // GTK's theme, icons or font changed (ygg-theme, Settings): X11 programs are told through XSETTINGS
-        let gtk_t = mtime(crate::xwayland::gtk_ini_path());
-        if gtk_t != self.gtk_ini_time {
-            self.gtk_ini_time = gtk_t;
+        let gtk_t = stamp(crate::xwayland::gtk_ini_path());
+        if gtk_t != self.gtk_ini_stamp {
+            self.gtk_ini_stamp = gtk_t;
             self.x11_resources(false);
         }
-        if sc_t != self.conf_times.1 {
-            self.conf_times.1 = sc_t;
+        if sc_t != self.conf_stamps.1 {
+            self.conf_stamps.1 = sc_t;
             let (b, _) = shortcuts::load(&std::fs::read_to_string(shortcuts::config_path()).unwrap_or_default());
             self.bindings = b;
         }
         // the accent, the style and "reduce motion" (appearance.conf, panel.conf)
-        let look_t = crate::look::Look::files().map(|f| f.and_then(mtime));
-        if look_t != self.look_times {
-            self.look_times = look_t;
+        let look_t = crate::look::Look::files().map(|f| f.and_then(stamp));
+        if look_t != self.look_stamps {
+            self.look_stamps = look_t;
             self.pointer_files_changed();
             let look = crate::look::Look::load();
             if look != self.look {
@@ -1999,21 +2003,21 @@ impl App {
                 }
             }
         }
-        let op_t = mtime(crate::xwayland::opaque_path());
-        if op_t != self.conf_times.2 {
-            self.conf_times.2 = op_t;
+        let op_t = stamp(crate::xwayland::opaque_path());
+        if op_t != self.conf_stamps.2 {
+            self.conf_stamps.2 = op_t;
             self.opaque_apps = crate::xwayland::parse_opaque(&std::fs::read_to_string(crate::xwayland::opaque_path()).unwrap_or_default());
         }
         // X11 programs at the screens' resolution, or stretched (xwayland.conf)
-        let xw_t = mtime(crate::xwayland::xwayland_conf_path());
-        if xw_t != self.xwayland_conf_time {
-            self.xwayland_conf_time = xw_t;
+        let xw_t = stamp(crate::xwayland::xwayland_conf_path());
+        if xw_t != self.xwayland_conf_stamp {
+            self.xwayland_conf_stamp = xw_t;
             self.follow_scale();
         }
         // the system's keyboard layout (keymap.rs): changed with localectl or by the installer
-        let kb_t = crate::keymap::files().map(mtime);
-        if kb_t != self.kb_times {
-            self.kb_times = kb_t;
+        let kb_t = crate::keymap::files().map(stamp);
+        if kb_t != self.kb_stamps {
+            self.kb_stamps = kb_t;
             let l = crate::keymap::system();
             let kb = self.keyboard.clone();
             match kb.set_xkb_config(self, l.xkb()) {
@@ -2022,23 +2026,23 @@ impl App {
             }
         }
         // the mouse and keyboard settings (Settings > Peripherals' input.conf, input.rs): key repeat at once
-        let in_t = mtime(yggdrasil_wm::input::InputConf::path());
-        if in_t != self.input_time {
-            self.input_time = in_t;
+        let in_t = stamp(yggdrasil_wm::input::InputConf::path());
+        if in_t != self.input_stamp {
+            self.input_stamp = in_t;
             self.input = yggdrasil_wm::input::InputConf::load();
             let (rate, delay) = crate::input::repeat(&self.input);
             self.keyboard.change_repeat_info(rate, delay);
         }
         // the screens that tile (Settings > Displays); windows opening there from now on tile, as on Hyprland after a reload
-        let tl_t = mtime(yggdrasil_conf::tiling::path());
-        if tl_t != self.tiling_time {
-            self.tiling_time = tl_t;
+        let tl_t = stamp(yggdrasil_conf::tiling::path());
+        if tl_t != self.tiling_stamp {
+            self.tiling_stamp = tl_t;
             self.tiling_screens = yggdrasil_conf::tiling::outputs();
         }
         // Settings > Displays' main display (outputs.rs: the main screen)
-        let md_t = mtime(yggdrasil_conf::display::path());
-        if md_t != self.main_time {
-            self.main_time = md_t;
+        let md_t = stamp(yggdrasil_conf::display::path());
+        if md_t != self.main_stamp {
+            self.main_stamp = md_t;
             self.main_choice = yggdrasil_conf::display::load();
             self.choose_main();
         }

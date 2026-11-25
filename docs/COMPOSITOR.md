@@ -404,7 +404,7 @@ own, and its handler asked for the window manager that was gone. A drop's draggi
 came. The fix is in our Smithay fork (below). The X11 display has XSETTINGS (since 2026-11-24; kept by Smithay's
 window manager, fed by the compositor): GTK programs under X11 get their DPI (Xft/DPI, matching Xft.dpi), the pointer's theme and size, and GTK's theme,
 icon theme, font and font settings from GTK's settings.ini, and follow a change at once (a new pointer theme, or settings.ini
-rewritten by ygg-theme or Settings, seen within the compositor's two-second look at its files; `tests/x11.rs`).
+rewritten by ygg-theme or Settings, seen as soon as it is written: the compositor watches its config files; `tests/x11.rs`).
 
 An X11 window that draws its own shadow inside its X window (GTK and Chromium do once the window manager says it reads
 `_GTK_FRAME_EXTENTS`, as Smithay's does on its main branch) is placed as any X11 window, and the compositor keeps the part
@@ -500,7 +500,7 @@ with `ydotool` in small steps (the host accelerates movement by about 1.7x) and 
 ## Lightness (a rule for all of Yggdrasil)
 Yggdrasil must stay as light and quick as the features allow, on any machine, including old and small ones. For the compositor that means: nothing is drawn while
 nothing changes (a frame is drawn only after a program committed a picture, input arrived or a setting changed, and a frame with no change is not even sent on);
-no polling beyond a 2-second look at two small config files; pictures such as the window controls and the switcher are drawn once and kept until what they show changes.
+no polling (the config files are watched with inotify and read only when one of them changes, since 2026-11-25; until then a look at them every 2 seconds); pictures such as the window controls and the switcher are drawn once and kept until what they show changes.
 Measured 2026-10-18 on this computer, nested: the compositor used about 2 % of a core while idle because it redrew 60 times a second; after the change it uses 0 %.
 Measured 2026-11-12 headless (release build, software drawing, 1920x1080, a bar, a dock and three 800x600 windows), before and after
 the window look: idle 0.004 % and 0.005 % of a core, 25.6 and 26.3 MB resident; a window opening costs about 0.1 s of CPU spread
@@ -529,6 +529,14 @@ frames a second, 2.45-2.56 against 2.33-2.62 % of a core. A window drawing 75 fr
 runs of 20 s) costs a little more: 11.29 against 10.71 % of a core (11.11-11.48 and 10.55-10.87), about 5 % more a frame.
 Headless (debug builds, `tests/look.rs idle_cost`, two runs each): idle 3243-3279 against 3229-3352 µs in 10 s, an 800x600
 window drawn anew 1.93-1.95 against 1.84 ms, 44.6 against 42.6-43.1 MB resident (about 2 MB more).
+The config files watched instead of looked at every 2 seconds (2026-11-25, `packages/compositor/src/configs.rs`), measured
+headless at 1920x1080 on this PC, the builds before and after side by side: with nothing on the screen, 30 s of idling took 15
+passes over the screen, 15 wake-ups of the compositor's main thread and 1.0-1.1 ms of CPU before (release builds; 3.0 ms in debug
+builds), and none of the three after, at the same memory (23.0-23.3 and 23.1-23.2 MB resident). With a bar, a dock and three
+800x600 windows (`tests/look.rs idle_cost`, two runs each): idle 708-782 against 0 µs of CPU in 10 s (release builds; debug
+builds 3569-3837 against 0), 30.5 against 30.6-30.7 MB resident, an 800x600 window drawn anew 0.92-0.98 against 0.92-1.09 ms a
+frame (within the runs' spread). A change to one of the files is in force at once, and nothing wakes the compositor while none
+changes (`tests/headless.rs`).
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
 their own, plus about 26 MB while libnvidia-ml is initialised (the NVIDIA driver's own cost, the same in any language), and tune
 reads /dev/kmsg instead of keeping a journalctl child (about 46 MB). The Python versions were about 40 MB each with swap counted.

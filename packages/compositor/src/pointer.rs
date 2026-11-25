@@ -295,7 +295,8 @@ impl App {
         }
     }
 
-    /// The theme in appearance.conf changed (the 2-second look at the config files): its pictures are loaded anew.
+    /// The look's files changed (the config files' watch, configs.rs): when appearance.conf names another pointer theme now,
+    /// its pictures are loaded anew.
     pub fn pointer_files_changed(&mut self) {
         let now = configured();
         if now != self.cursor.configured {

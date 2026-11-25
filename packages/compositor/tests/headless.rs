@@ -5,6 +5,7 @@
 //! - a client maps a layer surface (a bar) and a toplevel (a window), and the compositor lists them
 //! - the screenshot is not blank: the bar's red and the window's blue are where they were put
 //! - a size or scale change through the control socket reaches the clients (output events, a new configure, the fractional scale)
+//! - the config files are read again as soon as one changes, and an idle compositor neither draws nor wakes up meanwhile
 
 mod common;
 
@@ -232,6 +233,109 @@ fn other_programs_see_the_workspaces_and_switch_them() {
     comp.must("workspace 2");
     c.until("back to four", |s| names(s).len() == 4 && active(s) == ["2"]);
     assert!(comp.ctl("workspace 10").is_err(), "nine at most");
+}
+
+/// The passes over the screens since the start (`frames`): one follows every wake-up that may change what is drawn.
+fn passes(comp: &Compositor) -> u64 {
+    comp.must("frames")[1].strip_prefix("passes ").unwrap().parse().unwrap()
+}
+
+/// Over `ms` of nothing happening: the passes over the screens, and how often the compositor's main thread woke up (its
+/// voluntary context switches: each one a wait in its event loop that ended).
+fn idle_for(comp: &Compositor, ms: u64) -> (u64, u64) {
+    let pid = comp.child.id();
+    let woke = || {
+        let st = std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/status")).unwrap();
+        st.lines().find_map(|l| l.strip_prefix("voluntary_ctxt_switches:")).and_then(|v| v.trim().parse::<u64>().ok()).unwrap()
+    };
+    let before = passes(comp);
+    // (it has just answered: back in its wait well before this)
+    std::thread::sleep(Duration::from_millis(200));
+    let woke_before = woke();
+    std::thread::sleep(Duration::from_millis(ms));
+    let woken = woke() - woke_before;
+    (passes(comp) - before, woken)
+}
+
+/// The config files are watched (configs.rs, YGG-118), no longer looked at every 2 s: an idle compositor sleeps, without one
+/// pass over the screens or one wake-up, until one of them changes, and the change is in force at once (2 s are allowed here,
+/// for a busy machine), however it is saved: written in place, a new file renamed over it (as Settings and most editors save),
+/// in folders made after the start, through a link into another folder, removed. Every other file reload_config reads wakes
+/// it as well; another file in the same folders draws nothing.
+#[test]
+fn an_idle_compositor_sleeps_until_a_config_file_changes() {
+    let _l = limit(60, "the config files' watch");
+    let comp = Compositor::start(&["--size", "800x600"]);
+    let mut c = comp.connect();
+    let w = c.window("test.w", "W");
+    c.draw(&w, (400, 300), 0xff0000ff);
+    comp.wait(10, "the window", |c| c.window("test.w").is_some());
+    let mut last = passes(&comp);
+    loop {
+        std::thread::sleep(Duration::from_millis(150));
+        let now = passes(&comp);
+        if now == last {
+            break;
+        }
+        last = now;
+    }
+    // (before, the look at the files every 2 s woke it, with a pass over the screens each time)
+    assert_eq!(idle_for(&comp, 2500), (0, 0), "passes and wake-ups in 2.5 s with nothing going on");
+
+    let (conf, etc) = (comp.dir.join("home/.config/yggdrasil"), comp.dir.join("etc"));
+    let soon = |what: &str, done: &dyn Fn(&Compositor) -> bool| comp.wait(2, what, done);
+    let bound = |comp: &Compositor, key: &str| comp.must("binds").iter().any(|l| l.split('\t').nth(1) == Some(key));
+    // written in place (a script, an editor that writes over its file): shortcuts.conf's key
+    std::fs::write(conf.join("shortcuts.conf"), "Super+F9 = exec test-nine\n").unwrap();
+    soon("Super+F9 from shortcuts.conf", &|c| bound(c, "F9"));
+    // a new file renamed over the old one, as Settings and most editors save: input.conf's key repeat
+    std::fs::write(conf.join(".input.conf.new"), "repeat_rate = 30\nrepeat_delay = 500\n").unwrap();
+    std::fs::rename(conf.join(".input.conf.new"), conf.join("input.conf")).unwrap();
+    soon("input.conf's key repeat", &|c| c.must("input")[0] == "yggdrasil-headless-keyboard\trepeat_rate=30\trepeat_delay=500");
+    // in folders made after the start (the test's own /etc was not there): the system's keyboard layout
+    std::fs::create_dir_all(etc.join("X11/xorg.conf.d")).unwrap();
+    std::fs::write(etc.join("X11/xorg.conf.d/00-keyboard.conf"), "Section \"InputClass\"\n    Option \"XkbLayout\" \"de\"\nEndSection\n")
+        .unwrap();
+    soon("the German layout from the new folders", &|c| c.must("keyboard") == ["de"]);
+    // a link into a dotfiles folder: the file it leads to counts
+    let dots = comp.dir.join("dots");
+    std::fs::create_dir_all(&dots).unwrap();
+    std::fs::write(dots.join("shortcuts.conf"), "Super+F10 = exec test-ten\n").unwrap();
+    std::fs::remove_file(conf.join("shortcuts.conf")).unwrap();
+    std::os::unix::fs::symlink(dots.join("shortcuts.conf"), conf.join("shortcuts.conf")).unwrap();
+    soon("Super+F10 through the link", &|c| bound(c, "F10") && !bound(c, "F9"));
+    std::fs::write(dots.join("shortcuts.conf"), "Super+F11 = exec test-eleven\n").unwrap();
+    soon("Super+F11 written where the link leads", &|c| bound(c, "F11") && !bound(c, "F10"));
+    // removed: the built-in table again
+    std::fs::remove_file(conf.join("shortcuts.conf")).unwrap();
+    soon("the built-in shortcuts", &|c| !bound(c, "F11"));
+
+    // every other file reload_config reads (configs::files) wakes it to read them again, a pass over the screens after it (each
+    // written empty, or as it was: nothing on the screen changes)
+    for (file, text) in [
+        (conf.join("workspaces.conf"), ""),
+        (comp.dir.join("home/.config/gtk-3.0/settings.ini"), ""),
+        (conf.join("opaque.conf"), ""),
+        (conf.join("xwayland.conf"), ""),
+        (etc.join("vconsole.conf"), ""),
+        (conf.join("tiling"), ""),
+        (conf.join("display.conf"), ""),
+        (conf.join("monitors.lua"), ""),
+        (conf.join("appearance.conf"), ""),
+        (conf.join("panel.conf"), "reduce_motion = yes\n"),
+    ] {
+        let before = passes(&comp);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, text).unwrap();
+        soon(&format!("{} read again", file.display()), &|c| passes(c) > before);
+    }
+    // another file in the same folders: read from the watch and dropped
+    let before = passes(&comp);
+    std::fs::write(conf.join("weather.json"), "{}").unwrap();
+    std::fs::write(etc.join("locale.conf"), "LANG=C.UTF-8\n").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(passes(&comp), before, "another file in the same folders draws nothing");
+    assert_eq!(idle_for(&comp, 2500), (0, 0), "passes and wake-ups in 2.5 s with nothing going on, after all that");
 }
 
 /// SIGTERM, SIGINT and SIGHUP end it cleanly, as on the hardware backend: its loop stops, and its Wayland socket, the socket's

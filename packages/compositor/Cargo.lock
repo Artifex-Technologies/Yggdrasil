@@ -2617,6 +2617,7 @@ dependencies = [
  "libc",
  "png 0.17.16",
  "resvg",
+ "rustix 1.1.6",
  "smithay",
  "tiny-skia",
  "tracing-subscriber",

@@ -19,6 +19,7 @@
 //! See docs/COMPOSITOR.md for what is built and what is not.
 
 mod capture;
+mod configs;
 mod constraints;
 mod control;
 mod ctm;
@@ -212,7 +213,7 @@ fn split_args(args: &[String]) -> (Vec<String>, Vec<Vec<String>>) {
 }
 
 /// What both backends share: the clients' display, the socket they connect to (printed as WAYLAND_DISPLAY=...), XWayland, the
-/// --run programs and the look at the config files.
+/// --run programs and the watch on the config files.
 fn serve(
     event_loop: &EventLoop<'static, App>,
     display: Display<App>,
@@ -248,14 +249,21 @@ fn serve(
         start_run(app);
     }
 
-    // workspaces.conf and shortcuts.conf are read again when they change (Settings writes them)
-    event_loop.handle().insert_source(
-        smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_secs(2)),
-        |_, _, app| {
-            app.reload_config();
-            smithay::reexports::calloop::timer::TimeoutAction::ToDuration(std::time::Duration::from_secs(2))
-        },
-    )?;
+    // the config files (configs.rs: Settings writes them) are read again when one of them changes, and the loop sleeps until then
+    match configs::Watch::new(configs::files()) {
+        Ok(watch) => {
+            event_loop.handle().insert_source(Generic::new(watch, Interest::READ, LoopMode::Level), |_, watch, app| {
+                // SAFETY: the watch is not dropped while it is registered here
+                if unsafe { watch.get_mut() }.changed() {
+                    app.reload_config();
+                }
+                Ok(PostAction::Continue)
+            })?;
+        }
+        Err(e) => eprintln!("yggdrasil-compositor: the config files cannot be watched ({e}); they are read again only on `reload`"),
+    }
+    // and what changed before the watch began
+    app.reload_config();
     Ok(())
 }
 
@@ -426,7 +434,7 @@ fn run_nested(
     })?;
 
     // Replies go out after every pass of the loop, not only after a frame: while nothing is drawn (the idle case) a program
-    // waiting on a round trip would otherwise wait for the next 2-second config check (vkcube never got its window up).
+    // waiting on a round trip would otherwise wait until something else woke the loop (vkcube never got its window up).
     event_loop.run(None, &mut app, |app| {
         let _ = app.display_handle.flush_clients();
     })?;

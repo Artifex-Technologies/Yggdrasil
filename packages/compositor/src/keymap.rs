@@ -4,7 +4,7 @@
 //! One addition: when that file is missing, the `XKBLAYOUT`, `XKBVARIANT` and `XKBOPTIONS` lines of `/etc/vconsole.conf` (the
 //! installer writes the same layout there, and systemd-localed keeps both).
 //!
-//! Read at start and again when either file changes (the 2-second look at the config files); a layout set from outside with the
+//! Read at start and again when either file changes (the config files' watch, configs.rs); a layout set from outside with the
 //! control socket's `keyboard` (the installer's try-out) stays until the system's file changes, as on Hyprland until a reload.
 //! `YGGDRASIL_COMPOSITOR_ETC` names another folder in place of /etc (the tests' own).
 

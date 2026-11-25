@@ -1,7 +1,7 @@
 //! Settings > Peripherals' mouse and keyboard settings: `~/.config/yggdrasil/input.conf`, read with yggdrasil-wm's own parser
 //! (`yggdrasil_wm::input::InputConf`, where the file's form is written down), the same file the Hyprland session reads. Taken at
-//! start and on `reload` (yggdrasil-wm's `apply_input` asks for one after Settings saved the file) and the 2-second look when
-//! the file changed.
+//! start, when the file changes (the config files' watch, configs.rs) and on `reload` (yggdrasil-wm's `apply_input` asks for
+//! one after Settings saved the file).
 //!
 //! - **Key repeat** (`repeat_rate`, `repeat_delay`): what programs are told (wl_keyboard.repeat_info, at once to every keyboard)
 //!   and the repeat of the compositor's own held shortcuts (volume, brightness, the magnifier).

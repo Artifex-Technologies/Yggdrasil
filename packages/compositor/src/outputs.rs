@@ -3,8 +3,9 @@
 //! - **Settings > Displays' file**, `~/.config/yggdrasil/monitors.lua`, the same file the Hyprland session loads (Settings writes
 //!   it and asks the compositor to reload): `hl.monitor({ output = "DP-1", mode = "2560x1440@143.97", position = "0x0",
 //!   scale = 1.25 })` and `hl.monitor({ output = "HDMI-A-1", disabled = true })` lines. Read at start, when it changes (the
-//!   2-second look and `reload`), and for a screen that appears. A screen it does not name gets its own mode and scale (headless:
-//!   the command line's) and the next place to the right, as the session's `mode = "highrr", position = "auto"` rule.
+//!   config files' watch, configs.rs, and `reload`), and for a screen that appears. A screen it does not name gets its own
+//!   mode and scale (headless: the command line's) and the next place to the right, as the session's `mode = "highrr",
+//!   position = "auto"` rule.
 //! - **wlr-output-management** (outputmgmt.rs), the standard protocol (wlr-randr, kanshi): changes for as long as the session runs,
 //!   as on Hyprland.
 //! - the headless backend's own commands: `resize` and `scale`, and screens added and removed (`add-output`, `remove-output`).
@@ -101,9 +102,9 @@ pub fn transform_number(t: Transform) -> u32 {
 #[derive(Default)]
 pub struct Heads {
     pub list: Vec<Head>,
-    /// the rules of monitors.lua as last read, and when it was changed then (None inside: no file)
+    /// the rules of monitors.lua as last read, and its stamp then (configs.rs; None inside: no file)
     pub rules: Vec<Rule>,
-    rules_time: Option<Option<std::time::SystemTime>>,
+    rules_stamp: Option<crate::configs::Stamp>,
     /// wlr-output-management's managers (outputmgmt.rs)
     pub mgmt: crate::outputmgmt::Mgmt,
     /// screens whose link went a moment ago, kept until UNPLUG_GRACE has passed: name, and the timer that then removes it
@@ -465,17 +466,18 @@ impl App {
         }
     }
 
-    /// Read monitors.lua again when it changed (or appeared, or went), and set the screens to it. `reload` and the 2-second look.
+    /// Read monitors.lua again when it changed (or appeared, or went), and set the screens to it: at start, on `reload` and when
+    /// the config files' watch saw it change (configs.rs).
     pub fn reload_monitors(&mut self) {
         if self.heads.list.is_empty() {
             return;
         }
         let path = monitors_path();
-        let t = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
-        if self.heads.rules_time == Some(t) {
+        let t = crate::configs::stamp(&path);
+        if self.heads.rules_stamp == Some(t) {
             return;
         }
-        self.heads.rules_time = Some(t);
+        self.heads.rules_stamp = Some(t);
         self.heads.rules = std::fs::read_to_string(&path).map(|s| parse_rules(&s)).unwrap_or_default();
         let changes: Vec<(String, Want)> = self
             .heads

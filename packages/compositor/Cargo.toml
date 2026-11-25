@@ -25,6 +25,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 png = "0.17"
 # udev.rs: the signals that end the hardware backend, taken through a signalfd; already in the tree
 libc = "0.2"
+# configs.rs: the config files' folders watched with inotify (rustix's safe calls); already in the tree through calloop
+rustix = { version = "1", features = ["fs"] }
 # pointer.rs: the cursor theme's pictures (libXcursor's lookup and file format, in Rust); already in the tree through smithay
 xcursor = "0.3"
 # ctm.rs: hyprland-ctm-control-v1 (protocols/, BSD-3-Clause, from hyprland-protocols), the protocol hyprsunset speaks, made into

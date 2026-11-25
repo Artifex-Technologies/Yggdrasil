@@ -79,7 +79,8 @@ fn the_keyboard_layout_is_the_systems() {
         &c.state.keymap_text[..400.min(c.state.keymap_text.len())]
     );
 
-    // the system's file changes (`localectl set-x11-keymap fr`): taken within the 2-second look, and programs get the new keymap
+    // the system's file changes (`localectl set-x11-keymap fr`): taken at once (the config files' watch), and programs get the
+    // new keymap
     write_etc(&comp.dir, "X11/xorg.conf.d/00-keyboard.conf", &x11_keyboard("fr", ""));
     c.until("the French keymap", |s| s.keymap_text.contains("xkb_symbols \"pc_fr_"));
     assert_eq!(comp.must("keyboard"), ["fr"]);
@@ -89,7 +90,7 @@ fn the_keyboard_layout_is_the_systems() {
     let d = desk(&comp);
     assert!(d.set_keyboard("us", ""));
     std::thread::sleep(Duration::from_millis(2500));
-    assert_eq!(comp.must("keyboard"), ["us"], "the 2-second look leaves it alone");
+    assert_eq!(comp.must("keyboard"), ["us"], "nothing takes the system's layout back while its file stays as it is");
 }
 
 #[test]

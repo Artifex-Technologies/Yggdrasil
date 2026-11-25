@@ -510,7 +510,8 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     event_loop.run(None, &mut app, |app| {
         let _ = app.display_handle.flush_clients();
         control.borrow_mut().tell_watchers(app);
-        // input.conf changed (Settings saved it, or the 2-second look found it changed): the devices are set up again
+        // input.conf changed (read again when the config files' watch saw it change, or on Settings' `reload`): the devices are
+        // set up again
         let mut b = u.borrow_mut();
         if b.input_seen.as_ref() != Some(&app.input) {
             b.input_seen = Some(app.input.clone());
