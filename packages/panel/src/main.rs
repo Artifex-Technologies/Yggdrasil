@@ -2958,20 +2958,16 @@ impl State {
         self.dirty = true;
     }
 
-    /// While a window is dragged: light the zone under the pointer, and see whether the window still follows it (once it does
-    /// not, the move ended with no release heard: the drop).
+    /// While a window is dragged: light the zone under the pointer (one question to the compositor a tick; the drop is the
+    /// button's release, `zones_button_seen`). The sheet shows that zone, not the pointer, so it is drawn again only when the
+    /// pointer goes to another zone (it was drawn, with the bar and the dock, on every tick the pointer moved).
     fn zones_follow(&mut self) {
         let Some(Popup { kind: PopupKind::Zones(z), .. }) = &mut self.popup else { return };
         let Some(g) = zones::cursor() else { return };
         let p = zones::to_surface(z, g);
         let hover = zones::hit_at(&self.zone_hits, p);
-        let at = zones::front_window().filter(|(a, _)| *a == z.address).map(|(_, at)| at);
-        if let Some(drop) = z.watch.follow(g, at, hover) {
-            zones::note(&format!("drop seen by the panel: the window stopped following (pointer {g:?}, window at {at:?})"));
-            self.zones_dropped(drop);
-            return;
-        }
         if z.pointer != Some(p) {
+            z.pointer = Some(p);
             z.moved = Instant::now();
         } else if z.moved.elapsed() > zones::STALE {
             // no drop came (the release went unseen): put the sheet away rather than follow the pointer for ever
@@ -2979,9 +2975,8 @@ impl State {
             self.close_popup();
             return;
         }
-        if hover != z.hover || z.pointer != Some(p) {
+        if hover != z.hover {
             z.hover = hover;
-            z.pointer = Some(p);
             self.dirty = true;
         }
     }
@@ -3003,7 +2998,7 @@ impl State {
         self.zones_dropped(hover);
     }
 
-    /// The drag ended (once, however it was seen): the window goes to the zone it was let go over, if any, then Snap Assist.
+    /// The drag ended (the button came up): the window goes to the zone it was let go over, if any, then Snap Assist.
     fn zones_dropped(&mut self, hit: Option<(usize, usize)>) {
         zones::note(&format!("dropped on {hit:?}"));
         let Some(Popup { kind: PopupKind::Zones(z), .. }) = &self.popup else { return };
@@ -3571,7 +3566,8 @@ impl State {
                         self.zone_hits = hits;
                         // during a drag the sheet takes no pointer input: when the button comes up the pointer must land on the
                         // dragged app itself, or an app that drags itself (VS Code and other Electron apps) never hears the drag
-                        // ended and picks the window up again on the next move. The panel follows the pointer through Hyprland.
+                        // ended and picks the window up again on the next move. The panel asks the compositor where the pointer
+                        // is (zones_follow).
                         let region = self.compositor.create_region(&self.qh, ());
                         if z.mode != zones::Mode::Drag {
                             region.add(0, 0, i32::MAX / 2, i32::MAX / 2);

@@ -727,9 +727,10 @@ impl FakeMouse {
 }
 
 /// Window zones and the mouse's left button (a FIFO standing in for the mouse): while zones are on the panel holds the mouse open
-/// once (the drag's sheet opened it a second time, to ask the button every 30 ms); a Super+drag to the notch opens the sheet, and
-/// the button's release drops the window on the zone under the pointer. Turned off in Settings' file, the panel closes the mouse
-/// and a held button wakes nothing (it ticked every 60 ms whatever the setting); on again, it opens the mouse again.
+/// once (the drag's sheet opened it a second time, to ask the button every 30 ms); a Super+drag to the notch opens the sheet, a
+/// quick jump of the pointer onto a zone drops nothing, the pointer moving within that zone draws nothing, and the button's
+/// release drops the window on the zone under the pointer. Turned off in Settings' file, the panel closes the mouse and a held
+/// button wakes nothing (it ticked every 60 ms whatever the setting); on again, it opens the mouse again.
 #[test]
 fn window_zones_watch_the_mouse_only_while_on_and_a_drag_drops_on_its_release() {
     let Some(panel) = program("YGGDRASIL_TEST_PANEL") else { return };
@@ -780,17 +781,24 @@ fn window_zones_watch_the_mouse_only_while_on_and_a_drag_drops_on_its_release() 
     assert!(trail().contains("sheet open (Drag) for "), "the zones' trail: {}", trail());
     assert_eq!(mouse.opened_by(pid), 1, "the sheet does not open the mouse a second time");
     // over the left zone (the card centred at the top of the sheet: 160 wide for one layout, its thumbnail 14 in and 42 down, the
-    // zone 3 in), in steps of 5 px at most as a hand moves it: the sheet reads the pointer and then the window, and one jump
-    // between the two reads looks like a window that stayed while the pointer went on (the drop); a moment there, and let go:
-    // the release is the drop
+    // zone 3 in) in one jump, as a quick hand moves it, and a moment there: only the release drops the window, so the sheet stays
+    // (it used to read the pointer and then the window, and a jump between the two looked like a window let go); then let go
     let sheet = layer(&comp.layers(), "yggdrasil-popup").cloned().unwrap();
     let (zx, zy) = (sheet.at.0 + (sheet.size.0 - 160) / 2 + 14 + 3 + 20, sheet.at.1 + 42 + 3 + 20);
-    let steps = ((zx - nx).abs() + (zy - ny).abs() + 2) / 3;
-    for i in 1..=steps {
-        comp.must(&format!("pointer {} {}", nx + (zx - nx) * i / steps, ny + (zy - ny) * i / steps));
+    comp.must(&format!("pointer {zx} {zy}"));
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(layer(&comp.layers(), "yggdrasil-popup").is_some(), "the sheet stays until the release: {}", trail());
+    assert!(!trail().contains("dropped on"), "nothing but the release drops the window: {}", trail());
+    // the pointer moving within that zone for a second, a pixel at a time as a hand never holds still: the sheet shows the zone,
+    // not the pointer, so nothing is drawn (it drew the sheet, the bar and the dock again on each 30 ms look, a debug build busy
+    // nearly the whole second)
+    let busy0 = busy_ms(&p);
+    for i in 0..50 {
+        comp.must(&format!("pointer {} {zy}", zx + (i % 10 - 5i32).abs() - 2));
         std::thread::sleep(Duration::from_millis(20));
     }
-    std::thread::sleep(Duration::from_millis(300));
+    let busy = busy_ms(&p) - busy0;
+    assert!(busy <= 200, "the pointer moving within one zone: {busy} ms at work in 1 s");
     mouse.button(false);
     comp.must("release");
     comp.must("key-up super");
