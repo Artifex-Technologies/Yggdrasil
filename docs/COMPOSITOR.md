@@ -455,8 +455,8 @@ finished yet), any X11 program can ask for its data, since X11 cannot tell progr
 data before the drop (Wine; Chromium, Electron and CEF programs on X11) can take drops this way.
 
 **Our Smithay fork** (github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit in
-packages/compositor/Cargo.toml): since 2026-11-24, Smithay's main branch (54cf9c10) with six fixes of ours, each for something
-the compositor's own code cannot fix well (seven commits: the last only formats a line). They bind the X11 sockets apart from
+packages/compositor/Cargo.toml): since 2026-11-24, Smithay's main branch (54cf9c10) with six commits of ours, each for
+something the compositor's own code cannot do well, and a seventh that only formats a line. They bind the X11 sockets apart from
 starting XWayland (XWayland on the first X11 program, above); fix two X11 window manager bugs (close, and the events dropped
 after setting the primary screen: "Tried by hand", above); clamp a layer surface's size at i32::MAX and `_GTK_FRAME_EXTENTS`
 at what an X window can hold (a program's huge values ended a debug build: a negative size, an overflow in
