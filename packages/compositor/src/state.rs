@@ -3445,8 +3445,9 @@ impl SessionLockHandler for App {
     }
 
     /// One lock surface per output, as big as it; the keyboard goes to the one on the first output. Only the surfaces of the
-    /// lock that holds the session are taken: a program refused as a second locker may still make lock surfaces (for a lock of
-    /// its own), and showing one would put up its lock screen in place of the real one, with the keyboard and so the password.
+    /// lock that holds the session are taken: showing another program's would put up its lock screen in place of the real one,
+    /// with the keyboard and so the password. Smithay passes on no surface of a lock it refused (sent `finished`), but it does
+    /// pass on those of every lock still waiting for an answer and leaves the match to us; `lock` answers at once today.
     fn new_surface(&mut self, surface: LockSurface, output: WlOutput) {
         if self.lock_owner.as_ref() != Some(surface.ext_session_lock()) {
             return;
