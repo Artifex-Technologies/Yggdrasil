@@ -438,6 +438,16 @@ release build on VT 3; the logs stay on the laptop) checked the parts as the las
 | Touchscreen and pen | the laptop screen's (as the Hyprland session maps them): touch as wl_touch to the program under the finger (which gets the keyboard, as with a click), the seat offering touch once a touchscreen is there; a program's own move and resize made with a finger still down on its window follow that finger (drawn under it at once, not animated), and its drag made with a finger draws the icon under the finger, the pointer left as it is; the pen moves the pointer, its tip is the left button and its side buttons the right and middle ones (tablet-v2, pressure and tilt for drawing programs, is not offered) | headless: tests/laptop.rs, and a finger's move, resize and drag in tests/grabs.rs, tests/look.rs and tests/dnd.rs; 2026-11-19: the pen and touch on the laptop's screen, the panel's pop-ups opened and closed by touch |
 | Screen copies | wlr-screencopy and ext-image-copy-capture (grim 1.5 takes the second), drawn again on the GPU with the screen's own elements (the lock screen while locked, black while it is off) into shared memory (read back; GL's RGBA turned into XRGB8888) or straight into the program's GPU buffer (dmabuf, OpenGL ES only: whole screens and windows, without the pointer); single windows for the panel's previews. Made while another terminal shows too, so grim from the desktop's session does not wait. Read back top row first, as Smithay's GLES renderer draws (its mapping's "flipped" is not followed) | 2026-11-19: grim from the Hyprland side on VT 7 got eDP-1's picture, upside down on the GPU path that day; upright since in a unit test with Mesa's software OpenGL ES |
 
+Again on Smithay main (2026-11-25, main 0841151, fork cef101c1), this time as a whole session from its own login entry on
+the laptop rather than on a text console, about 8 minutes of checks: the built-in screen at its size and 1.25, the lid,
+suspend and resume (Wi-Fi back), screens off and woken by a key or a tap, the touchpad (moving, tap to click, two-finger
+scrolling), the touchscreen (the dock and the start button tapped, a long press on a dock app showing its windows' preview),
+the brightness keys, an X11 program (XWayland started on demand, its menu where clicked), drag and drop (a file from Files
+into an X11 program and back, and between two Wayland programs) and the lock (Super+L, unlocked with the password) all
+worked. Not checked on that build: a screen plugged in (none at hand) and screen copies from GPU buffers. With a finger
+there is no way yet to a dock app's menu (a right click's new window, close, keep in dock). The screen, backlight, screens
+off and suspend depend on Intel's driver here; AMD, NVIDIA and Arc laptops are still to be tried.
+
 `tests/laptop-tty.sh` runs it on the laptop: on a text console (Ctrl+Alt+F3, logged in as me), with the release build already
 made; the panel, Settings and a terminal (foot, else ghostty) on a D-Bus session bus of their own, `YGGDRASIL_COMPOSITOR_DEBUG=1`,
 everything printed in `~/.cache/yggdrasil-compositor/laptop-DATE.log`. It prints the Wayland and control sockets and writes them
