@@ -53,12 +53,13 @@ impl App {
 
     /// The constraint active on the surface under the pointer, if the pointer is inside its region.
     fn hold(&self, pointer: &PointerHandle<App>, under: Option<&(PtrFocus, Point<f64, Logical>)>) -> Hold {
-        let Some((surface, origin)) = under.and_then(|(f, origin)| Some((f.surface()?, *origin))) else { return Hold::Free };
+        let Some((focus, origin)) = under else { return Hold::Free };
+        let (surface, origin) = (focus.surface(), *origin);
         let at = self.pointer_location - origin;
         // read before the constraint is (with_pointer_constraint holds the surface's state, which this takes too)
         let size =
-            smithay::backend::renderer::utils::with_renderer_surface_state(&surface, |st| st.surface_size()).flatten().unwrap_or_default();
-        with_pointer_constraint(&surface, pointer, |c| {
+            smithay::backend::renderer::utils::with_renderer_surface_state(surface, |st| st.surface_size()).flatten().unwrap_or_default();
+        with_pointer_constraint(surface, pointer, |c| {
             let Some(c) = c.filter(|c| c.is_active()) else { return Hold::Free };
             if !c.region().is_none_or(|r| r.contains(at.to_i32_round())) {
                 return Hold::Free;

@@ -394,7 +394,9 @@ works between X11 and Wayland programs, both ways (since 2026-11-24, with Smitha
 an X11 window is told to it in XDND by Smithay's window manager, which asks the Wayland program for the data when the X11 one
 does; while an X11 program drags, the window manager covers the screen with a window of its own that takes XDND and stands in
 for the Wayland windows, and steps aside over X11 windows, so two X11 programs still speak XDND to each other. An X11
-program's drag icon under the pointer is passed over (`tests/dnd.rs`).
+program's drag icon under the pointer is passed over while a button is held (only then can a drag go on, so X11 menus take
+the pointer again after a drag was given up), and XWayland going away in the middle of a drag ends only its own part: a
+Wayland program's drag goes on to the Wayland windows (`tests/dnd.rs`).
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton

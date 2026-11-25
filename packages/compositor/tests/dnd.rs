@@ -6,7 +6,9 @@
 //! Wayland programs speak wl_data_device, X11 programs XDND, and Smithay's X11 window manager speaks XDND for the Wayland side,
 //! both ways. A Wayland program's drag over an X11 window is told to that window (XdndEnter, XdndPosition, XdndDrop), which
 //! asks for the data through XdndSelection. While an X11 program drags, the window manager stands in for the Wayland windows
-//! with a window of its own over the whole screen that takes XDND. The X11 tests are skipped where XWayland is not installed.
+//! with a window of its own over the whole screen that takes XDND. XWayland can go away in the middle of a drag (it crashed):
+//! its windows go, and the compositor and a Wayland program's drag go on. The X11 tests are skipped where XWayland is not
+//! installed.
 
 mod common;
 
@@ -601,4 +603,176 @@ fn a_file_dragged_between_two_x11_programs_arrives_there() {
     y.send(win, y.finished, [target, 1, y.copy, 0, 0]);
     let finished = x.message(&mut [], x.finished, "XdndFinished");
     assert_eq!((finished[0], finished[1] & 1), (target, 1), "the drop finished: {finished:?}");
+}
+
+/// XWayland goes away (it crashed, or was killed) while a Wayland program drags over an X11 window: the window goes with it,
+/// and the drag goes on to the Wayland window the pointer moves to, where the drop arrives.
+#[test]
+fn a_drag_over_an_x11_window_goes_on_when_xwayland_goes_away() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a drag over an X11 window when XWayland goes away");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program that takes XDND, on the right
+    let x = X11::connect(&display);
+    let win = x.window(b"x11target\0X11target\0", EventMask::NO_EVENT);
+    x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[XDND]).unwrap();
+    x.conn.flush().unwrap();
+    comp.wait(10, "the X11 window managed", |c| c.window("X11target").is_some());
+    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11target")));
+    // the Wayland program dragging, on the left, and the one receiving, below it
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    let mut t = comp.connect();
+    let (_tk, _tp) = t.input();
+    let tw = t.window("test.target", "Target");
+    t.draw(&tw, (300, 200), 0xff00ff00);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.source")));
+    comp.must(&format!("place {} 50 350 300 200", id_of(&comp, "test.target")));
+    s.roundtrip();
+    t.roundtrip();
+    let (si, ti, xi) = (comp.window("test.source").unwrap(), comp.window("test.target").unwrap(), comp.window("X11target").unwrap());
+    let _tdev = data_device(&mut t);
+    drag_from(&comp, &mut s, &sw, si.at, URI_MIME);
+    // over the X11 window: it is told the drag came
+    comp.must(&format!("pointer {} {}", xi.at.0 + 150, xi.at.1 + 100));
+    x.message(&mut [&mut s], x.enter, "XdndEnter");
+
+    // XWayland goes away, and the X11 window with it
+    let xwayland = xwayland_of(&comp).expect("an Xwayland");
+    unsafe { libc::kill(xwayland as i32, libc::SIGKILL) };
+    comp.wait(10, "the X11 window gone", |c| c.window("X11target").is_none());
+    // the drag goes on over the Wayland window: it is offered the URI, takes it, and reads it on the drop
+    comp.must(&format!("pointer {} {}", ti.at.0 + 150, ti.at.1 + 100));
+    until(&mut [&mut s, &mut t], "the receiver offered the drag", |l| l.entered.is_some() && l.mimes.iter().any(|m| m == URI_MIME));
+    let (serial, offer) = log(|l| l.entered.clone()).unwrap();
+    offer.accept(serial, Some(URI_MIME.into()));
+    offer.set_actions(DndAction::Copy, DndAction::Copy);
+    t.roundtrip();
+    s.roundtrip();
+    comp.must("release");
+    until(&mut [&mut s, &mut t], "the drop", |l| l.dropped);
+    let (read, write) = std::io::pipe().unwrap();
+    offer.receive(URI_MIME.into(), write.as_fd());
+    drop(write);
+    until(&mut [&mut s, &mut t], "the dragging program asked for the URI", |l| l.sent > 0);
+    assert_eq!(read_all(read), URI, "what was dropped arrived");
+    offer.finish();
+    until(&mut [&mut s, &mut t], "the dragging program told the drop finished", |l| l.finished);
+}
+
+/// XWayland goes away while an X11 program drags over another X11 window: the drag ends with it, and the pointer goes on to a
+/// Wayland window as ever.
+#[test]
+fn an_x11_drag_ends_when_xwayland_goes_away() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "an X11 drag when XWayland goes away");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program dragging, on the left, the one it drags to, on the right, and a Wayland window below that
+    let x = X11::connect(&display);
+    let win = x.window(b"x11source\0X11source\0", pointer_events());
+    let y = X11::connect(&display);
+    let target = y.window(b"x11target\0X11target\0", EventMask::NO_EVENT);
+    y.conn.change_property32(PropMode::REPLACE, target, y.aware, AtomEnum::ATOM, &[XDND]).unwrap();
+    y.conn.flush().unwrap();
+    comp.wait(10, "the X11 windows managed", |c| c.window("X11source").is_some() && c.window("X11target").is_some());
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "X11source")));
+    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11target")));
+    let mut t = comp.connect();
+    let (_tk, _tp) = t.input();
+    let tw = t.window("test.target", "Target");
+    t.draw(&tw, (300, 200), 0xff00ff00);
+    comp.must(&format!("place {} 600 350 300 200", id_of(&comp, "test.target")));
+    t.roundtrip();
+    let (xi, yi, ti) = (comp.window("X11source").unwrap(), comp.window("X11target").unwrap(), comp.window("test.target").unwrap());
+    let (px, py) = (yi.at.0 + 150, yi.at.1 + 100);
+    let stand_in = x11_drag_from(&comp, &x, win, xi.at, (px, py));
+    // over the other X11 window the stand-in steps aside: the drag's target is that window itself
+    comp.must(&format!("pointer {px} {py}"));
+    let moved = x.motion(&mut [], (px, py));
+    x.send(stand_in, x.enter, [win, XDND << 24, x.uri, 0, 0]);
+    x.send(stand_in, x.position, [win, 0, xy(px, py), moved, x.copy]);
+    x.message(&mut [], x.status, "XdndStatus from the stand-in");
+    comp.must(&format!("pointer {} {py}", px + 10));
+    x.motion(&mut [], (px + 10, py));
+    let start = Instant::now();
+    while x.target_under_pointer() != Some(target) {
+        assert!(start.elapsed() < Duration::from_secs(5), "under the pointer: {:?}, not the target", x.target_under_pointer());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // XWayland goes away, and the X11 windows with it
+    let xwayland = xwayland_of(&comp).expect("an Xwayland");
+    unsafe { libc::kill(xwayland as i32, libc::SIGKILL) };
+    comp.wait(10, "the X11 windows gone", |c| c.window("X11source").is_none() && c.window("X11target").is_none());
+    // the pointer moves on to the Wayland window and the button is let go: the drag is over, and the window has the pointer
+    comp.must(&format!("pointer {} {}", ti.at.0 + 150, ti.at.1 + 100));
+    comp.must("release");
+    comp.must(&format!("pointer {} {}", ti.at.0 + 160, ti.at.1 + 100));
+    t.until("the pointer on the Wayland window", |st| st.pointer_on == Some(tw.surface.id()));
+}
+
+/// An X11 program gives its drag up (on Escape it leaves the window it spoke to: XdndLeave) while the button is still held,
+/// and the button is let go over a Wayland window. An X11 menu shown under the pointer afterwards gets the pointer: with no
+/// button held no drag goes on, so nothing is passed over as a drag's icon.
+#[test]
+fn an_x11_menu_gets_the_pointer_after_an_x11_drag_was_given_up() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "an X11 menu after a drag given up");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program dragging, on the right; the Wayland program it drags over, in the top left corner
+    let x = X11::connect(&display);
+    let win = x.window(b"x11source\0X11source\0", pointer_events());
+    comp.wait(10, "the X11 window managed", |c| c.window("X11source").is_some());
+    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11source")));
+    let mut t = comp.connect();
+    let (_tk, _tp) = t.input();
+    let tw = t.window("test.target", "Target");
+    t.draw(&tw, (300, 200), 0xff00ff00);
+    comp.must(&format!("place {} 0 0 300 200", id_of(&comp, "test.target")));
+    t.roundtrip();
+    let (xi, ti) = (comp.window("X11source").unwrap(), comp.window("test.target").unwrap());
+    let _tdev = data_device(&mut t);
+    let (px, py) = (ti.at.0 + 150, ti.at.1 + 100);
+    let stand_in = x11_drag_from(&comp, &x, win, xi.at, (px, py));
+    comp.must(&format!("pointer {px} {py}"));
+    let moved = x.motion(&mut [&mut t], (px, py));
+    x.send(stand_in, x.enter, [win, XDND << 24, x.uri, 0, 0]);
+    x.send(stand_in, x.position, [win, 0, xy(px, py), moved, x.copy]);
+    x.message(&mut [&mut t], x.status, "XdndStatus");
+    comp.must(&format!("pointer {} {py}", px + 10));
+    until(&mut [&mut t], "the Wayland program offered the drag", |l| l.entered.is_some() && l.mimes.iter().any(|m| m == URI_MIME));
+    let (serial, offer) = log(|l| l.entered.clone()).unwrap();
+    offer.accept(serial, Some(URI_MIME.into()));
+    offer.set_actions(DndAction::Copy, DndAction::Copy);
+    t.roundtrip();
+
+    // Escape: the X11 program leaves the stand-in (XdndLeave). The window manager reads its X events in order, so once it
+    // manages a window the program shows after that, it has read the leave too; then the button is let go.
+    x.send(stand_in, x.leave, [win, 0, 0, 0, 0]);
+    let _after = x.window(b"after\0After\0", EventMask::NO_EVENT);
+    comp.wait(10, "the window shown after the leave managed", |c| c.window("After").is_some());
+    comp.must(&format!("place {} 600 350 300 200", id_of(&comp, "After")));
+    comp.must("release");
+
+    // another program's X11 menu over the Wayland window, and the pointer onto it: the menu has it
+    let m = X11::connect(&display);
+    let menu = m.conn.generate_id().unwrap();
+    let aux = CreateWindowAux::new().background_pixel(0xff0000).override_redirect(1).event_mask(pointer_events());
+    m.conn.create_window(x11rb::COPY_DEPTH_FROM_PARENT, menu, m.root, 0, 0, 120, 120, 0, WindowClass::INPUT_OUTPUT, 0, &aux).unwrap();
+    m.conn.map_window(menu).unwrap();
+    m.conn.flush().unwrap();
+    comp.wait(10, "the menu drawn", |c| c.screenshot("HEADLESS-1").count((10, 10, 20, 20), (255, 0, 0)) == 400);
+    comp.must("pointer 40 40");
+    m.until(&mut [&mut t], "the menu hears the pointer", |e| matches!(e, Event::EnterNotify(_) | Event::MotionNotify(_)).then_some(()));
 }

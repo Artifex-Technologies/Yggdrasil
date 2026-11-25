@@ -315,6 +315,20 @@ pub fn xwayland_installed() -> bool {
     std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("Xwayland").is_file()))
 }
 
+/// The compositor's Xwayland process, if one runs.
+pub fn xwayland_of(comp: &Compositor) -> Option<u32> {
+    let parent = comp.child.id().to_string();
+    std::fs::read_dir("/proc").ok()?.filter_map(Result::ok).find_map(|e| {
+        let stat = std::fs::read_to_string(e.path().join("stat")).ok()?;
+        // pid (comm) state ppid ...
+        let (head, rest) = stat.rsplit_once(')')?;
+        let comm = head.split_once('(')?.1;
+        let ppid = rest.split_whitespace().nth(1)?;
+        (comm == "Xwayland" && ppid == parent && !rest.trim_start().starts_with('Z'))
+            .then(|| e.file_name().to_string_lossy().parse().ok())?
+    })
+}
+
 /// The compositor with XWayland, on the screens of `args` and with `setup` run on the test's folder first, and the X display
 /// it printed.
 pub fn with_xwayland_on(args: &[&str], setup: impl FnOnce(&Path)) -> (Compositor, String) {

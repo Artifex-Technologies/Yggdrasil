@@ -54,8 +54,14 @@ impl Under {
     /// can speak XDND to it (its surface gets the events all the same).
     pub fn target(self) -> Option<(PtrFocus, Point<f64, Logical>)> {
         match self {
-            Under::Overlay(x, _, p) => Some((PtrFocus::X11(x), p)),
-            Under::Window(w, s, p) => Some((w.x11_surface().map_or(PtrFocus::Wl(s), |x| PtrFocus::X11(x.clone())), p)),
+            Under::Overlay(x, s, p) => Some((PtrFocus::X11(x, s), p)),
+            Under::Window(w, s, p) => Some((
+                match w.x11_surface() {
+                    Some(x) => PtrFocus::X11(x.clone(), s),
+                    None => PtrFocus::Wl(s),
+                },
+                p,
+            )),
             u => u.surface().map(|(s, p)| (PtrFocus::Wl(s), p)),
         }
     }
