@@ -537,6 +537,18 @@ builds), and none of the three after, at the same memory (23.0-23.3 and 23.1-23.
 builds 3569-3837 against 0), 30.5 against 30.6-30.7 MB resident, an 800x600 window drawn anew 0.92-0.98 against 0.92-1.09 ms a
 frame (within the runs' spread). A change to one of the files is in force at once, and nothing wakes the compositor while none
 changes (`tests/headless.rs`).
+The panel's window zones and the mouse's left button (2026-11-25, `packages/panel/src/zones.rs`, docs/ZONES.md), measured
+headless at 1600x900 on this PC, debug builds of the panel before and after, alternating, three runs each: wake-ups of the
+panel's main thread (its voluntary context switches) and its time on the CPU, with a FIFO in its input folder standing in for
+the mouse (the build before took only real devices, so a measurement-only `LD_PRELOAD` shim, loaded into both, answered their
+device questions for the FIFO and counted them). With window zones off and the button held, 148 wake-ups in 3 s in each run
+before (its 60 ms look for a drag, asking the compositor each time; 5.7-7.0 ms of CPU) and none after, at no CPU: the mouse is
+not even open while zones are off. With zones on and the button held without a drag, 146-148 in 3 s both (the look for a drag,
+unchanged). With the drag's sheet open and the pointer still, 541-559 wake-ups in 4 s before and 540-611 after (the sheet's 30 ms
+look at the pointer and the window, unchanged), but before the sheet opened the mouse a second time and asked it 131 times in
+those 4 s (`EVIOCGKEY`, 33 a second); after, it holds the mouse once and asks it nothing. Over five runs each the drop was seen
+0-26 ms after the release before (at the next 30 ms look) and 0-2 ms after it now (the release's own event). Idle, 0-1 wake-ups
+in 3 s both. `tests/apps.rs` holds the drag, the drop and a held button with zones off to this.
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
 their own, plus about 26 MB while libnvidia-ml is initialised (the NVIDIA driver's own cost, the same in any language), and tune
 reads /dev/kmsg instead of keeping a journalctl child (about 46 MB). The Python versions were about 40 MB each with swap counted.

@@ -376,18 +376,31 @@ def cases_logkeep():
     ]
 
 
+# zones-drag and zones-drop left the port on 2026-11-25 (YGG-136: nothing called them once the panel saw the drag and its drop
+# itself); the script still has them, so they and the two lines of its usage text are the known differences
+PANELCTL_GONE = ("#   zones-drag       a dragged window reached the notch   } called by the session's Lua while a window is dragged,\n"
+                 "#   zones-drop       the drag ended                        } not by hand\n")
+
+
 def cases_panelctl():
     out = []
-    for cmd in ["start", "calendar", "notifications", "fylgja", "ask", "ask-press", "ask-release", "zones", "zones-drag", "zones-drop",
-                "shortcuts", "cursor-tap"]:
+    for cmd in ["start", "calendar", "notifications", "fylgja", "ask", "ask-press", "ask-release", "zones", "shortcuts", "cursor-tap"]:
         out.append({"label": cmd, "args": [cmd], "world": lambda w: w.stub("busctl")})
+    # the usage text: the script's less those two lines
+    usage = lambda a, b: None if PANELCTL_GONE in a["err"] and b["err"] == a["err"].replace(PANELCTL_GONE, "") else b["err"]
+    # either word: the answer to a wrong word (the usage text and 2), no call
+    wrong = lambda a, b: None if (b["exit"], b["calls"]) == (2, "") and b["err"].startswith("# yggdrasil-panelctl COMMAND:") \
+        and "zones-d" not in b["err"] else (b["exit"], b["calls"], b["err"])
+    for cmd in ["zones-drag", "zones-drop"]:
+        out.append({"label": f"{cmd} (gone: a wrong word now)", "args": [cmd], "world": lambda w: w.stub("busctl"),
+                    "differs": ["exit", "err", "calls"], "want": wrong})
     out += [
         {"label": "fylgja 4", "args": ["fylgja", "4"], "world": lambda w: w.stub("busctl")},
         {"label": "start, extra words", "args": ["start", "x", "y"], "world": lambda w: w.stub("busctl")},
         {"label": "clipboard", "args": ["clipboard", "x"], "world": lambda w: w.stub("yggdrasil-clipboard", "exit 6\n")},
         {"label": "no panel", "args": ["ask"], "world": lambda w: w.stub("busctl", "echo 'Call failed: The name is not activatable' >&2; exit 1\n")},
-        {"label": "a wrong word", "args": ["open"], "world": lambda w: w.stub("busctl")},
-        {"label": "no word", "args": [], "world": lambda w: w.stub("busctl")},
+        {"label": "a wrong word", "args": ["open"], "world": lambda w: w.stub("busctl"), "differs": ["err"], "want": usage},
+        {"label": "no word", "args": [], "world": lambda w: w.stub("busctl"), "differs": ["err"], "want": usage},
         {"label": "busctl not installed", "args": ["start"], "world": lambda w: None, "differs": ["err"],
          "want": lambda a, b: None if b["err"] == "yggdrasil-panelctl: busctl: not found\n" and "not found" in a["err"] else b["err"]},
     ]

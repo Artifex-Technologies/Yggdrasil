@@ -677,6 +677,155 @@ fn the_panels_desktop_buttons_and_window_zones_work_on_it() {
     assert!(p.running(), "the panel is still running: {}", p.log());
 }
 
+/// A mouse for the panel under test: a FIFO named event0 in its input folder (YGGDRASIL_PANEL_INPUT; the panel takes a FIFO there
+/// as a mouse), held open by the test for reading and writing, so neither end waits for the other and the panel never sees its
+/// writer gone.
+struct FakeMouse {
+    path: PathBuf,
+    file: std::fs::File,
+}
+
+impl FakeMouse {
+    fn new(comp: &Compositor) -> FakeMouse {
+        use std::os::unix::ffi::OsStrExt;
+        let input = comp.dir.join("input");
+        std::fs::create_dir_all(&input).unwrap();
+        let path = input.join("event0");
+        let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: mkfifo reads a valid C string
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo {}", path.display());
+        let file = std::fs::OpenOptions::new().read(true).write(true).open(&path).unwrap();
+        // as /proc names it
+        FakeMouse { path: std::fs::canonicalize(&path).unwrap(), file }
+    }
+
+    /// The left button down or up, as the kernel reports it: the button's event, then the end of the report.
+    fn button(&mut self, down: bool) {
+        use std::io::Write;
+        let ev = |type_: u16, code: u16, value: i32| {
+            let e = libc::input_event { time: libc::timeval { tv_sec: 0, tv_usec: 0 }, type_, code, value };
+            // SAFETY: input_event is plain data, read as its own bytes
+            unsafe { std::slice::from_raw_parts(&e as *const libc::input_event as *const u8, std::mem::size_of_val(&e)) }.to_vec()
+        };
+        self.file.write_all(&[ev(1, 0x110, down as i32), ev(0, 0, 0)].concat()).unwrap();
+    }
+
+    /// How many handles a process holds on it (/proc/PID/fd).
+    fn opened_by(&self, pid: u32) -> usize {
+        let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else { return 0 };
+        fds.flatten().filter(|e| std::fs::read_link(e.path()).is_ok_and(|l| l == self.path)).count()
+    }
+
+    /// Wait until a process holds it `n` times.
+    fn wait_opened(&self, pid: u32, n: usize, what: &str) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while self.opened_by(pid) != n {
+            assert!(Instant::now() < deadline, "{what}: the panel holds the mouse {} times", self.opened_by(pid));
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+/// Window zones and the mouse's left button (a FIFO standing in for the mouse): while zones are on the panel holds the mouse open
+/// once (the drag's sheet opened it a second time, to ask the button every 30 ms); a Super+drag to the notch opens the sheet, and
+/// the button's release drops the window on the zone under the pointer. Turned off in Settings' file, the panel closes the mouse
+/// and a held button wakes nothing (it ticked every 60 ms whatever the setting); on again, it opens the mouse again.
+#[test]
+fn window_zones_watch_the_mouse_only_while_on_and_a_drag_drops_on_its_release() {
+    let Some(panel) = program("YGGDRASIL_TEST_PANEL") else { return };
+    let _l = limit(150, "window zones and the mouse");
+    let comp = Compositor::start(&["--size", "1600x900"]);
+    let bus = Bus::start(&comp.dir);
+    let conf = comp.dir.join("home/.config/yggdrasil");
+    // one layout on the sheet (halves), so where its zones are drawn is known
+    let zones_on = "enabled = yes\nlayouts = halves\ngap = 8\n";
+    std::fs::write(conf.join("zones.conf"), zones_on).unwrap();
+    std::fs::write(conf.join("dock"), NOTHING_PINNED).unwrap();
+    // the zones' trail (zones.log) is kept where the folder exists
+    let state = comp.dir.join("home/.local/state/yggdrasil");
+    std::fs::create_dir_all(&state).unwrap();
+    let trail = || std::fs::read_to_string(state.join("zones.log")).unwrap_or_default();
+    let mut mouse = FakeMouse::new(&comp);
+    let mut p = App::start(&comp, &panel, Some(&bus), &[("YGGDRASIL_A11Y", "off"), ("XDG_CURRENT_DESKTOP", "Yggdrasil")]);
+    wait_for(&comp, &mut p, 60, "the bar and the dock", |c| {
+        let l = c.layers();
+        ["yggdrasil-panel", "yggdrasil-dock"].iter().all(|ns| layer(&l, ns).is_some_and(|x| x.size.0 > 0))
+    });
+    let pid = p.child.id();
+    mouse.wait_opened(pid, 1, "zones on");
+    let room = free_room(&comp, "HEADLESS-1");
+    let bar_h = layer(&comp.layers(), "yggdrasil-panel").unwrap().size.1;
+    let mut c = comp.connect();
+    let t = c.window("test.terminal", "Terminal");
+    c.draw(&t, (640, 400), BLUE);
+    let info = settle(&comp, &mut c, &t, "test.terminal", BLUE);
+
+    // Super and the left button on the window, then up to the notch (the middle of the screen, just under the bar): while the
+    // button is held the panel looks at the window in front, sees it dragged there with Super held, and opens the sheet
+    let (x0, y0) = (info.at.0 + info.size.0 / 2, info.at.1 + info.size.1 / 2);
+    comp.must(&format!("pointer {x0} {y0}"));
+    comp.must("key-down super");
+    comp.must("press");
+    mouse.button(true);
+    // the panel's first look (every 60 ms while held): the window and where it starts
+    std::thread::sleep(Duration::from_millis(300));
+    let (nx, ny) = (800, bar_h + 10);
+    for i in 1..=5 {
+        comp.must(&format!("pointer {} {}", x0 + (nx - x0) * i / 5, y0 + (ny - y0) * i / 5));
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    wait_for(&comp, &mut p, 10, "the sheet for the dragged window", |c| {
+        layer(&c.layers(), "yggdrasil-popup").is_some_and(|l| l.size.0 > 0)
+    });
+    assert!(trail().contains("sheet open (Drag) for "), "the zones' trail: {}", trail());
+    assert_eq!(mouse.opened_by(pid), 1, "the sheet does not open the mouse a second time");
+    // over the left zone (the card centred at the top of the sheet: 160 wide for one layout, its thumbnail 14 in and 42 down, the
+    // zone 3 in), in steps of 5 px at most as a hand moves it: the sheet reads the pointer and then the window, and one jump
+    // between the two reads looks like a window that stayed while the pointer went on (the drop); a moment there, and let go:
+    // the release is the drop
+    let sheet = layer(&comp.layers(), "yggdrasil-popup").cloned().unwrap();
+    let (zx, zy) = (sheet.at.0 + (sheet.size.0 - 160) / 2 + 14 + 3 + 20, sheet.at.1 + 42 + 3 + 20);
+    let steps = ((zx - nx).abs() + (zy - ny).abs() + 2) / 3;
+    for i in 1..=steps {
+        comp.must(&format!("pointer {} {}", nx + (zx - nx) * i / steps, ny + (zy - ny) * i / steps));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    mouse.button(false);
+    comp.must("release");
+    comp.must("key-up super");
+    let want = yggdrasil_conf::zones::place((0.0, 0.0, 0.5, 1.0), room, 8);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let info = settle(&comp, &mut c, &t, "test.terminal", BLUE);
+        if info.rect() == want {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the terminal in the left zone {want:?}: {info:?}\nthe zones' trail: {}\npanel: {}",
+            trail(),
+            p.log()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(trail().contains("drop seen by the panel: the left button came up over Some((0, 0))"), "the zones' trail: {}", trail());
+    wait_for(&comp, &mut p, 5, "the sheet gone after the drop", |c| layer(&c.layers(), "yggdrasil-popup").is_none());
+
+    // window zones off (Settings' file): the panel closes the mouse, and a held button wakes nothing
+    std::fs::write(conf.join("zones.conf"), zones_on.replace("yes", "no")).unwrap();
+    mouse.wait_opened(pid, 0, "zones off");
+    std::thread::sleep(Duration::from_millis(500));
+    mouse.button(true);
+    let held = wakeups(&p, 3000);
+    mouse.button(false);
+    assert!(held <= 6, "zones off, the button held: {held} wake-ups in 3 s");
+    // on again: the mouse is opened again
+    std::fs::write(conf.join("zones.conf"), zones_on).unwrap();
+    mouse.wait_opened(pid, 1, "zones on again");
+    assert!(p.running(), "the panel is still running: {}", p.log());
+}
+
 /// A screenshot kept for looking at: written to the folder YGGDRASIL_TEST_SHOTS names (tests/apps-podman.sh mounts one when the
 /// variable is set), else nowhere.
 fn keep_shot(pic: &Picture, name: &str) {

@@ -17,8 +17,6 @@ const USAGE: &str = "\
 #   ask-press        the talk key went down: a tap starts a hands-free conversation, a tap ends it (bind the press only)
 #   ask-release      the talk key came up (accepted from older bindings; does nothing)
 #   zones            the window zones sheet for the window in front, or close it   (bind to Super+Shift+Z)
-#   zones-drag       a dragged window reached the notch   } called by the session's Lua while a window is dragged,
-#   zones-drop       the drag ended                        } not by hand
 #   shortcuts        show or hide the keyboard shortcuts card   (bind to Super+/)
 #   cursor-tap       Ctrl was tapped on its own: two taps in a row put a spotlight on the pointer (Find my mouse)
 # Hyprland example (hyprland.conf):  bind = SUPER, S, exec, yggdrasil-panelctl ask
@@ -40,8 +38,6 @@ fn main() {
         "ask-press" => &["AskPress"],
         "ask-release" => &["AskRelease"],
         "zones" => &["ZonesPick"],
-        "zones-drag" => &["ZonesDrag"],
-        "zones-drop" => &["ZonesDrop"],
         "shortcuts" => &["ToggleShortcuts"],
         "cursor-tap" => &["CursorTap"],
         _ => {

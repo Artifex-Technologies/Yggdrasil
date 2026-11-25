@@ -1,17 +1,17 @@
 //! Window zones (FancyZones-style): drag a window to the notch and a sheet of layouts opens under it; drop the window on a zone
 //! and it fills that part of the screen. Super+Shift+Z opens the same sheet for the window in front (then click a zone).
 //!
-//! Hyprland gives no event while a window is dragged, and the panel gets no pointer events then (the compositor holds the
-//! pointer). So the session's Lua watches the left button (a non-consuming press binding arms a timer inside the compositor) and
-//! calls `yggdrasil-panelctl zones-drag` when a dragged window's pointer reaches the notch. Between then and the drop, and only
-//! then, the panel asks the compositor where the pointer and the window are (yggdrasil-wm: Hyprland's socket or Yggdrasil's own
-//! compositor's, no process per question) to light the zone under it. Layouts and the gap come from `zones.conf`
-//! (yggdrasil_conf::zones).
+//! No compositor tells the panel that a window is being dragged, and the panel gets no pointer events then (the compositor holds
+//! the pointer). So the panel watches the mouse's left button itself, from the kernel, and only while window zones are on: its
+//! presses and releases come as events ([`ButtonEvents`]); with zones off no mouse is open, and a press wakes nothing. While the
+//! button is held, the panel asks the compositor every 60 ms for the window in front, and once that moved, for the pointer: a
+//! window dragged with Super to the notch opens the sheet ([`Spotter`]). While the sheet is open, the panel asks every 30 ms where
+//! the pointer and the window are, to light the zone under the pointer (yggdrasil-wm: Hyprland's socket or Yggdrasil's own
+//! compositor's, no process per question). Layouts and the gap come from `zones.conf` (yggdrasil_conf::zones).
 //!
-//! The drop: Hyprland's release binding does not fire at the end of a window move (tried 2026-10-25), so the end of the drag is
-//! read from several signs, whichever comes first, and acted on once (`DropWatch`): the window stops following the pointer (the
-//! grip, the pointer's offset from the window's corner, changes), the pointer comes back to the sheet (an enter after the sheet
-//! settled, or a click), or the session's Lua sees the same and calls `zones-drop`.
+//! The drop is the button's release event: the window goes to the zone under the pointer. A window that stops following the
+//! pointer ends the drag too, at the zone it was held over last ([`DropWatch`]), and a sheet that hears no drop closes after 8 s
+//! of a still pointer ([`STALE`]).
 
 use resvg::tiny_skia::Pixmap;
 use yggdrasil_conf::zones::{self, Layout, Monitor, Rect, ZonesConf};
@@ -21,7 +21,7 @@ use crate::paint::{self, Fonts};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// A window is being dragged: the pointer is polled, the drop places it.
+    /// A window is being dragged: the pointer is followed, the button's release places it.
     Drag,
     /// Opened from the keyboard for the window in front: a click places it.
     Pick,
@@ -40,13 +40,14 @@ pub struct Session {
     pub hover: Option<(usize, usize)>,
     /// Where the pointer is on the sheet's surface (logical pixels), while dragging.
     pub pointer: Option<(f32, f32)>,
-    /// When the pointer last moved: a drag sheet that hears no drop (the release went unseen) closes after a while.
+    /// When the pointer last moved: a drag sheet that hears no drop closes after a while.
     pub moved: std::time::Instant,
-    /// Watches for the end of the drag.
+    /// Watches the window for the end of a drag that no release showed.
     pub watch: DropWatch,
 }
 
-/// How the end of a drag shows. Every sign ends it once; later ones are ignored.
+/// The end of a drag as the window shows it, for when the move ends with no release the panel hears. It ends the drag once; later
+/// signs are ignored.
 ///
 /// While the button is held the window follows the pointer, moving whenever it does (a frame behind at most, which on a fast drag
 /// is more than a few pixels, so the window's offset from the pointer is no test). Let go, and the window stays where it is while the
@@ -58,7 +59,6 @@ pub struct DropWatch {
     /// Where the window was last seen, and where the pointer was when it last moved.
     pub last_at: Option<(f64, f64)>,
     pub anchor: Option<(f64, f64)>,
-    pub opened: std::time::Instant,
     /// The zone under the pointer the last time the window was seen following it (where it was let go).
     pub held: Option<(usize, usize)>,
     pub done: bool,
@@ -66,13 +66,10 @@ pub struct DropWatch {
 
 /// How far (logical pixels) the pointer may move away from its grip before the window is taken as let go.
 pub const SLACK: f64 = 6.0;
-/// Pointer focus coming back to the sheet means the compositor let go of the pointer; right after the sheet opens it can be the
-/// sheet appearing under the pointer instead, so not before this.
-pub const SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
 
 impl DropWatch {
     pub fn new(grip: Option<(f64, f64)>) -> DropWatch {
-        DropWatch { grip, last_at: None, anchor: None, opened: std::time::Instant::now(), held: None, done: false }
+        DropWatch { grip, last_at: None, anchor: None, held: None, done: false }
     }
 
     /// The pointer and the window, read while following: Some(zone or none) once the window no longer follows the pointer (the
@@ -105,34 +102,10 @@ impl DropWatch {
         }
         None
     }
-
-    /// The pointer entered the sheet (or clicked it) at a zone or not: the drop, unless the sheet has only just appeared.
-    pub fn pointer_back(&mut self, clicked: bool, at: Option<(usize, usize)>) -> Option<Option<(usize, usize)>> {
-        if self.done || (!clicked && self.opened.elapsed() < SETTLE) {
-            return None;
-        }
-        self.done = true;
-        Some(at.or(self.held))
-    }
-
-    /// The session said the drag ended.
-    pub fn told(&mut self) -> Option<Option<(usize, usize)>> {
-        if self.done {
-            return None;
-        }
-        self.done = true;
-        Some(self.held)
-    }
 }
 
 /// How long a drag sheet waits, with the pointer still, for a drop it may never hear.
 pub const STALE: std::time::Duration = std::time::Duration::from_secs(8);
-
-/// The left mouse button as the kernel sees it, from the pointer devices this user may read (Hyprland reports no mouse buttons, and
-/// no button event reaches the panel while the compositor moves a window). Only the button state is asked for; no events are read.
-pub struct Buttons {
-    devices: Vec<std::fs::File>,
-}
 
 const BTN_LEFT: usize = 0x110;
 const KEY_A: usize = 30;
@@ -145,52 +118,43 @@ fn bit(buf: &[u8], n: usize) -> bool {
     buf.get(n / 8).is_some_and(|b| b & (1 << (n % 8)) != 0)
 }
 
-/// The folder of input devices: /dev/input, or the one `YGGDRASIL_PANEL_INPUT` names (the tests' own, empty: a panel under test
-/// never reads the computer's mice).
+/// The folder of input devices: /dev/input, or the one `YGGDRASIL_PANEL_INPUT` names (the tests' own: a panel under test never
+/// reads the computer's mice).
 pub fn input_dir() -> std::path::PathBuf {
     std::env::var_os("YGGDRASIL_PANEL_INPUT").map(std::path::PathBuf::from).unwrap_or_else(|| "/dev/input".into())
 }
 
-impl Buttons {
-    /// The readable devices that have a left button and are not keyboards (a mouse's macro-key half shows up as a keyboard).
-    pub fn open() -> Buttons {
-        use std::os::fd::AsRawFd;
-        let mut devices = vec![];
-        let Ok(rd) = std::fs::read_dir(input_dir()) else { return Buttons { devices } };
-        for e in rd.flatten() {
-            if !e.file_name().to_string_lossy().starts_with("event") {
-                continue;
-            }
-            let Ok(f) = std::fs::File::open(e.path()) else { continue };
-            let mut caps = [0u8; 96];
-            // EVIOCGBIT(EV_KEY): which keys and buttons the device has
-            let n = unsafe { libc::ioctl(f.as_raw_fd(), ioc_read(0x20 + 1, caps.len()) as _, caps.as_mut_ptr()) };
-            if n > 0 && bit(&caps, BTN_LEFT) && !bit(&caps, KEY_A) {
-                devices.push(f);
-            }
+/// The pointer devices this user may read in `dir`: each `event*` device that has a left button and is not a keyboard (a mouse's
+/// macro-key half shows up as a keyboard). A FIFO there stands in for a mouse: the tests write a mouse's events into one (the
+/// kernel's folder holds devices only).
+fn pointer_devices(dir: &std::path::Path) -> Vec<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
+    let mut devices = vec![];
+    let Ok(rd) = std::fs::read_dir(dir) else { return devices };
+    for e in rd.flatten() {
+        if !e.file_name().to_string_lossy().starts_with("event") {
+            continue;
         }
-        Buttons { devices }
-    }
-
-    /// Whether the left button is down on any of them; None when no pointer device can be read.
-    pub fn left_down(&self) -> Option<bool> {
-        use std::os::fd::AsRawFd;
-        if self.devices.is_empty() {
-            return None;
+        // without waiting: a FIFO with no writer would wait for one
+        let Ok(f) = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(e.path()) else { continue };
+        if e.file_type().is_ok_and(|t| t.is_fifo()) {
+            devices.push(f);
+            continue;
         }
-        Some(self.devices.iter().any(|f| {
-            let mut state = [0u8; 96];
-            // EVIOCGKEY: which keys and buttons are held now
-            let n = unsafe { libc::ioctl(f.as_raw_fd(), ioc_read(0x18, state.len()) as _, state.as_mut_ptr()) };
-            n >= 0 && bit(&state, BTN_LEFT)
-        }))
+        let mut caps = [0u8; 96];
+        // SAFETY: EVIOCGBIT(EV_KEY), which keys and buttons the device has, writes at most `caps.len()` bytes into the buffer
+        let n = unsafe { libc::ioctl(f.as_raw_fd(), ioc_read(0x20 + 1, caps.len()) as _, caps.as_mut_ptr()) };
+        if n > 0 && bit(&caps, BTN_LEFT) && !bit(&caps, KEY_A) {
+            devices.push(f);
+        }
     }
+    devices
 }
 
-/// The left mouse button's presses and releases as events, from the pointer devices this user may read (the same ones as
-/// [`Buttons`]). Each device is told to report the left button and nothing else (EVIOCSMASK), so moving the mouse or turning
-/// the wheel wakes nothing; all of them sit in one epoll, which the panel's event loop watches. Nothing is read or asked between
-/// presses.
+/// The left mouse button's presses and releases as events, from the pointer devices this user may read. Each device is told to
+/// report the left button and nothing else (EVIOCSMASK), so moving the mouse or turning the wheel wakes nothing; all of them sit
+/// in one epoll, which the panel's event loop watches. Nothing is read or asked between presses.
 pub struct ButtonEvents {
     epoll: std::os::fd::OwnedFd,
     /// Each device, and whether its left button is down.
@@ -256,12 +220,7 @@ fn left_down_now(f: &std::fs::File) -> bool {
 }
 
 impl ButtonEvents {
-    /// The pointer devices in /dev/input that can be read now.
-    pub fn open() -> ButtonEvents {
-        ButtonEvents::with(Buttons::open().devices)
-    }
-
-    /// These devices (the tests give pipes that stand in for them).
+    /// These devices (the tests give pipes that stand in for them); none: nothing open, nothing wakes.
     pub fn with(files: Vec<std::fs::File>) -> ButtonEvents {
         let epoll = rustix::event::epoll::create(rustix::event::epoll::CreateFlags::CLOEXEC).expect("an epoll");
         let mut b = ButtonEvents { epoll, devices: vec![] };
@@ -281,11 +240,11 @@ impl ButtonEvents {
         }
     }
 
-    /// A mouse was plugged in or out, or became readable (/dev/input changed): the devices again. Closing a device takes it out
-    /// of the epoll.
-    pub fn reopen(&mut self) {
+    /// Other devices in place of these: the mice again after one was plugged in or out, or none once window zones are off.
+    /// Closing a device takes it out of the epoll.
+    fn replace(&mut self, files: Vec<std::fs::File>) {
         self.devices.clear();
-        self.take(Buttons::open().devices);
+        self.take(files);
     }
 
     /// The epoll that is ready when a press or release can be read (a second handle to it, for the event loop).
@@ -327,21 +286,39 @@ impl ButtonEvents {
 
 /// Notices a window being dragged to the notch, with no binding on the mouse button (a binding on the left button kept Hyprland
 /// 0.56 from ending its own window move when the button came up). The left button's presses and releases come as events
-/// ([`ButtonEvents`]); only while it is held does the panel tick and ask Hyprland where the window in front is and where the
-/// pointer is.
+/// ([`ButtonEvents`]) from the mice in the input folder, open only while window zones are on; only while the button is held does
+/// the panel tick and ask the compositor where the window in front is and where the pointer is.
 pub struct Spotter {
     pub events: ButtonEvents,
+    /// The folder of input devices, and whether window zones are on (only then are its mice open).
+    dir: std::path::PathBuf,
+    on: bool,
     start: Option<(String, (f64, f64))>,
     told: bool,
 }
 
-impl Default for Spotter {
-    fn default() -> Self {
-        Spotter { events: ButtonEvents::open(), start: None, told: false }
-    }
-}
-
 impl Spotter {
+    /// The mice in `dir`, open while window zones are `on`.
+    pub fn new(dir: std::path::PathBuf, on: bool) -> Spotter {
+        let mut s = Spotter { events: ButtonEvents::with(vec![]), dir, on, start: None, told: false };
+        s.devices_changed();
+        s
+    }
+
+    /// Window zones turned on or off: the mice are opened, or closed (with zones off a press or a held button wakes nothing).
+    pub fn set_on(&mut self, on: bool) {
+        if on != self.on {
+            self.on = on;
+            self.devices_changed();
+        }
+    }
+
+    /// A mouse was plugged in or out, or became readable (the input folder changed): the devices again, while zones are on.
+    pub fn devices_changed(&mut self) {
+        self.events.replace(if self.on { pointer_devices(&self.dir) } else { vec![] });
+        self.forget_released();
+    }
+
     /// While this is true the panel calls `tick` (every 60 ms): the left button is held.
     pub fn held(&self) -> bool {
         self.events.held()
@@ -350,6 +327,11 @@ impl Spotter {
     /// The devices reported a press or release: read it; a release ends the drag being followed.
     pub fn read(&mut self) {
         self.events.read();
+        self.forget_released();
+    }
+
+    /// The button is up: the next press starts a new drag.
+    fn forget_released(&mut self) {
         if !self.events.held() {
             self.start = None;
             self.told = false;
@@ -360,8 +342,7 @@ impl Spotter {
     /// of its screen.
     pub fn tick(&mut self) -> bool {
         if !self.events.held() {
-            self.start = None;
-            self.told = false;
+            self.forget_released();
             return false;
         }
         let Some(desk) = Desk::detect() else { return false };
@@ -435,10 +416,20 @@ pub fn front_window() -> Option<(String, (f64, f64))> {
     Some((w.id, w.at?))
 }
 
+/// Window zones are on, with a layout to show (Settings > Displays > Window zones).
+fn usable(conf: &ZonesConf) -> bool {
+    conf.enabled && !conf.layouts.is_empty()
+}
+
+/// Whether window zones are on now (`zones.conf`): only then are the mice watched.
+pub fn on() -> bool {
+    usable(&ZonesConf::load())
+}
+
 /// Starts placing the window in front: on the screen under the pointer when dragging, the window's own screen from the keyboard.
 pub fn begin(mode: Mode) -> Option<Session> {
     let conf = ZonesConf::load();
-    if !conf.enabled || conf.layouts.is_empty() {
+    if !usable(&conf) {
         return None;
     }
     let desk = Desk::detect()?;
@@ -612,7 +603,7 @@ mod tests {
     #[test]
     fn the_left_button_wakes_the_spotter_and_its_release_ends_the_ticking() {
         let (mouse, mut kernel) = fake_mouse();
-        let mut s = Spotter { events: ButtonEvents::with(vec![mouse]), start: None, told: false };
+        let mut s = Spotter { events: ButtonEvents::with(vec![mouse]), dir: std::path::PathBuf::new(), on: true, start: None, told: false };
         let epoll = s.events.poll_fd().unwrap();
         assert!(!s.held() && !ready(&epoll), "nothing held, nothing to read: no ticks");
         // pressed: the event loop is woken, and the spotter wants its ticks
@@ -635,6 +626,68 @@ mod tests {
         assert!(s.start.is_none(), "the next press starts a new drag");
     }
 
+    /// A folder of the test's own in place of /dev/input, removed at the end.
+    struct Folder(std::path::PathBuf);
+
+    impl Drop for Folder {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// How many handles this process holds on a file (/proc/self/fd).
+    fn handles(path: &std::path::Path) -> usize {
+        let fds = std::fs::read_dir("/proc/self/fd").unwrap();
+        fds.flatten().filter(|e| std::fs::read_link(e.path()).is_ok_and(|l| l == path)).count()
+    }
+
+    #[test]
+    fn the_mice_are_open_only_while_zones_are_on_and_with_zones_off_a_press_wakes_nothing() {
+        use std::os::unix::ffi::OsStrExt;
+        // the test's input folder: a FIFO standing in for a mouse (event0), a file that is no device (event1), a FIFO by
+        // another name (mouse0)
+        let dir = Folder(std::env::temp_dir().join(format!("ygg-panel-input-{}", std::process::id())));
+        let _ = std::fs::remove_dir_all(&dir.0);
+        std::fs::create_dir_all(&dir.0).unwrap();
+        for name in ["event0", "mouse0"] {
+            let c = std::ffi::CString::new(dir.0.join(name).as_os_str().as_bytes()).unwrap();
+            // SAFETY: mkfifo reads a valid C string
+            assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo {name}");
+        }
+        std::fs::write(dir.0.join("event1"), "not a device").unwrap();
+        // as /proc names it
+        let mouse = std::fs::canonicalize(dir.0.join("event0")).unwrap();
+        // the test's end: reading and writing, so neither end waits for the other to open
+        let mut kernel = std::fs::OpenOptions::new().read(true).write(true).open(&mouse).unwrap();
+
+        // zones on: the mouse is open, and a press wakes the loop
+        let mut s = Spotter::new(dir.0.clone(), true);
+        assert_eq!(s.events.devices.len(), 1, "event0 alone is a mouse");
+        assert_eq!(handles(&mouse), 2, "the test's end and the spotter's");
+        let epoll = s.events.poll_fd().unwrap();
+        send(&mut kernel, EV_KEY, BTN_LEFT as u16, 1);
+        assert!(ready(&epoll));
+        s.read();
+        assert!(s.held(), "held: the panel looks for a drag");
+        send(&mut kernel, EV_KEY, BTN_LEFT as u16, 0);
+        assert!(ready(&epoll));
+        s.read();
+        assert!(!s.held());
+
+        // zones off: the mouse is closed, so a press reaches no one and nothing ticks
+        s.set_on(false);
+        assert_eq!(handles(&mouse), 1, "only the test's end");
+        send(&mut kernel, EV_KEY, BTN_LEFT as u16, 1);
+        assert!(!ready(&epoll), "zones off: a press wakes nothing");
+        assert!(!s.held());
+        // a mouse plugged in meanwhile is not opened either
+        s.devices_changed();
+        assert!(s.events.devices.is_empty() && handles(&mouse) == 1);
+        // and with zones off from the start nothing is opened at all
+        let off = Spotter::new(dir.0.clone(), false);
+        assert!(off.events.devices.is_empty() && handles(&mouse) == 1);
+    }
+
     fn session() -> Session {
         let monitor =
             Monitor { name: "DP-1".into(), x: 0, y: 0, width: 3440, height: 1440, scale: 1.0, transform: 0, reserved: [0, 28, 0, 70] };
@@ -653,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn the_drop_is_seen_once_whichever_sign_comes_first() {
+    fn the_drop_is_seen_once_the_window_stops_following() {
         // the window follows the pointer: no drop, and the zone under it is remembered
         let mut w = DropWatch::new(Some((40.0, 10.0)));
         assert_eq!(w.follow((140.0, 30.0), Some((100.0, 20.0)), Some((0, 1))), None);
@@ -667,23 +720,12 @@ mod tests {
         assert_eq!(w.follow((390.0, 40.0), Some((320.0, 21.0)), Some((1, 0))), Some(Some((0, 0))));
         // every later sign is ignored
         assert_eq!(w.follow((400.0, 40.0), Some((260.0, 21.0)), None), None);
-        assert_eq!(w.pointer_back(true, Some((2, 0))), None);
-        assert_eq!(w.told(), None);
+        assert_eq!(w.follow((500.0, 90.0), Some((260.0, 21.0)), Some((1, 0))), None);
 
-        // the pointer coming back: an enter right as the sheet opens is the sheet appearing, not a drop; a click always is
-        let mut w = DropWatch::new(Some((40.0, 10.0)));
-        assert_eq!(w.pointer_back(false, Some((1, 1))), None);
-        assert_eq!(w.pointer_back(true, Some((1, 1))), Some(Some((1, 1))));
+        // without a grip (no window was being dragged when the sheet opened) the window is not judged, however far the pointer goes
         let mut w = DropWatch::new(None);
-        w.opened -= SETTLE;
-        assert_eq!(w.follow((10.0, 10.0), None, Some((3, 0))), None, "without a grip the window is not judged");
-        assert_eq!(w.pointer_back(false, None), Some(Some((3, 0))), "an enter later is the drop, at the zone held last");
-
-        // the session's word
-        let mut w = DropWatch::new(None);
-        w.held = Some((0, 2));
-        assert_eq!(w.told(), Some(Some((0, 2))));
-        assert_eq!(w.told(), None);
+        assert_eq!(w.follow((10.0, 10.0), Some((0.0, 0.0)), Some((3, 0))), None);
+        assert_eq!(w.follow((400.0, 300.0), Some((0.0, 0.0)), None), None, "without a grip the window is not judged");
     }
 
     #[test]
