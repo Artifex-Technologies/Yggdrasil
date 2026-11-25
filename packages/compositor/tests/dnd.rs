@@ -759,7 +759,7 @@ fn a_file_dragged_from_a_wayland_program_onto_an_x11_program_arrives_there() {
     x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[XDND]).unwrap();
     x.conn.flush().unwrap();
     comp.wait(10, "the X11 window managed", |c| c.window("X11target").is_some());
-    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11target")));
+    place_x11(&comp, "X11target", (600, 100));
     // the Wayland program dragging, on the left
     let mut s = comp.connect();
     let (_sk, _sp) = s.input();
@@ -821,7 +821,7 @@ fn a_file_dragged_from_an_x11_program_onto_a_wayland_program_arrives_there() {
     let x = X11::connect(&display);
     let win = x.window(b"x11source\0X11source\0", pointer_events());
     comp.wait(10, "the X11 window managed", |c| c.window("X11source").is_some());
-    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11source")));
+    place_x11(&comp, "X11source", (600, 100));
     // the Wayland program that takes the drop, in the top left corner
     let mut t = comp.connect();
     let (_tk, _tp) = t.input();
@@ -912,8 +912,8 @@ fn a_file_dragged_between_two_x11_programs_arrives_there() {
     y.conn.change_property32(PropMode::REPLACE, target, y.aware, AtomEnum::ATOM, &[XDND]).unwrap();
     y.conn.flush().unwrap();
     comp.wait(10, "the X11 windows managed", |c| c.window("X11source").is_some() && c.window("X11target").is_some());
-    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "X11source")));
-    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11target")));
+    place_x11(&comp, "X11source", (50, 100));
+    place_x11(&comp, "X11target", (600, 100));
     let (xi, yi) = (comp.window("X11source").unwrap(), comp.window("X11target").unwrap());
     assert!(xi.at.0 + 300 <= yi.at.0, "side by side: {xi:?} {yi:?}");
     x11_drawn(&comp, yi.at);
@@ -988,7 +988,7 @@ fn a_drag_over_an_x11_window_goes_on_when_xwayland_goes_away() {
     x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[XDND]).unwrap();
     x.conn.flush().unwrap();
     comp.wait(10, "the X11 window managed", |c| c.window("X11target").is_some());
-    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11target")));
+    place_x11(&comp, "X11target", (600, 100));
     // the Wayland program dragging, on the left, and the one receiving, below it
     let mut s = comp.connect();
     let (_sk, _sp) = s.input();
@@ -1051,8 +1051,8 @@ fn an_x11_drag_ends_when_xwayland_goes_away() {
     y.conn.change_property32(PropMode::REPLACE, target, y.aware, AtomEnum::ATOM, &[XDND]).unwrap();
     y.conn.flush().unwrap();
     comp.wait(10, "the X11 windows managed", |c| c.window("X11source").is_some() && c.window("X11target").is_some());
-    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "X11source")));
-    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11target")));
+    place_x11(&comp, "X11source", (50, 100));
+    place_x11(&comp, "X11target", (600, 100));
     let mut t = comp.connect();
     let (_tk, _tp) = t.input();
     let tw = t.window("test.target", "Target");
@@ -1105,7 +1105,7 @@ fn a_drag_let_go_where_an_x11_window_was_is_cancelled() {
     x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[XDND]).unwrap();
     x.conn.flush().unwrap();
     comp.wait(10, "the X11 window managed", |c| c.window("X11target").is_some());
-    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11target")));
+    place_x11(&comp, "X11target", (600, 100));
     // the Wayland program dragging, on the left
     let mut s = comp.connect();
     let (_sk, _sp) = s.input();
@@ -1173,7 +1173,7 @@ fn an_x11_menu_gets_the_pointer_after_an_x11_drag_was_given_up() {
     let x = X11::connect(&display);
     let win = x.window(b"x11source\0X11source\0", pointer_events());
     comp.wait(10, "the X11 window managed", |c| c.window("X11source").is_some());
-    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11source")));
+    place_x11(&comp, "X11source", (600, 100));
     let mut t = comp.connect();
     let (_tk, _tp) = t.input();
     let tw = t.window("test.target", "Target");
@@ -1209,7 +1209,7 @@ fn an_x11_program_drags_again_after_it_gave_a_drag_up() {
     let x = X11::connect(&display);
     let win = x.window(b"x11source\0X11source\0", pointer_events());
     comp.wait(10, "the X11 window managed", |c| c.window("X11source").is_some());
-    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11source")));
+    place_x11(&comp, "X11source", (600, 100));
     let mut t = comp.connect();
     let (_tk, _tp) = t.input();
     let tw = t.window("test.target", "Target");
@@ -1246,7 +1246,7 @@ fn an_x11_target_ends_unfinished(dropped: bool) {
     x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[XDND]).unwrap();
     x.conn.flush().unwrap();
     comp.wait(10, "the X11 window managed", |c| c.window("X11target").is_some());
-    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11target")));
+    place_x11(&comp, "X11target", (600, 100));
     // the Wayland program dragging, on the left
     let mut s = comp.connect();
     let (_sk, _sp) = s.input();
@@ -1287,7 +1287,7 @@ fn an_x11_target_ends_unfinished(dropped: bool) {
     // the next X11 program's drag: it keeps XdndSelection, and the stand-in comes over the Wayland window
     let awin = a.window(b"x11source\0X11source\0", pointer_events());
     comp.wait(10, "the next X11 program's window managed", |c| c.window("X11source").is_some());
-    comp.must(&format!("place {} 600 350 300 200", id_of(&comp, "X11source")));
+    place_x11(&comp, "X11source", (600, 350));
     let ai = comp.window("X11source").unwrap();
     x11_drag_from(&comp, &a, awin, ai.at, (si.at.0 + 150, si.at.1 + 100));
     assert_eq!(a.conn.get_selection_owner(a.selection).unwrap().reply().unwrap().owner, awin, "XdndSelection kept");
@@ -1437,7 +1437,6 @@ fn written_after_xwayland_went_away(comp: &mut Compositor, display: &str, gone: 
 /// XWayland goes away (it crashed, or was killed) while an X11 program pastes a file a Wayland program copied, before the
 /// Wayland program has written it (a slow one): the paste ends, and the compositor and the next X11 program go on.
 #[test]
-#[ignore = "needs the fork's fix that ends a transfer or a drop when XWayland goes away (YGG-113)"]
 fn a_paste_into_an_x11_program_ends_when_xwayland_goes_away() {
     if !xwayland_installed() {
         eprintln!("skipped: XWayland is not installed");
@@ -1489,7 +1488,6 @@ fn a_paste_into_an_x11_program_ends_when_xwayland_goes_away() {
 /// before it dropped it: with XWayland gone that failed, the paste's pipe stayed watched, and the Wayland program's write into
 /// it ended the compositor.)
 #[test]
-#[ignore = "needs the fork's fix that ends a transfer or a drop when XWayland goes away (YGG-113)"]
 fn a_paste_asked_for_twice_ends_when_xwayland_goes_away() {
     if !xwayland_installed() {
         eprintln!("skipped: XWayland is not installed");
@@ -1565,7 +1563,6 @@ fn a_paste_asked_for_twice_ends_when_xwayland_goes_away() {
 /// XWayland goes away while a Wayland program pastes the files an X11 program copied, before it has read them all (more than
 /// its pipe holds): the paste ends with what was in the pipe, and the compositor and the next X11 program go on.
 #[test]
-#[ignore = "needs the fork's fix that ends a transfer or a drop when XWayland goes away (YGG-113)"]
 fn a_paste_from_an_x11_program_ends_when_xwayland_goes_away() {
     if !xwayland_installed() {
         eprintln!("skipped: XWayland is not installed");
@@ -1623,7 +1620,6 @@ fn a_paste_from_an_x11_program_ends_when_xwayland_goes_away() {
 /// written it (a slow one): the drop ends, its transfer too, and the Wayland program is told the drop was cancelled (the X11
 /// program will never say it finished it). The compositor and the next X11 program go on.
 #[test]
-#[ignore = "needs the fork's fix that ends a transfer or a drop when XWayland goes away (YGG-113)"]
 fn a_drop_on_an_x11_program_ends_when_xwayland_goes_away() {
     if !xwayland_installed() {
         eprintln!("skipped: XWayland is not installed");

@@ -55,4 +55,4 @@ lto = "thin"
 # build: a negative size, an overflow in X11Surface::geometry); and fix three XDND bugs (only a drag started on XWayland's
 # surfaces can become an X11 drag, a vanished drop target ends the drag, a drag the X11 program gave up ends with the grab).
 [patch.crates-io]
-smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "be625ae980ad27e799d1c822dcbb7856d5fadf00" }
+smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "5bb77de946b466e031a63deef6c200bed091990b" }

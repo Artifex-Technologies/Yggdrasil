@@ -441,6 +441,14 @@ impl App {
     }
 }
 
+/// With YGGDRASIL_COMPOSITOR_DEBUG set, an X11 window's steps go to the log: a menu that is never drawn (seen in CI only,
+/// YGG-115) then shows which step did not come.
+fn debug(what: impl FnOnce() -> String) {
+    if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+        eprintln!("x11: {}", what());
+    }
+}
+
 impl XWaylandShellHandler for App {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
         &mut self.xwayland_shell_state
@@ -449,6 +457,7 @@ impl XWaylandShellHandler for App {
     /// XWayland has made the surface of an X11 window: from now on it is a window like any other (listed for the panel, tiled,
     /// given the keyboard). Menus and tooltips are not windows here; they are drawn from `overlays`.
     fn surface_associated(&mut self, _xwm: XwmId, surface: WlSurface, window: X11Surface) {
+        debug(|| format!("window {} has its surface", window.window_id()));
         self.wake();
         let Some(w) = self.x11_window(&window) else { return };
         // window controls for an X11 window that does not draw its own (Steam and most games say they draw their own, or none)
@@ -467,7 +476,9 @@ impl XwmHandler for App {
     // its first geometry at the client scale as it is (0.7.0 rounded 1.25 down to 1)
     fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
-    fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
+    fn new_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        debug(|| format!("menu or tooltip {} made", window.window_id()));
+    }
 
     /// A program shows a window: it is placed like a Wayland window (one after another, a little offset; tiled on a tiling
     /// workspace once its surface exists), or full screen or maximized when it asked for that before it was shown.
@@ -533,6 +544,7 @@ impl XwmHandler for App {
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        debug(|| format!("menu or tooltip {} shown at {:?}", window.window_id(), window.last_configure()));
         self.wake();
         if !self.overlays.iter().any(|x| same(x, &window)) {
             self.overlays.push(window);
