@@ -1074,6 +1074,98 @@ fn a_drop_an_x11_program_says_it_did_not_take_is_cancelled_for_the_dragging_prog
     assert_eq!(drop_on_x11_finished_with(4, [0, 0, 0, 0]), (true, false), "XDND 4 (no accept bit): finished");
 }
 
+/// Two drags at once over X11 windows: a finger drags one Wayland program's file over one X11 window while the mouse drops
+/// another Wayland program's file on a second X11 window, which never finishes. The finger's drag then leaves its X11 window:
+/// the mouse's drop still ends 10 s after it, its program told cancelled. Before, the leaving drag cleared the window manager's
+/// only offer, whichever drag's it was, so the waiting drop was forgotten and its program never heard back (YGG-141).
+#[test]
+fn a_drop_waiting_on_an_x11_program_still_ends_when_another_drag_leaves_an_x11_window() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(90, "a waiting drop and a second drag at once");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // two X11 programs taking drops: the mouse's target (it hangs on the drop) at the top, the finger's below it
+    let x1 = X11::connect(&display);
+    let w1 = x1.window(b"x11mouse\0X11mouse\0", EventMask::NO_EVENT);
+    x1.conn.change_property32(PropMode::REPLACE, w1, x1.aware, AtomEnum::ATOM, &[XDND]).unwrap();
+    x1.conn.flush().unwrap();
+    place_x11(&comp, "X11mouse", (600, 40));
+    let x2 = X11::connect(&display);
+    let w2 = x2.window(b"x11finger\0X11finger\0", EventMask::NO_EVENT);
+    x2.conn.change_property32(PropMode::REPLACE, w2, x2.aware, AtomEnum::ATOM, &[XDND]).unwrap();
+    x2.conn.flush().unwrap();
+    place_x11(&comp, "X11finger", (600, 340));
+    // two Wayland programs dragging, on the left: the mouse's at the top, the finger's below
+    let mut a = comp.connect();
+    let (_ak, _ap) = a.input();
+    let aw = a.window("test.mouse", "Mouse");
+    a.draw(&aw, (300, 200), 0xff0000ff);
+    comp.must(&format!("place {} 50 40 300 200", id_of(&comp, "test.mouse")));
+    a.roundtrip();
+    let mut b = comp.connect();
+    let (_bk, _bp) = b.input();
+    let bw = b.window("test.finger", "Finger");
+    b.draw(&bw, (300, 200), 0xff00ff00);
+    comp.must(&format!("place {} 50 340 300 200", id_of(&comp, "test.finger")));
+    b.roundtrip();
+    let (ai, bi) = (comp.window("test.mouse").unwrap(), comp.window("test.finger").unwrap());
+    let (xi1, xi2) = (comp.window("X11mouse").unwrap(), comp.window("X11finger").unwrap());
+    x11_drawn(&comp, xi1.at);
+    x11_drawn(&comp, xi2.at);
+
+    // the finger's drag over the lower X11 window
+    let (fx, fy) = (bi.at.0 + 100, bi.at.1 + 100);
+    comp.must(&format!("touch-down 0 {fx} {fy}"));
+    comp.must("touch-up 0");
+    b.until("the seat has touch", |st| st.seat_caps & 4 != 0);
+    let _touch = b.seat.get_touch(&b.qh, Finger);
+    b.roundtrip();
+    comp.must(&format!("touch-down 1 {fx} {fy}"));
+    until(&mut [&mut b], "the finger down", |l| l.touched.is_some());
+    let m: WlDataDeviceManager = b.globals.bind(&b.qh, 3..=3, ()).expect("wl_data_device_manager 3");
+    let device: WlDataDevice = m.get_data_device(&b.seat, &b.qh, ());
+    let file: WlDataSource = m.create_data_source(&b.qh, Dragged);
+    file.offer(URI_MIME.into());
+    file.set_actions(DndAction::Copy);
+    device.start_drag(Some(&file), &bw.surface, None, log(|l| l.touched.unwrap()));
+    b.roundtrip();
+    comp.must(&format!("touch-move 1 {} {}", xi2.at.0 + 150, xi2.at.1 + 100));
+    x2.message(&mut [&mut b], x2.enter, "XdndEnter for the finger's drag");
+
+    // the mouse's drag over the upper X11 window, taken and dropped there: it reads the URI and hangs (no XdndFinished)
+    drag_from(&comp, &mut a, &aw, ai.at, URI_MIME);
+    comp.must(&format!("pointer {} {}", xi1.at.0 + 150, xi1.at.1 + 100));
+    let enter = x1.message(&mut [&mut a, &mut b], x1.enter, "XdndEnter for the mouse's drag");
+    x1.message(&mut [&mut a, &mut b], x1.position, "XdndPosition for the mouse's drag");
+    x1.send(enter[0], x1.status, [w1, 1, 0, 0, x1.copy]);
+    until(&mut [&mut a, &mut b], "the mouse's program told the X11 program's choice", |l| l.action == Some(DndAction::Copy));
+    comp.must("release");
+    let dropped = x1.message(&mut [&mut a, &mut b], x1.drop, "XdndDrop");
+    let let_go = Instant::now();
+    let into = x1.conn.intern_atom(false, b"DROPPED").unwrap().reply().unwrap().atom;
+    x1.conn.convert_selection(w1, x1.selection, x1.uri, into, dropped[2]).unwrap();
+    x1.conn.flush().unwrap();
+    let property = x1.until(&mut [&mut a, &mut b], "the URI given to the X11 program", |e| match e {
+        Event::SelectionNotify(n) if n.requestor == w1 => Some(n.property),
+        _ => None,
+    });
+    assert_eq!(property, into, "the URI given on the drop");
+
+    // the finger's drag leaves its X11 window, for the empty middle: its X11 program is told it left
+    comp.must("touch-move 1 480 300");
+    x2.message(&mut [&mut a, &mut b], x2.leave, "XdndLeave for the finger's drag");
+    a.roundtrip();
+    assert!(!log(|l| l.cancelled || l.finished), "the mouse's drop still waits for its X11 program");
+
+    // 10 s after the mouse's drop, its program is told the drop is cancelled
+    until_in(20, &mut [&mut a, &mut b], "the mouse's program told its drop is cancelled", |l| l.cancelled);
+    assert!(let_go.elapsed() >= Duration::from_secs(9), "after the X11 program had its time: {:?}", let_go.elapsed());
+    assert!(!log(|l| l.finished), "not finished");
+    comp.must("touch-up 1");
+}
+
 /// The same with a finger, as on a 2-in-1's screen: a Wayland program drags a file with a finger onto an X11 program, which is
 /// told the drag came and where the finger is, takes it, and once the finger lifts over it is told of the drop and reads the
 /// file's URI; the Wayland program is told the drop finished.

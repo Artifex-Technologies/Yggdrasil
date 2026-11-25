@@ -48,8 +48,8 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 opt-level = 2
 lto = "thin"
 
-# Smithay's main branch (54cf9c10; its version is still 0.7.0, so it stands in for the 0.7 above) with eleven commits of ours:
-# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit (4767697a).
+# Smithay's main branch (54cf9c10; its version is still 0.7.0, so it stands in for the 0.7 above) with twelve commits of ours:
+# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit (0949074e).
 #   514b9ae1  the X11 sockets bound apart from starting XWayland (X11Sockets, XWayland::spawn_with_sockets), so XWayland
 #             starts on the first X11 program (xwayland.rs)
 #   3c8ca3a4  two X11 window manager fixes: every event was dropped after set_randr_primary_output until the next request;
@@ -70,5 +70,7 @@ lto = "thin"
 #             ends (before, any X11 program could read it while the drag was over any X11 window)
 #   4767697a  a drop an X11 target says it did not take (XDND 5's XdndFinished, accept bit clear) is cancelled for the
 #             dragging program (before, it was told finished, and a move deleted data that arrived nowhere)
+#   0949074e  a drag leaving an X11 window clears only its own offer (before, with a mouse and a finger drag at once, it
+#             cleared the other's waiting drop, which then never ended and its program never heard back)
 [patch.crates-io]
-smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "4767697a56f64b5983d51aa0de151ecb422ca6ce" }
+smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "0949074e7084d291035d8791ed09bd21d124ee9e" }
