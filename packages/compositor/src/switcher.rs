@@ -212,7 +212,7 @@ pub struct Card {
 impl Card {
     /// The rectangle the card's windows cover (on the desktop).
     pub fn bounds(&self) -> Rectangle<i32, Logical> {
-        let mut it = self.windows.iter().map(|(w, at)| Rectangle::new(*at, w.geometry().size));
+        let mut it = self.windows.iter().map(|(w, at)| Rectangle::new(*at, crate::state::window_geometry(w).size));
         let first = it.next().unwrap_or_default();
         it.fold(first, |a, b| a.merge(b))
     }
@@ -402,7 +402,7 @@ where
         let bounds = card.bounds();
         let (room, k) = fit(g.picture(i), bounds.size);
         for (w, at) in &card.windows {
-            let geo = w.geometry();
+            let geo = crate::state::window_geometry(w);
             if geo.size.w <= 0 || geo.size.h <= 0 || k <= 0.0 {
                 continue;
             }

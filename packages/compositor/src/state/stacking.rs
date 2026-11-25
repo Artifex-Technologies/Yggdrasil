@@ -20,7 +20,7 @@ use smithay::utils::{FrameExtents, Logical, Point, Rectangle};
 use smithay::wayland::shell::wlr_layer::Layer;
 use smithay::xwayland::X11Surface;
 
-use super::{win_has, App, PtrFocus};
+use super::{win_has, window_geometry, App, PtrFocus};
 use crate::deco::{self, Hit};
 
 /// How far out from its window an X11 program's surface takes clicks. A program that draws its own shadow (GTK, Chromium) keeps
@@ -119,7 +119,7 @@ impl App {
     /// The part of one window at `pos`: its controls (drawn over its picture), its picture or menus, its grips (outside it).
     fn window_part(&self, w: &Window, pos: Point<f64, Logical>) -> Option<Under> {
         let loc = self.space.element_location(w)?;
-        let geo = w.geometry();
+        let geo = window_geometry(w);
         if geo.size.w <= 0 || geo.size.h <= 0 {
             // nothing drawn yet: `scene` skips it, so the pointer passes through it too
             return None;
@@ -185,7 +185,10 @@ impl App {
         self.space
             .elements()
             .rev()
-            .filter(|w| w.geometry().size.w > 0 && w.geometry().size.h > 0)
+            .filter(|w| {
+                let size = window_geometry(w).size;
+                size.w > 0 && size.h > 0
+            })
             .find(|w| self.window_output(w) == *o)
             .is_some_and(|w| win_has(w, xdg_toplevel::State::Fullscreen))
     }

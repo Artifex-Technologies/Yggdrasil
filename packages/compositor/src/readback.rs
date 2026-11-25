@@ -278,7 +278,7 @@ where
                     continue;
                 };
                 let scale = app.window_output(&w).current_scale().fractional_scale();
-                let geo = w.geometry();
+                let geo = crate::state::window_geometry(&w);
                 let at = smithay::utils::Point::<i32, Physical>::from((
                     -(geo.loc.x as f64 * scale).round() as i32,
                     -(geo.loc.y as f64 * scale).round() as i32,

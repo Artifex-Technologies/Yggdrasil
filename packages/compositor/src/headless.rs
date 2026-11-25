@@ -487,7 +487,7 @@ impl Headless {
         use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
         use smithay::backend::renderer::element::AsRenderElements;
         let mut image = self.renderer.create_buffer(Fourcc::Argb8888, (size.0 as i32, size.1 as i32).into()).ok()?;
-        let geo = w.geometry();
+        let geo = state::window_geometry(w);
         let at = smithay::utils::Point::<i32, smithay::utils::Physical>::from((
             -(geo.loc.x as f64 * scale).round() as i32,
             -(geo.loc.y as f64 * scale).round() as i32,

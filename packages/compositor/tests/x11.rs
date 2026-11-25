@@ -886,12 +886,14 @@ fn the_grips_of_an_x11_window_lie_over_its_own_shadow() {
     }
 }
 
-/// A program may write anything into _GTK_FRAME_EXTENTS, and Smithay reads each side as 0 to i32::MAX (one above it as none):
-/// sides that add up to 2^31, a side of i32::MAX on the left and top or on the right and bottom, sides above i32::MAX, and a
-/// shadow far wider than its window, set before the window is shown and on a shown one, then maximized and restored. The
-/// compositor must survive each (a debug build: an overflow ends it), and a shadow no program draws is not believed, so the
-/// window stays as its X window was made (before, the first two ended the compositor, and the third and the last grew the X
-/// window to 65535x65535 and 2000x2000 around a window of no size).
+/// A program may write anything into _GTK_FRAME_EXTENTS, and Smithay reads each side as 0 to 65535 (one above i32::MAX as
+/// none): sides that add up to 2^31, a side of i32::MAX on the left and top or on the right and bottom, sides above i32::MAX,
+/// a shadow far wider than its window, and one side of 300 (just past MAX_SHADOW), set before the window is shown and on a
+/// shown one, then maximized and restored. The compositor must survive each (a debug build: an overflow ends it), and a
+/// shadow no program draws is not believed, so the window stays as its X window was made: listed, drawn, clicked and copied
+/// as all of it (before, the first two ended the compositor, and the third and the fifth grew the X window to 65535x65535 and
+/// 2000x2000 around a window of no size; later the window was listed as all of its X window but drawn, clicked and copied as
+/// Smithay takes it, less the whole shadow: nothing of it, or a strip 40 pixels wide).
 #[test]
 fn absurd_x11_shadows_do_not_bring_the_compositor_down() {
     if !xwayland_installed() {
@@ -937,25 +939,68 @@ fn absurd_x11_shadows_do_not_bring_the_compositor_down() {
             std::thread::sleep(Duration::from_millis(50));
         }
     };
+    // soon all of its X window `x` drawn (the window's red; its controls at the top right left out), and a click at its
+    // middle lands there in X: the window is all of its X window for drawing and clicks too, not only where it is listed
+    let whole = |win: u32, x: (i32, i32, i32, i32), after: &str| {
+        let start = Instant::now();
+        while !comp.screenshot("HEADLESS-1").fills((x.0, x.1 + 30, x.2, x.3 - 30), (255, 0, 0), 10) {
+            assert!(start.elapsed() < Duration::from_secs(10), "after {after}: all of the X window {x:?} drawn\n{}", comp.log_tail(20));
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        while conn.poll_for_event().unwrap().is_some() {}
+        ask(&format!("pointer {} {}", x.0 + x.2 / 2, x.1 + x.3 / 2), after);
+        ask("click", after);
+        let start = Instant::now();
+        loop {
+            match conn.poll_for_event().unwrap() {
+                Some(x11rb::protocol::Event::ButtonPress(e)) => {
+                    let middle = ((x.2 / 2) as i16, (x.3 / 2) as i16);
+                    assert_eq!((e.event, e.event_x, e.event_y), (win, middle.0, middle.1), "after {after}: where the click landed");
+                    return;
+                }
+                Some(_) => {}
+                None => {
+                    assert!(start.elapsed() < Duration::from_secs(5), "after {after}: the click reached the window\n{}", comp.log_tail(20));
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        }
+    };
+    // the dock's way to its preview: the window list, then a copy of the window alone
+    let mut dock = comp.connect();
+    let _list = dock.toplevel_list();
     let max = i32::MAX as u32;
-    for (i, sides) in [[1 << 30; 4], [max, 0, max, 0], [0, max, 0, max], [u32::MAX; 4], [1000; 4]].into_iter().enumerate() {
+    let all = [[1 << 30; 4], [max, 0, max, 0], [0, max, 0, max], [u32::MAX; 4], [1000; 4], [300, 0, 0, 0]];
+    for (i, sides) in all.into_iter().enumerate() {
         let class = format!("Absurd{i}");
         let win = conn.generate_id().unwrap();
-        let aux = CreateWindowAux::new().background_pixel(0xff0000);
+        let aux = CreateWindowAux::new().background_pixel(0xff0000).event_mask(EventMask::BUTTON_PRESS);
         conn.create_window(0, win, root, 0, 0, 340, 240, 0, WindowClass::INPUT_OUTPUT, 0, &aux).unwrap();
         conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, format!("absurd\0{class}\0").as_bytes())
             .unwrap();
         shadow(win, sides);
         conn.map_window(win).unwrap();
         conn.flush().unwrap();
-        let made = settled(&class, win, None, None, &format!("a window shown with the shadow {sides:?}"));
+        let shown = format!("a window shown with the shadow {sides:?}");
+        let made = settled(&class, win, None, None, &shown);
         assert_eq!((made.2, made.3), (340, 240), "the X window as it was made");
+        whole(win, made, &shown);
+        // and its preview is all of it too
+        dock.until("the window listed", |s| s.listed.iter().any(|l| l.app_id == class && !l.closed));
+        let listed = dock.listed(&class).unwrap();
+        let (copy, session) = dock.capture_window(&listed.handle);
+        assert_eq!(dock.state.caps[copy].size, Some((340, 240)), "after {shown}: the size of its copy");
+        let f = dock.begin_copy(copy, &session, (340, 240), 0);
+        let (pic, _) = dock.end_copy(f, 5.0).unwrap_or_else(|e| panic!("after {shown}: its copy: {e:?}"));
+        assert_eq!(pic.count((0, 0, 340, 240), (255, 0, 0)), 340 * 240, "after {shown}: all of its copy red");
         // on the shown window: a real shadow (the X window is placed around the window), then the absurd one again (the X
         // window is just the window again)
         shadow(win, [20; 4]);
         settled(&class, win, Some(made), Some((made.0 - 20, made.1 - 20, 380, 280)), "a real shadow");
         shadow(win, sides);
-        settled(&class, win, Some(made), Some(made), &format!("the shadow {sides:?} on a shown window"));
+        let again = format!("the shadow {sides:?} on a shown window");
+        settled(&class, win, Some(made), Some(made), &again);
+        whole(win, made, &again);
         let id = client_of(&comp, &class);
         ask(&format!("maximize {id} on"), "the window maximized");
         let start = Instant::now();
@@ -966,6 +1011,7 @@ fn absurd_x11_shadows_do_not_bring_the_compositor_down() {
         settled(&class, win, None, None, "the window maximized");
         ask(&format!("maximize {id} off"), "the window restored");
         settled(&class, win, Some(made), Some(made), "the window restored");
+        whole(win, made, "the window restored");
         conn.destroy_window(win).unwrap();
         conn.flush().unwrap();
         comp.wait(10, "the window gone", |c| c.window(&class).is_none());
