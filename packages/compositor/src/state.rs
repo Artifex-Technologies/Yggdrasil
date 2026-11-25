@@ -3013,10 +3013,6 @@ impl App {
         if hover != self.bar_hover {
             self.bar_hover = hover;
         }
-        // a drag that ended without its drop reaching us (Smithay always says, but the hand must never stay)
-        if self.dragging && !pointer.is_grabbed() {
-            self.end_drag();
-        }
         let under = self.target_under(pos);
         if under.is_none()
             && !self.dragging
@@ -3585,6 +3581,8 @@ impl DndFocus<App> for PtrFocus {
 }
 
 impl App {
+    /// A drag's look (the closed hand, its icon) ends with its grab: Smithay reports every end of a drag's grab, the pointer's
+    /// or a finger's, to `dropped` or `cancelled`. Pointer motion must not end it: a finger's drag goes on while the mouse moves.
     fn end_drag(&mut self) {
         self.dragging = false;
         self.dnd_icon = None;

@@ -346,6 +346,31 @@ fn a_drag_started_again_with_the_same_press_keeps_the_closed_hand() {
     assert!(!pointer[0].ends_with("\tgrabbing"), "the closed hand gone with the drag: {pointer:?}");
 }
 
+/// A drag whose program goes away (it crashed halfway through) ends with it, though the button is still held: once the pointer
+/// moves on, it is no longer the drag's closed hand.
+#[test]
+fn a_drag_whose_program_goes_away_ends_with_its_closed_hand() {
+    let _l = limit(60, "a drag whose program goes away");
+    let comp = Compositor::start(&["--size", "1000x600"]);
+    let si = {
+        let mut s = comp.connect();
+        let (_sk, _sp) = s.input();
+        let sw = s.window("test.source", "Source");
+        s.draw(&sw, (300, 200), 0xff0000ff);
+        let si = comp.window("test.source").unwrap();
+        drag_from(&comp, &mut s, &sw, si.at, MIME);
+        let pointer = comp.must("pointer-look");
+        assert!(pointer[0].ends_with("\tgrabbing"), "the drag's closed hand: {pointer:?}");
+        si
+        // the connection ends here, the button still held (a crash)
+    };
+    comp.wait(10, "the program's window gone", |comp| comp.window("test.source").is_none());
+    comp.must(&format!("pointer {} {}", si.at.0 + 150, si.at.1 + 100));
+    let pointer = comp.must("pointer-look");
+    assert!(!pointer[0].ends_with("\tgrabbing"), "the closed hand gone with the drag: {pointer:?}");
+    comp.must("release");
+}
+
 /// A drag made with a finger, which the touchscreen then cancels (libinput's touch cancel: the touch was a palm, or the system
 /// took it for a gesture): the drag ends there. The dragging program is told it is cancelled, and the pointer is no longer the
 /// drag's closed hand (on a touchscreen alone no mouse moves to put it right).
@@ -383,6 +408,62 @@ fn a_finger_drag_the_touchscreen_cancels_ends_with_its_closed_hand() {
     until(&mut [&mut s], "the dragging program told its drag is cancelled", |l| l.cancelled);
     let pointer = comp.must("pointer-look");
     assert!(!pointer[0].ends_with("\tgrabbing"), "the closed hand gone with the drag: {pointer:?}");
+}
+
+/// A drag made with a finger keeps its closed hand while the mouse moves (a palm on a 2-in-1's touchpad halfway through): the
+/// mouse is not the drag's. The drag goes on: the window the finger goes over is offered it, and the drop, when the finger
+/// lifts, ends the closed hand.
+#[test]
+fn a_finger_drag_keeps_its_closed_hand_while_the_mouse_moves() {
+    let _l = limit(60, "a finger's drag while the mouse moves");
+    let comp = Compositor::start(&["--size", "1000x600"]);
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    let mut t = comp.connect();
+    let (_tk, _tp) = t.input();
+    let tw = t.window("test.target", "Target");
+    t.draw(&tw, (300, 200), 0xff00ff00);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.source")));
+    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "test.target")));
+    s.roundtrip();
+    t.roundtrip();
+    let (si, ti) = (comp.window("test.source").unwrap(), comp.window("test.target").unwrap());
+    let _tdev = data_device(&mut t);
+    let (x, y) = (si.at.0 + 100, si.at.1 + 100);
+    comp.must(&format!("touch-down 0 {x} {y}"));
+    comp.must("touch-up 0");
+    s.until("the seat has touch", |st| st.seat_caps & 4 != 0);
+    let _touch = s.seat.get_touch(&s.qh, Finger);
+    s.roundtrip();
+
+    // a finger down on the window, and the program drags its text with it: the closed hand, which the mouse moving keeps
+    comp.must(&format!("touch-down 1 {x} {y}"));
+    until(&mut [&mut s], "the finger down", |l| l.touched.is_some());
+    let m: WlDataDeviceManager = s.globals.bind(&s.qh, 3..=3, ()).expect("wl_data_device_manager 3");
+    let device: WlDataDevice = m.get_data_device(&s.seat, &s.qh, ());
+    device.start_drag(Some(&text(&s, &m)), &sw.surface, None, log(|l| l.touched.unwrap()));
+    s.roundtrip();
+    let pointer = comp.must("pointer-look");
+    assert!(pointer[0].ends_with("\tgrabbing"), "the drag's closed hand: {pointer:?}");
+    comp.must("pointer 500 500");
+    let pointer = comp.must("pointer-look");
+    assert!(pointer[0].ends_with("\tgrabbing"), "the closed hand while the mouse moves: {pointer:?}");
+
+    // the finger over the window on the right: it is offered the text, and accepts it
+    comp.must(&format!("touch-move 1 {} {}", ti.at.0 + 150, ti.at.1 + 100));
+    until(&mut [&mut s, &mut t], "the receiver offered the drag", |l| l.entered.is_some() && l.mimes.iter().any(|m| m == MIME));
+    let (serial, offer) = log(|l| l.entered.clone()).unwrap();
+    offer.accept(serial, Some(MIME.into()));
+    offer.set_actions(DndAction::Copy, DndAction::Copy);
+    t.roundtrip();
+    s.roundtrip();
+    // the finger lifts: the drop, and the closed hand goes with the drag
+    comp.must("touch-up 1");
+    until(&mut [&mut s, &mut t], "the drop", |l| l.dropped);
+    let pointer = comp.must("pointer-look");
+    assert!(!pointer[0].ends_with("\tgrabbing"), "the closed hand gone with the drop: {pointer:?}");
 }
 
 // ------------------------------------------------------------------ X11 programs (XDND)
