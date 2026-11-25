@@ -161,5 +161,7 @@ mod tests {
         assert_eq!((r.len(), r[0], r[255]), (256, 0, 32768));
         assert!(r.windows(2).all(|w| w[0] <= w[1]), "never darker for a brighter input");
         assert_eq!(*ramp(1.0, 1024).last().unwrap(), 65535);
+        // no tint is a straight table, each step its own value: what a CRTC gets back when the session ends (udev.rs: untint)
+        assert!(ramp(1.0, 256).iter().enumerate().all(|(i, v)| usize::from(*v) == i * 257));
     }
 }

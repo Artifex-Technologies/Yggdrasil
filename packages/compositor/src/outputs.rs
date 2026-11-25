@@ -4,8 +4,9 @@
 //!   it and asks the compositor to reload): `hl.monitor({ output = "DP-1", mode = "2560x1440@143.97", position = "0x0",
 //!   scale = 1.25 })` and `hl.monitor({ output = "HDMI-A-1", disabled = true })` lines. Read at start, when it changes (the
 //!   config files' watch, configs.rs, and `reload`), and for a screen that appears. A screen it does not name gets its own
-//!   mode and scale (headless: the command line's) and the next place to the right, as the session's `mode = "highrr",
-//!   position = "auto"` rule.
+//!   size at the fastest rate it has for it (`own_mode`: an ultrawide at 3440x1440@180, not the 60 Hz its EDID names first),
+//!   its own scale (headless: the command line's) and the next place to the right, as the Hyprland session does for a screen
+//!   nothing names (packages/session/hyprland/yggdrasil.lua).
 //! - **wlr-output-management** (outputmgmt.rs), the standard protocol (wlr-randr, kanshi): changes for as long as the session runs,
 //!   as on Hyprland.
 //! - the headless backend's own commands: `resize` and `scale`, and screens added and removed (`add-output`, `remove-output`).
@@ -72,20 +73,43 @@ pub struct Rule {
     pub disabled: bool,
 }
 
-/// Hyprland's words for a mode: the fastest (then the largest), or the largest (then the fastest).
+/// Hyprland's words for a mode: the fastest (then the largest), or the largest (then the fastest), both of the screen's own
+/// shape (`pick_mode`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
     HighRr,
     HighRes,
 }
 
-/// The mode of `modes` that `pick` asks for.
-pub fn pick_mode(modes: &[Mode], pick: Pick) -> Option<Mode> {
+/// Two sizes of the same shape (aspect ratio) within 1 %: 1366x768 and 1920x1080 are, and so are 2560x1080 and 3440x1440 (both
+/// sold as 21:9); DCI's 4096x2160 and 3840x2160 are not, nor 800x600 and 2560x2880.
+fn same_shape(a: Mode, b: Mode) -> bool {
+    let (aw, ah, bw, bh) = (i64::from(a.size.w), i64::from(a.size.h), i64::from(b.size.w), i64::from(b.size.h));
+    aw > 0 && ah > 0 && bw > 0 && bh > 0 && (aw * bh - bw * ah).abs() * 100 <= aw * bh
+}
+
+/// The mode of `modes` that `pick` asks for, among the modes of the shape of the screen's own (`preferred`) mode: Hyprland's
+/// `highrr` is the fastest mode of any size and `highres` the largest, which picked a monitor's 800x600 at 60.32 Hz over its
+/// own 2560x2880 at 59.98 and would pick the cinema 4096x2160 a monitor accepts, stretched to its own shape.
+pub fn pick_mode(modes: &[Mode], preferred: Mode, pick: Pick) -> Option<Mode> {
     let area = |m: &Mode| i64::from(m.size.w) * i64::from(m.size.h);
+    let shaped = modes.iter().copied().filter(|m| same_shape(*m, preferred));
     match pick {
-        Pick::HighRr => modes.iter().copied().max_by_key(|m| (m.refresh, area(m))),
-        Pick::HighRes => modes.iter().copied().max_by_key(|m| (area(m), m.refresh)),
+        Pick::HighRr => shaped.max_by_key(|m| (m.refresh, area(m))),
+        Pick::HighRes => shaped.max_by_key(|m| (area(m), m.refresh)),
     }
+}
+
+/// The mode of a screen nothing names: its own (`preferred`) size at the fastest rate it has for it, the preferred mode itself
+/// when nothing at that size is faster. The Hyprland session's rule (yggdrasil.lua's `fastest_own`): a monitor's EDID names
+/// 60 Hz first even when it runs at 144 or 180.
+pub fn own_mode(modes: &[Mode], preferred: Mode) -> Mode {
+    modes
+        .iter()
+        .copied()
+        .filter(|m| m.size == preferred.size && m.refresh > preferred.refresh)
+        .max_by_key(|m| m.refresh)
+        .unwrap_or(preferred)
 }
 
 /// A turn by wl_output's number (0 to 7).
@@ -236,15 +260,17 @@ pub fn parse_rules(text: &str) -> Vec<Rule> {
     rules
 }
 
-/// What the rules say a screen is to be: the last rule naming it, else the last for every screen, else what it has by itself.
-/// `modes` are the screen's own (for "highrr" and "highres").
+/// What the rules say a screen is to be: the last rule naming it, else the last for every screen, else what it has by itself
+/// (its own size at its fastest rate there, `own_mode`). `modes` are the screen's own (for that and "highrr" and "highres").
+/// A rule without a mode keeps the preferred one, as on Hyprland (whose session works out the fastest rate only for a screen
+/// no rule names), so monitors.lua means the same on both.
 pub fn want_from_rules(rules: &[Rule], name: &str, preferred: Mode, modes: &[Mode], default_scale: f64) -> Want {
     let rule = rules.iter().rev().find(|r| r.output == name).or_else(|| rules.iter().rev().find(|r| r.output.is_empty()));
     match rule {
-        None => Want { enabled: true, mode: preferred, scale: default_scale, at: None, transform: None },
+        None => Want { enabled: true, mode: own_mode(modes, preferred), scale: default_scale, at: None, transform: None },
         Some(r) => Want {
             enabled: !r.disabled,
-            mode: r.mode.or_else(|| r.pick.and_then(|p| pick_mode(modes, p))).unwrap_or(preferred),
+            mode: r.mode.or_else(|| r.pick.and_then(|p| pick_mode(modes, preferred, p))).unwrap_or(preferred),
             scale: r.scale.unwrap_or(default_scale),
             at: r.at,
             transform: r.transform,
@@ -354,6 +380,18 @@ impl App {
     /// The screens whose link went and that are still kept (the hardware backend gives one back its CRTC when it returns).
     pub fn leaving_outputs(&self) -> Vec<Output> {
         self.heads.leaving.iter().filter_map(|(n, _)| self.head(n)).map(|h| h.output.clone()).collect()
+    }
+
+    /// The hardware backend could not set the mode asked for a screen (its GPU refused it, or the screen has no such mode): the
+    /// screen is put back at `kept`,
+    /// the mode its CRTC still has, as a change like any other (wl_output, Settings through wlr-output-management, X11 programs,
+    /// the layout and the windows on it), so nothing goes on showing a mode it does not run.
+    pub fn mode_kept(&mut self, name: &str, kept: Mode) {
+        let Some(h) = self.head(name) else { return };
+        let w = Want { mode: kept, ..h.now() };
+        if let Err(e) = self.configure_outputs(vec![(name.to_string(), w)], false) {
+            eprintln!("yggdrasil-compositor: {name}: not put back at the mode it has: {e}");
+        }
     }
 
     /// Set screens to what `changes` says (the others stay as they are). With `test_only` nothing changes: only whether it could.
@@ -603,24 +641,91 @@ mod tests {
         assert_eq!((parse_mode("preferred"), parse_mode("0x10"), parse_mode("10x10@-1")), (None, None, None));
     }
 
+    /// "WxH@Hz" into modes, the first the monitor's own (preferred), as `hyprctl monitors all` lists them
+    fn modes(list: &[&str]) -> Vec<Mode> {
+        list.iter().map(|s| parse_mode(s).unwrap()).collect()
+    }
+
+    /// An ultrawide's modes (an X34, as Hyprland listed them on 2026-11-13; packages/session/tests/monitor-modes.lua): 60 Hz
+    /// first, the fast modes at its own size later; and two added for the test, the cinema (DCI) 4096x2160 a TV-minded EDID
+    /// lists and a 2560x1080 of the same shape within 1 %.
+    fn ultrawide() -> Vec<Mode> {
+        modes(&[
+            "3440x1440@60.00",
+            "3840x2160@59.94",
+            "3840x2160@29.97",
+            "2560x1440@59.95",
+            "1920x1080@60.00",
+            "3440x1440@180.00",
+            "3440x1440@143.85",
+            "3440x1440@100.00",
+            "3440x1440@85.00",
+            "3440x1440@75.00",
+            "4096x2160@60.00",
+            "2560x1080@119.88",
+        ])
+    }
+
+    /// A 2560x2880 monitor's (an LG DualUp, the same day): its own mode at 59.98 Hz, and an 800x600 at 60.32 Hz.
+    fn tall() -> Vec<Mode> {
+        modes(&[
+            "2560x2880@59.98",
+            "1920x1080@60.00",
+            "1920x1080@59.94",
+            "1920x1080@50.00",
+            "1920x1080@29.97",
+            "1280x720@59.94",
+            "1280x720@50.00",
+            "1024x768@60.00",
+            "800x600@60.32",
+            "720x576@50.00",
+            "720x480@59.94",
+        ])
+    }
+
     #[test]
-    fn highrr_takes_the_fastest_mode_and_highres_the_largest() {
-        // an ultrawide's list: 60 Hz first (the EDID's preferred), the fast modes later
-        let modes = [
-            mode(3440, 1440, 59_999),
-            mode(3440, 1440, 143_855),
-            mode(3440, 1440, 180_000),
-            mode(2560, 1080, 119_880),
-            mode(5120, 1440, 30_000),
-        ];
+    fn a_screen_nothing_names_runs_at_its_own_size_at_its_fastest_rate() {
+        // an empty monitors.lua (or none): the Hyprland session's rule, not the 60 Hz the EDID names first
+        let (uw, t) = (ultrawide(), tall());
+        assert_eq!(want_from_rules(&[], "DP-1", uw[0], &uw, 1.0).mode, mode(3440, 1440, 180_000));
+        assert_eq!(want_from_rules(&[], "DP-3", t[0], &t, 1.0).mode, mode(2560, 2880, 59_980), "not 800x600@60.32");
+        // a rule for another screen leaves this one to its own too
+        let other = parse_rules("hl.monitor({ output = \"HDMI-A-1\", mode = \"1920x1080@60\" })\n");
+        assert_eq!(want_from_rules(&other, "DP-1", uw[0], &uw, 1.0).mode, mode(3440, 1440, 180_000));
+        // a laptop's panel whose own mode is already its fastest, and one listing a slower rate at its size: its own
+        let panel = modes(&["1920x1200@60.003", "1920x1200@48.002", "1280x800@60.00"]);
+        assert_eq!(want_from_rules(&[], "eDP-1", panel[0], &panel, 1.25).mode, panel[0]);
+        // headless (one mode, or none known): the command line's
+        assert_eq!(want_from_rules(&[], "HEADLESS-1", mode(1600, 900, 60_000), &[], 1.0).mode, mode(1600, 900, 60_000));
+        // a rule naming the screen without a mode keeps the preferred one, as Hyprland does with it
+        let named = parse_rules("hl.monitor({ output = \"DP-1\", scale = 1.25 })\n");
+        assert_eq!(want_from_rules(&named, "DP-1", uw[0], &uw, 1.0).mode, uw[0]);
+        let words = parse_rules("hl.monitor({ output = \"DP-1\", mode = \"preferred\" })\n");
+        assert_eq!(want_from_rules(&words, "DP-1", uw[0], &uw, 1.0).mode, uw[0]);
+    }
+
+    #[test]
+    fn highrr_and_highres_stay_at_the_screens_own_shape() {
+        let (uw, t) = (ultrawide(), tall());
         let rules = parse_rules("hl.monitor({ output = \"\", mode = \"highrr\", position = \"auto\", scale = 1 })\n");
         assert_eq!(rules[0].pick, Some(Pick::HighRr));
-        assert_eq!(want_from_rules(&rules, "DP-1", modes[0], &modes, 1.0).mode, mode(3440, 1440, 180_000));
-        let res = parse_rules("hl.monitor({ output = \"DP-1\", mode = \"highres\" })\n");
-        assert_eq!(want_from_rules(&res, "DP-1", modes[0], &modes, 1.0).mode, mode(5120, 1440, 30_000));
-        // no modes known (headless), or a word it does not know: the screen's own
-        assert_eq!(want_from_rules(&rules, "DP-1", modes[0], &[], 1.0).mode, modes[0]);
-        let other = parse_rules("hl.monitor({ output = \"DP-1\", mode = \"preferred\" })\n");
-        assert_eq!(want_from_rules(&other, "DP-1", modes[0], &modes, 1.0).mode, modes[0]);
+        assert_eq!(want_from_rules(&rules, "DP-1", uw[0], &uw, 1.0).mode, mode(3440, 1440, 180_000));
+        assert_eq!(want_from_rules(&rules, "DP-3", t[0], &t, 1.0).mode, mode(2560, 2880, 59_980), "not 800x600@60.32");
+        let res = parse_rules("hl.monitor({ output = \"\", mode = \"highres\" })\n");
+        assert_eq!(res[0].pick, Some(Pick::HighRes));
+        // the largest of its own shape: not the 3840x2160 it scales down, nor DCI's 4096x2160; the fastest of that size
+        assert_eq!(want_from_rules(&res, "DP-1", uw[0], &uw, 1.0).mode, mode(3440, 1440, 180_000));
+        assert_eq!(want_from_rules(&res, "DP-3", t[0], &t, 1.0).mode, mode(2560, 2880, 59_980));
+        // a 4K TV's own shape takes in 3840x2160 and 1920x1080, never the cinema 4096x2160
+        let tv = modes(&["3840x2160@60.00", "4096x2160@60.00", "1920x1080@120.00", "3840x2160@30.00"]);
+        assert_eq!(pick_mode(&tv, tv[0], Pick::HighRes), Some(mode(3840, 2160, 60_000)));
+        assert_eq!(pick_mode(&tv, tv[0], Pick::HighRr), Some(mode(1920, 1080, 120_000)), "the fastest of the same shape");
+        // no modes known (headless): the screen's own
+        assert_eq!(want_from_rules(&rules, "DP-1", uw[0], &[], 1.0).mode, uw[0]);
+        // the shapes, within 1 %
+        let s = |a: &str, b: &str| same_shape(parse_mode(a).unwrap(), parse_mode(b).unwrap());
+        assert!(s("1920x1080", "1366x768") && s("3440x1440", "2560x1080") && s("2560x2880", "2560x2880"));
+        assert!(!s("3840x2160", "4096x2160") && !s("2560x2880", "800x600") && !s("3440x1440", "5120x1440"));
+        assert!(!s("1920x1080", "1920x1200"), "16:9 is not 16:10");
     }
 }

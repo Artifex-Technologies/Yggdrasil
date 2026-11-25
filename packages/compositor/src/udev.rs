@@ -12,8 +12,12 @@
 //!   "non-desktop") gets a CRTC, the laptop's own (eDP, LVDS, DSI) first, and becomes an `Output` named as the kernel names it
 //!   (DP-1, HDMI-A-1, eDP-1, Virtual-1) with all its modes, its size in millimetres and the make and model from its EDID;
 //!   Settings > Displays' monitors.lua then sets its mode, scale and place (outputs.rs, the same code as headless; a screen it
-//!   gives no scale gets one from its size, laptop.rs), and a mode changed later (wlr-output-management) is set on the CRTC at
-//!   the next frame (a mode within half a hertz of the one asked: 60 for a panel's 60.003 Hz). A screen unplugged gives its CRTC
+//!   does not name runs at its own size at the fastest rate it has for it, and one it gives no scale gets one from its size,
+//!   laptop.rs). A laptop's panel mounted turned in its case (a handheld's, a tablet's: the connector's "panel orientation")
+//!   starts turned upright unless monitors.lua turns it. A mode changed later (wlr-output-management) is set on the CRTC at
+//!   the next frame (a mode within half a hertz of the one asked: 60 for a panel's 60.003 Hz); one the screen cannot have (its
+//!   GPU refuses it, at the first modeset or later, or it is not one of its modes) leaves the CRTC as it is, and the screen is
+//!   put back at that mode, so programs and Settings never see a mode it does not run. A screen unplugged gives its CRTC
 //!   back (its DrmCompositor goes, which switches the CRTC off) but stays a screen for 2 s (outputs.rs, UNPLUG_GRACE): a monitor
 //!   whose link bounces comes back with its windows and panels, only its CRTC set up again; one plugged in is set up once its
 //!   link has stayed for 0.7 s (SETTLE). A connector
@@ -31,8 +35,10 @@
 //!   the program's GPU buffer: grim, yggdrasil-shot and the panel's previews.
 //! - **Drawing**: on a GPU with hardware EGL, GBM buffers drawn with OpenGL ES (GlesRenderer); otherwise (no 3D: a plain
 //!   virtual GPU, a simple framebuffer, YGGDRASIL_COMPOSITOR_RENDERER=pixman) dumb buffers drawn in software (pixman), so a
-//!   machine with no working GPU driver still gets a picture. Each screen has its own Smithay `DrmCompositor`, which puts the
-//!   pointer on the cursor plane when it can.
+//!   machine with no working GPU driver still gets a picture. The GL context is asked for at high priority (the default one
+//!   when the driver refuses it); each GPU's line at the start says what EGL granted. Each screen has its own Smithay
+//!   `DrmCompositor`, which puts the pointer on the cursor plane when it can (YGGDRASIL_COMPOSITOR_CURSOR_PLANE=0: never, the
+//!   pointer drawn into each frame).
 //! - **Frames**: drawn only when something changed (`App::wake`), then not again before that frame was shown (the page flip's
 //!   vblank event); a frame with no change is not even sent, and a run of frames with no change waits a refresh between them.
 //!   Nothing is drawn and no timer runs while nothing changes.
@@ -41,7 +47,8 @@
 //!   buttons and a touchpad's taps, click method, scrolling and the rest per device and per kind (input.rs), and its scroll
 //!   factor is applied here. The touchscreen and the pen are the laptop screen's (touch.rs).
 //! - **The control socket** (control.rs) is there too, for Yggdrasil's own tools (yggdrasil-wm); it makes no input.
-//! - **Ending**: `ctl quit`, SIGTERM, SIGINT or SIGHUP end it cleanly: the session is closed and the console comes back.
+//! - **Ending**: `ctl quit`, SIGTERM, SIGINT or SIGHUP end it cleanly: the CRTCs it tinted (Night Light) get a straight gamma
+//!   table back so the next session is not tinted, the session is closed and the console comes back.
 //!
 //! - **Waiting for programs' GPUs** (sync.rs): a commit with a GPU buffer is applied once the buffer is drawn, through
 //!   explicit sync (linux-drm-syncobj-v1, which NVIDIA needs) where the GPU can, the buffer's own fences otherwise.
@@ -67,6 +74,7 @@ use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
 use smithay::backend::drm::output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements};
 use smithay::backend::drm::VrrSupport;
 use smithay::backend::drm::{DrmDevice, DrmDeviceFd, DrmError, DrmEvent, DrmNode, NodeType};
+use smithay::backend::egl::context::ContextPriority;
 use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
 use smithay::backend::input::InputEvent;
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
@@ -82,7 +90,7 @@ use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{EventLoop, Interest, LoopHandle, Mode as LoopMode, PostAction, RegistrationToken};
-use smithay::reexports::drm::control::{connector, crtc, Device as _, ModeTypeFlags};
+use smithay::reexports::drm::control::{connector, crtc, property, Device as _, ModeTypeFlags, ResourceHandle};
 use smithay::reexports::input::{AccelProfile, DeviceCapability, Libinput};
 use smithay::wayland::dmabuf::DmabufFeedback;
 
@@ -168,8 +176,8 @@ struct Screen {
     modes: Vec<smithay::reexports::drm::control::Mode>,
     /// the mode the CRTC is set to
     mode: Mode,
-    /// a mode asked for that the screen has not (or that did not set): told once, not tried again until another is asked
-    missed: Option<Mode>,
+    /// the mode its GPU refused when it was set up (`scan`), which its first frame does not ask again (`follow_mode`)
+    refused: Option<Mode>,
     /// a frame was queued and its page flip has not happened yet
     queued: bool,
     /// something changed since it was last drawn
@@ -230,6 +238,9 @@ struct Device {
     settling: Vec<(connector::Handle, Instant)>,
     /// a look at the connectors is due (a timer runs for the settling ones)
     rescan_pending: bool,
+    /// the CRTCs whose gamma table this session tinted (Night Light) and has not set straight since: straightened before the
+    /// session lets the GPU go (`untint`), a CRTC whose screen was unplugged too
+    tinted: HashSet<crtc::Handle>,
 }
 
 /// How long a screen just plugged in waits before its first modeset: a monitor that is hunting between its inputs (or a cable
@@ -282,6 +293,11 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let (chosen, why) =
         render_gpu(boot.as_deref(), &all, wanted.as_deref(), |p| has_screen(p, Path::new("/sys/class/drm"))).ok_or("no GPU found")?;
     eprintln!("yggdrasil-compositor: drawing on {} ({why})", chosen.display());
+    if !cursor_plane() {
+        eprintln!(
+            "yggdrasil-compositor: the pointer is drawn into each frame, never on a cursor plane (YGGDRASIL_COMPOSITOR_CURSOR_PLANE)"
+        );
+    }
     let primary = DrmNode::from_path(&chosen).map_err(|e| format!("{}: {e}", chosen.display()))?;
     let udev_backend = UdevBackend::new(&seat)?;
 
@@ -527,11 +543,50 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let _ = std::fs::remove_file(runtime.join(&app.socket));
     let _ = std::fs::remove_file(runtime.join(format!("{}.lock", app.socket)));
     let mut b = udev.borrow_mut();
+    // before the GPUs are let go: no tint of ours stays for the session after this one
+    if b.session.is_active() {
+        for d in b.devices.values() {
+            untint(d);
+        }
+    } else if b.devices.values().any(|d| !d.tinted.is_empty()) {
+        eprintln!("yggdrasil-compositor: another terminal has the screens: their tint stays until the next session sets its own");
+    }
     for (_, d) in b.devices.drain() {
         event_loop.handle().remove(d.token);
     }
     eprintln!("yggdrasil-compositor: ended");
     Ok(())
+}
+
+/// Before the session lets a GPU go: every CRTC it tinted (Night Light) gets a straight gamma table back, and one of its CRTCs
+/// without a gamma table has a colour matrix (CTM) or degamma table someone left on it cleared, so the session after this one
+/// (Hyprland, the console) is not tinted: the kernel keeps a CRTC's colour tables for whoever takes the GPU next. Gamescope
+/// clears them on exit the same way. (On an atomic driver the kernel's legacy gamma call also clears the CTM and degamma table.)
+fn untint(dev: &Device) {
+    let drm = gpu_drm(&dev.gpu);
+    let crtcs: HashSet<crtc::Handle> = dev.screens.keys().chain(&dev.tinted).copied().collect();
+    for crtc in crtcs {
+        let what = dev.screens.get(&crtc).map(|s| s.output.name()).unwrap_or_else(|| format!("{crtc:?}"));
+        let len = drm.get_crtc(crtc).map(|c| c.gamma_length() as usize).unwrap_or(0);
+        if len >= 2 {
+            if dev.tinted.contains(&crtc) {
+                let straight = crate::ctm::ramp(1.0, len);
+                match drm.set_gamma(crtc, &straight, &straight, &straight) {
+                    Ok(()) => eprintln!("yggdrasil-compositor: {what}: tint taken off"),
+                    Err(e) => eprintln!("yggdrasil-compositor: {what}: the tint was not taken off: {e}"),
+                }
+            }
+            continue;
+        }
+        for name in ["CTM", "DEGAMMA_LUT"] {
+            if let Some((p, _)) = property(drm, crtc, name).filter(|(_, v)| *v != 0) {
+                match drm.set_property(crtc, p.handle(), 0) {
+                    Ok(()) => eprintln!("yggdrasil-compositor: {what}: {name} cleared"),
+                    Err(e) => eprintln!("yggdrasil-compositor: {what}: {name} not cleared: {e}"),
+                }
+            }
+        }
+    }
 }
 
 /// The commands, for an unknown one's answer.
@@ -564,6 +619,24 @@ fn parse_vrr(v: Option<&str>) -> VrrPolicy {
 fn vrr_policy() -> VrrPolicy {
     thread_local!(static P: VrrPolicy = parse_vrr(std::env::var("YGGDRASIL_COMPOSITOR_VRR").ok().as_deref()));
     P.with(|p| *p)
+}
+
+/// What the pointer's element is to Smithay's DrmCompositor: a cursor, which it puts on the GPU's cursor plane (or an overlay
+/// plane) when it can; or, when YGGDRASIL_COMPOSITOR_CURSOR_PLANE says 0 (no, off, false), an element like any other, which no
+/// plane takes, so the pointer is drawn into each frame with the rest. One restart with it tells a driver's cursor-plane bug
+/// from ours (a pointer that flickers, lags, shows twice or leaves a trail): gamescope keeps the cursor plane off on AMD by
+/// default for known driver issues. A screen with a visible pointer then never shows a full screen picture directly (scanout
+/// needs the pointer on a plane of its own).
+fn pointer_kind(cursor_plane: bool) -> Kind {
+    match cursor_plane {
+        true => Kind::Cursor,
+        false => Kind::Unspecified,
+    }
+}
+
+fn cursor_plane() -> bool {
+    thread_local!(static C: bool = crate::switched_on(std::env::var("YGGDRASIL_COMPOSITOR_CURSOR_PLANE").ok().as_deref()));
+    C.with(|c| *c)
 }
 
 fn vrr_wanted(policy: VrrPolicy, fullscreen: bool) -> bool {
@@ -639,13 +712,22 @@ fn device_added(udev: &Rc<RefCell<Udev>>, handle: &LoopHandle<'static, App>, nod
         })
         .map_err(|e| e.to_string())?;
     let kind = match &gpu {
-        Gpu::Gles { .. } => "OpenGL ES",
-        Gpu::Pixman { .. } => "software (pixman)",
+        Gpu::Gles { renderer, .. } => format!("OpenGL ES ({})", priority_words(renderer.egl_context().get_context_priority())),
+        Gpu::Pixman { .. } => "software (pixman)".into(),
     };
     eprintln!("yggdrasil-compositor: {} draws with {kind}", path.display());
     let known = gpu_drm(&gpu).resource_handles().map(|r| r.connectors().to_vec()).unwrap_or_default();
-    let device =
-        Device { node, gpu, screens: HashMap::new(), token, known, was_connected: vec![], settling: vec![], rescan_pending: false };
+    let device = Device {
+        node,
+        gpu,
+        screens: HashMap::new(),
+        token,
+        known,
+        was_connected: vec![],
+        settling: vec![],
+        rescan_pending: false,
+        tinted: HashSet::new(),
+    };
     b.devices.insert(node, device);
     drop(b);
     Ok(scan(udev, node, &[], &[], false).0)
@@ -698,10 +780,33 @@ fn gles(fd: &DrmDeviceFd) -> Result<(GlesRenderer, GbmDevice<DrmDeviceFd>), Stri
     if device.is_software() {
         return Err("EGL is software only".into());
     }
-    let context = EGLContext::new(&display).map_err(|e| format!("EGL context: {e}"))?;
+    let context = with_fallback(|| EGLContext::new_with_priority(&display, ContextPriority::High), || EGLContext::new(&display))
+        .map_err(|e| format!("EGL context: {e}"))?;
     // SAFETY: the context is current only on this thread
     let renderer = unsafe { GlesRenderer::new(context) }.map_err(|e| format!("OpenGL ES: {e}"))?;
     Ok((renderer, gbm))
+}
+
+/// The compositor's GL context at high priority, so the GPU runs its frames ahead of a game's that keeps it busy (gamescope
+/// asks for the same): `high` first, and `plain` (the default priority) when the driver refuses it (amdgpu lets only the DRM
+/// master or a process with CAP_SYS_NICE have it; Mesa then fails to make the context). EGL may also grant less than asked
+/// without failing: `priority_words` says what it reports.
+fn with_fallback<C, E: std::fmt::Display>(high: impl FnOnce() -> Result<C, E>, plain: impl FnOnce() -> Result<C, E>) -> Result<C, E> {
+    high().or_else(|e| {
+        eprintln!("yggdrasil-compositor: a high-priority GL context was refused ({e}): the default priority");
+        plain()
+    })
+}
+
+/// A GL context's priority as EGL reports it, for the line each GPU prints at the start.
+fn priority_words(p: Option<ContextPriority>) -> &'static str {
+    match p {
+        Some(ContextPriority::RealTime) => "GPU priority realtime",
+        Some(ContextPriority::High) => "GPU priority high",
+        Some(ContextPriority::Medium) => "GPU priority default: high not granted",
+        Some(ContextPriority::Low) => "GPU priority low",
+        None => "GPU priority not reported: the driver has no EGL_IMG_context_priority",
+    }
 }
 
 /// Programs' GPU buffers (linux-dmabuf) through the boot GPU's renderer, its render node named in the default feedback; the
@@ -772,11 +877,39 @@ fn is_internal(c: &connector::Info) -> bool {
     matches!(c.interface(), connector::Interface::EmbeddedDisplayPort | connector::Interface::LVDS | connector::Interface::DSI)
 }
 
+/// A DRM object's property by its name (a connector's "EDID", a CRTC's "CTM"): what the property is, and its value now.
+fn property<T: ResourceHandle>(drm: &DrmDevice, handle: T, name: &str) -> Option<(property::Info, property::RawValue)> {
+    let props = drm.get_properties(handle).ok()?;
+    let (ids, values) = props.as_props_and_values();
+    ids.iter().zip(values).find_map(|(id, v)| drm.get_property(*id).ok().filter(|p| p.name().to_str() == Ok(name)).map(|p| (p, *v)))
+}
+
 /// A VR headset says it is not a desktop screen (it is leased to the program that drives it; leasing comes later).
 fn non_desktop(drm: &DrmDevice, conn: connector::Handle) -> bool {
-    let Ok(props) = drm.get_properties(conn) else { return false };
-    let (ids, values) = props.as_props_and_values();
-    ids.iter().zip(values).any(|(id, v)| drm.get_property(*id).is_ok_and(|p| p.name().to_str() == Ok("non-desktop") && *v != 0))
+    property(drm, conn, "non-desktop").is_some_and(|(_, v)| v != 0)
+}
+
+/// How an internal panel sits in its case, from its connector's "panel orientation" (the kernel's, from the firmware or its
+/// quirks table for tablets and handhelds whose panel is mounted turned), as the turn that shows the picture upright. None when
+/// the connector has no such property or says something unknown.
+fn panel_orientation(drm: &DrmDevice, conn: connector::Handle) -> Option<(String, Transform)> {
+    let (info, v) = property(drm, conn, "panel orientation")?;
+    let property::ValueType::Enum(values) = info.value_type() else { return None };
+    let word = values.get_value_from_raw_value(v)?.name().to_str().ok()?.to_string();
+    panel_turn(&word).map(|t| (word, t))
+}
+
+/// The kernel's words for a panel's orientation as a turn (wl_output's, as monitors.lua's `transform`): a panel whose left side
+/// is up shows the picture upright turned 90° (1), one whose right side is up turned 270° (3); KWin and Mutter turn them
+/// the same way.
+fn panel_turn(word: &str) -> Option<Transform> {
+    match word {
+        "Normal" => Some(Transform::Normal),
+        "Upside Down" => Some(Transform::_180),
+        "Left Side Up" => Some(Transform::_90),
+        "Right Side Up" => Some(Transform::_270),
+        _ => None,
+    }
 }
 
 /// A free CRTC for a connector (one its encoders can drive, not used by another screen of this GPU).
@@ -896,6 +1029,17 @@ fn scan(
                     o.add_mode(Mode::from(*m));
                 }
                 o.set_preferred(Mode::from(preferred));
+                // a panel mounted turned in its case (a handheld's, a tablet's) starts upright: its turn until monitors.lua
+                // gives one (outputs.rs keeps a screen's turn while nothing sets another; the tablet watcher's still wins)
+                if is_internal(&conn) {
+                    if let Some((word, t)) = panel_orientation(drm, conn.handle()).filter(|(_, t)| *t != Transform::Normal) {
+                        eprintln!(
+                            "yggdrasil-compositor: {name}: its panel sits turned ('panel orientation' {word}): turned {} unless monitors.lua turns it",
+                            crate::outputs::transform_number(t)
+                        );
+                        o.change_current_state(None, Some(t), None, None);
+                    }
+                }
                 o
             }
         };
@@ -910,44 +1054,33 @@ fn scan(
             want.enabled.then(|| crate::outputs::closest_mode(&offered, want.mode)).flatten()
         };
         let start = had.or_else(ruled).and_then(|m| modes.iter().find(|x| Mode::from(**x) == m).copied()).unwrap_or(preferred);
-        let mode = Mode::from(start);
-        if output.current_mode() != Some(mode) {
+        if output.current_mode() != Some(Mode::from(start)) {
             // the mode only: a screen keeps its turn (outputs.rs)
-            output.change_current_state(Some(mode), None, None, None);
+            output.change_current_state(Some(Mode::from(start)), None, None, None);
         }
         let planes = drm.planes(&crtc).ok();
         let render_formats = match &dev.gpu {
             Gpu::Gles { renderer, .. } => Some(renderer.dmabuf_formats()),
             Gpu::Pixman { .. } => None,
         };
-        let made = match &mut dev.gpu {
-            Gpu::Gles { renderer, manager } => manager
-                .lock()
-                .initialize_output::<_, Elem>(
-                    crtc,
-                    start,
-                    &[conn.handle()],
-                    &output,
-                    planes,
-                    &mut **renderer,
-                    &DrmOutputRenderElements::default(),
-                )
-                .map(Out::Gles)
-                .map_err(|e| e.to_string()),
-            Gpu::Pixman { renderer, manager } => manager
-                .lock()
-                .initialize_output::<_, PixElem>(
-                    crtc,
-                    start,
-                    &[conn.handle()],
-                    &output,
-                    planes,
-                    &mut **renderer,
-                    &DrmOutputRenderElements::default(),
-                )
-                .map(Out::Pixman)
-                .map_err(|e| e.to_string()),
-        };
+        let mut made = set_up(&mut dev.gpu, crtc, start, conn.handle(), &output, planes.clone());
+        // a fast mode the GPU refuses at this first modeset (two fast monitors can need more than it has together): the
+        // screen's own mode on the CRTC, so it still gets a picture. The output keeps asking the refused one until its first
+        // frame, which puts the screen back at the CRTC's mode through the App (follow_mode, App::mode_kept: programs,
+        // Settings and the layout told) without asking the GPU for it again; add_output's rules would ask it again otherwise
+        let mut mode = Mode::from(start);
+        let mut refused = None;
+        if let (Err(e), true) = (&made, start != preferred) {
+            eprintln!(
+                "yggdrasil-compositor: {name}: {}x{} at {} Hz did not set ({e}): its own mode instead",
+                mode.size.w,
+                mode.size.h,
+                mode.refresh as f64 / 1000.0
+            );
+            refused = Some(mode);
+            mode = Mode::from(preferred);
+            made = set_up(&mut dev.gpu, crtc, preferred, conn.handle(), &output, planes);
+        }
         match made {
             Ok(drm) => {
                 let vrr = match &drm {
@@ -985,7 +1118,7 @@ fn scan(
                         drm,
                         modes,
                         mode,
-                        missed: None,
+                        refused,
                         queued: false,
                         dirty: true,
                         not_before: Instant::now(),
@@ -1001,6 +1134,29 @@ fn scan(
         }
     }
     (added, gone, again)
+}
+
+/// A screen's DrmCompositor on its CRTC at `mode` (Smithay's test commits find whether the GPU takes it).
+fn set_up(
+    gpu: &mut Gpu,
+    crtc: crtc::Handle,
+    mode: smithay::reexports::drm::control::Mode,
+    conn: connector::Handle,
+    output: &Output,
+    planes: Option<smithay::backend::drm::Planes>,
+) -> Result<Out, String> {
+    match gpu {
+        Gpu::Gles { renderer, manager } => manager
+            .lock()
+            .initialize_output::<_, Elem>(crtc, mode, &[conn], output, planes, &mut **renderer, &DrmOutputRenderElements::default())
+            .map(Out::Gles)
+            .map_err(|e| e.to_string()),
+        Gpu::Pixman { renderer, manager } => manager
+            .lock()
+            .initialize_output::<_, PixElem>(crtc, mode, &[conn], output, planes, &mut **renderer, &DrmOutputRenderElements::default())
+            .map(Out::Pixman)
+            .map_err(|e| e.to_string()),
+    }
 }
 
 /// A GPU's connectors changed (a screen plugged in or out, the lid): screens are added and removed to match. The new ones come
@@ -1242,13 +1398,7 @@ fn device_removed(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode) {
 
 /// The screen's make and model from its EDID (the manufacturer's three letters and the monitor name, else the product code).
 fn edid_names(drm: &DrmDevice, conn: connector::Handle) -> (String, String) {
-    let blob = drm.get_properties(conn).ok().and_then(|props| {
-        let (ids, values) = props.as_props_and_values();
-        ids.iter().zip(values).find_map(|(id, v)| {
-            let p = drm.get_property(*id).ok()?;
-            (p.name().to_str() == Ok("EDID") && *v != 0).then_some(*v)
-        })
-    });
+    let blob = property(drm, conn, "EDID").map(|(_, v)| v).filter(|v| *v != 0);
     let data = blob.and_then(|b| drm.get_property_blob(b).ok());
     data.as_deref().and_then(parse_edid).unwrap_or_else(|| ("Unknown".into(), "Unknown".into()))
 }
@@ -1418,7 +1568,8 @@ fn pointer_rect(pic: &crate::pointer::Picture, scale: f64) -> (Rectangle<f64, Lo
     (Rectangle::from_size((pic.w as f64, pic.h as f64).into()), (logical(pic.w), logical(pic.h)).into())
 }
 
-/// The pointer for this screen, as an element on top (the DrmCompositor puts it on the cursor plane when it can).
+/// The pointer for this screen, as an element on top (the DrmCompositor puts it on the cursor plane when it can, unless
+/// YGGDRASIL_COMPOSITOR_CURSOR_PLANE=0: `pointer_kind`).
 macro_rules! pointer_element {
     ($cache:expr, $app:expr, $renderer:expr, $output:expr) => {{
         match $app.pointer_picture($output) {
@@ -1449,7 +1600,7 @@ macro_rules! pointer_element {
                     None,
                     Some(src),
                     Some(size),
-                    Kind::Cursor,
+                    pointer_kind(cursor_plane()),
                 )
                 .ok()
             }
@@ -1488,32 +1639,52 @@ macro_rules! frame {
     }};
 }
 
-/// Set the mode Settings chose (when it changed) on the CRTC.
+/// The mode a screen's output asks (`asked`: Settings', monitors.lua's) against the one its CRTC has (`now`): None when they
+/// are the same, else the mode asked and either where its connector's mode within half a hertz of it is in `offered` (the
+/// connector's modes, as Smithay's; outputs.rs matched it so already) or why the screen cannot have it. `refused` is the mode its
+/// GPU did not take when the screen was set up (`scan`): not asked of it again.
+fn mode_to_set(asked: Option<Mode>, now: Mode, refused: Option<Mode>, offered: &[Mode]) -> Option<(Mode, Result<usize, &'static str>)> {
+    let want = asked.filter(|w| *w != now)?;
+    if refused == Some(want) {
+        return Some((want, Err("its GPU did not take it when the screen was set up")));
+    }
+    let at = crate::outputs::closest_mode(offered, want).and_then(|c| offered.iter().position(|m| *m == c));
+    Some((want, at.ok_or("not one of its modes")))
+}
+
+/// Set the mode Settings chose (when it changed) on the CRTC. True when the screen cannot have it (its GPU refuses it, or it is
+/// not one of its modes): the CRTC stays at the mode it has, which the screen is to be put back at (`App::mode_kept`), so a
+/// refused mode is neither shown to programs nor tried again on every frame. The mode refused at the set-up counts only at the
+/// first frame (asked again by add_output's rules); asked later, it is tried as any other.
 macro_rules! follow_mode {
     ($renderer:expr, $out:expr, $screen:expr, $elem:ty) => {{
-        let want = $screen.output.current_mode();
-        if let Some(want) = want.filter(|w| *w != $screen.mode && $screen.missed != Some(*w)) {
-            // the screen's own mode within half a hertz of the one asked (outputs.rs; set so already by configure_outputs)
-            let offered: Vec<Mode> = $screen.modes.iter().map(|m| Mode::from(*m)).collect();
-            let found = crate::outputs::closest_mode(&offered, want).and_then(|c| $screen.modes.iter().find(|m| Mode::from(**m) == c));
-            match found {
-                Some(m) => match $out.use_mode::<_, $elem>(*m, &mut **$renderer, &DrmOutputRenderElements::default()) {
-                    Ok(()) => $screen.mode = want,
-                    Err(e) => {
-                        // told once: not tried on every frame
-                        eprintln!("yggdrasil-compositor: {}: mode not set: {e}", $screen.output.name());
-                        $screen.missed = Some(want);
+        let offered: Vec<Mode> = $screen.modes.iter().map(|m| Mode::from(*m)).collect();
+        match mode_to_set($screen.output.current_mode(), $screen.mode, $screen.refused.take(), &offered) {
+            None => false,
+            Some((want, at)) => {
+                let set = at.map_err(String::from).and_then(|i| {
+                    $out.use_mode::<_, $elem>($screen.modes[i], &mut **$renderer, &DrmOutputRenderElements::default())
+                        .map_err(|e| e.to_string())
+                });
+                match set {
+                    Ok(()) => {
+                        $screen.mode = want;
+                        false
                     }
-                },
-                None => {
-                    eprintln!(
-                        "yggdrasil-compositor: {}: the screen has no mode {}x{} at {} Hz",
-                        $screen.output.name(),
-                        want.size.w,
-                        want.size.h,
-                        want.refresh as f64 / 1000.0
-                    );
-                    $screen.missed = Some(want);
+                    Err(e) => {
+                        let now = $screen.mode;
+                        eprintln!(
+                            "yggdrasil-compositor: {}: {}x{} at {} Hz not set ({e}): it stays at {}x{} at {} Hz",
+                            $screen.output.name(),
+                            want.size.w,
+                            want.size.h,
+                            want.refresh as f64 / 1000.0,
+                            now.size.w,
+                            now.size.h,
+                            now.refresh as f64 / 1000.0
+                        );
+                        true
+                    }
                 }
             }
         }
@@ -1569,6 +1740,13 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
             let [r, g, bl] = want.map(|f| crate::ctm::ramp(f, len));
             drm.set_gamma(crtc, &r, &g, &bl).map_err(|e| e.to_string())
         };
+        if r.is_ok() {
+            if want == [1.0; 3] {
+                dev.tinted.remove(&crtc);
+            } else {
+                dev.tinted.insert(crtc);
+            }
+        }
         if let Some(s) = dev.screens.get_mut(&crtc) {
             if let Err(e) = r {
                 // said once: tried again only when the tint changes or the screen comes back from a terminal
@@ -1631,15 +1809,22 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
         }
         None => {}
     }
+    let refused = match (&mut dev.gpu, &mut screen.drm) {
+        (Gpu::Gles { renderer, .. }, Out::Gles(out)) => follow_mode!(renderer, out, screen, Elem),
+        (Gpu::Pixman { renderer, .. }, Out::Pixman(out)) => follow_mode!(renderer, out, screen, PixElem),
+        _ => false,
+    };
+    if refused {
+        // the screen goes back to the mode its CRTC kept, its layout, windows and Settings with it; that wakes it, and it is
+        // drawn at that mode on the next pass (the App is told with the backend let go)
+        let (name, kept) = (screen.output.name(), screen.mode);
+        drop(guard);
+        app.mode_kept(&name, kept);
+        return;
+    }
     let result = match (&mut dev.gpu, &mut screen.drm) {
-        (Gpu::Gles { renderer, .. }, Out::Gles(out)) => {
-            follow_mode!(renderer, out, screen, Elem);
-            frame!(b.pointer, app, renderer, out, screen, Elem)
-        }
-        (Gpu::Pixman { renderer, .. }, Out::Pixman(out)) => {
-            follow_mode!(renderer, out, screen, PixElem);
-            frame!(b.pointer, app, renderer, out, screen, PixElem)
-        }
+        (Gpu::Gles { renderer, .. }, Out::Gles(out)) => frame!(b.pointer, app, renderer, out, screen, Elem),
+        (Gpu::Pixman { renderer, .. }, Out::Pixman(out)) => frame!(b.pointer, app, renderer, out, screen, PixElem),
         _ => Err("the screen and its GPU do not match".into()),
     };
     let Some(dev) = b.devices.get_mut(&node) else { return };
@@ -1827,6 +2012,66 @@ mod tests {
         assert_eq!(parse_edid(&edid(None)), Some(("YGG".into(), "0x1234".into())), "no name: the product code");
         assert_eq!(parse_edid(&[0u8; 128]), None, "not an EDID");
         assert_eq!(parse_edid(&edid(None)[..100]), None, "too short");
+    }
+
+    #[test]
+    fn a_refused_high_priority_falls_back_to_the_default() {
+        // granted: the high-priority context, the default one never made
+        assert_eq!(with_fallback(|| Ok::<_, String>("high"), || panic!("not asked")), Ok("high"));
+        // refused (Mesa fails the context when amdgpu says no): the default priority
+        assert_eq!(with_fallback(|| Err("EGL_BAD_ALLOC".to_string()), || Ok("default")), Ok("default"));
+        // neither: the default's own error
+        assert_eq!(
+            with_fallback(|| Err::<&str, _>("refused".to_string()), || Err("no context".to_string())),
+            Err("no context".to_string())
+        );
+        // what each GPU's line says, granted or not
+        assert_eq!(priority_words(Some(ContextPriority::High)), "GPU priority high");
+        assert!(priority_words(Some(ContextPriority::Medium)).contains("high not granted"));
+        assert!(priority_words(None).contains("not reported"));
+    }
+
+    #[test]
+    fn the_pointer_leaves_the_cursor_plane_when_switched_off() {
+        // YGGDRASIL_COMPOSITOR_CURSOR_PLANE (read with crate::switched_on): a cursor, which Smithay may put on a plane, or an
+        // element like the rest, which no plane takes
+        assert_eq!(pointer_kind(crate::switched_on(None)), Kind::Cursor);
+        assert_eq!(pointer_kind(crate::switched_on(Some("0"))), Kind::Unspecified);
+        assert_eq!(pointer_kind(crate::switched_on(Some("off"))), Kind::Unspecified);
+    }
+
+    #[test]
+    fn a_panels_orientation_is_its_turn() {
+        // the kernel's words (drm_connector.c's panel orientation enum) as wl_output's numbers, as KWin and Mutter turn them
+        let n = |w: &str| panel_turn(w).map(crate::outputs::transform_number);
+        assert_eq!(n("Normal"), Some(0));
+        assert_eq!(n("Left Side Up"), Some(1));
+        assert_eq!(n("Upside Down"), Some(2));
+        assert_eq!(n("Right Side Up"), Some(3), "a Steam Deck's, which Hyprland users turn with transform 3");
+        assert_eq!(n("Sideways"), None);
+    }
+
+    #[test]
+    fn a_mode_the_screen_cannot_have_leaves_it_as_it_is() {
+        use super::mode_to_set;
+        let m = |w: i32, h: i32, mhz: i32| Mode { size: (w, h).into(), refresh: mhz };
+        // an ultrawide's own size at 60 (its EDID's first), 144 and 180, and a smaller size
+        let offered = [m(3440, 1440, 59_973), m(3440, 1440, 144_000), m(3440, 1440, 180_000), m(2560, 1440, 59_951)];
+        let now = offered[0];
+        // nothing asked, or the mode the CRTC has: nothing to set
+        assert_eq!(mode_to_set(None, now, None, &offered), None);
+        assert_eq!(mode_to_set(Some(now), now, Some(offered[2]), &offered), None);
+        // another of its modes: that one, also when asked within half a hertz of it
+        assert_eq!(mode_to_set(Some(offered[1]), now, None, &offered), Some((offered[1], Ok(1))));
+        assert_eq!(mode_to_set(Some(m(3440, 1440, 180_400)), now, None, &offered), Some((m(3440, 1440, 180_400), Ok(2))));
+        // the mode the GPU refused at the set-up (scan) is not asked of it again: the screen stays as it is
+        let refused = mode_to_set(Some(offered[2]), now, Some(offered[2]), &offered);
+        assert!(matches!(refused, Some((w, Err(_))) if w == offered[2]), "{refused:?}");
+        // that refusal holds for that mode only
+        assert_eq!(mode_to_set(Some(offered[1]), now, Some(offered[2]), &offered), Some((offered[1], Ok(1))));
+        // a mode the connector does not have (another size; a rate more than half a hertz off)
+        assert!(matches!(mode_to_set(Some(m(3840, 1600, 60_000)), now, None, &offered), Some((_, Err(_)))));
+        assert!(matches!(mode_to_set(Some(m(3440, 1440, 165_000)), now, None, &offered), Some((_, Err(_)))));
     }
 
     #[test]
