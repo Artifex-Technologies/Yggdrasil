@@ -11,8 +11,9 @@
 #       target/debug/yggdrasil-compositor
 #   TOUCH_APP=/usr/bin/yggdrasil-calculator TOUCH_APP_X=1121 ... also the dock checks with that program's window (X: its icon)
 #
-# Runs in Yggdrasil's compositor in its headless mode with its own runtime folder, Wayland socket, session bus and home folder;
-# WAYLAND_DISPLAY, DISPLAY and the rest are cleared first, so it never touches the running desktop. Needs dbus-daemon.
+# Runs in Yggdrasil's compositor in its headless mode with its own runtime folder, Wayland socket, session bus and home folder,
+# and an empty folder in place of /dev/input (YGGDRASIL_PANEL_INPUT: the panel never reads the computer's mice); WAYLAND_DISPLAY,
+# DISPLAY and the rest are cleared first, so it never touches the running desktop. Needs dbus-daemon.
 # Exit status: 0 passed, 1 failed, 2 something needed is missing.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -23,9 +24,9 @@ for b in "$panel" "$comp"; do [ -x "$b" ] || { echo "touch.sh: missing $b (cargo
 command -v dbus-daemon > /dev/null || { echo "touch.sh: needs dbus-daemon"; exit 2; }
 
 W=$(mktemp -d "${TMPDIR:-/tmp}/ygg-touch.XXXXXX")
-mkdir -p "$W/run" "$W/home"
+mkdir -p "$W/run" "$W/home" "$W/input"
 chmod 0700 "$W/run"
-export HOME=$W/home XDG_RUNTIME_DIR=$W/run XDG_CONFIG_HOME=$W/home/.config
+export HOME=$W/home XDG_RUNTIME_DIR=$W/run XDG_CONFIG_HOME=$W/home/.config YGGDRASIL_PANEL_INPUT=$W/input
 export LIBGL_ALWAYS_SOFTWARE=1 NO_AT_BRIDGE=1 XDG_CURRENT_DESKTOP=Yggdrasil XDG_SESSION_TYPE=wayland
 unset WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE DBUS_SESSION_BUS_ADDRESS
 export DBUS_SYSTEM_BUS_ADDRESS=unix:path=$W/no-system-bus

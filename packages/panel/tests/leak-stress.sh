@@ -20,8 +20,9 @@
 #   LEAK_CYCLES=40 ...     more rounds (default 20)
 #
 # Needs busctl (systemd), dbus-run-session (dbus) and a sans-serif font, and sway for the sway variant. It never touches the
-# running desktop: it has its own runtime folder, Wayland socket, session bus and home folder, and it clears WAYLAND_DISPLAY,
-# DISPLAY and the rest before anything starts. sway refuses to run as root; run it as a normal user (CI uses an account of its own).
+# running desktop: it has its own runtime folder, Wayland socket, session bus and home folder, an empty folder in place of
+# /dev/input (YGGDRASIL_PANEL_INPUT: the panel never reads the computer's mice), and it clears WAYLAND_DISPLAY, DISPLAY and the
+# rest before anything starts. sway refuses to run as root; run it as a normal user (CI uses an account of its own).
 # Exit status: 0 no leak, 1 a leak (or the panel died), 2 something needed is missing.
 set -u
 
@@ -93,14 +94,15 @@ if [ -z "${LEAK_STRESS_INNER:-}" ]; then
     done
     # short: a Wayland socket's path must fit in 108 bytes
     work=$(mktemp -d "${TMPDIR:-/tmp}/ygg-leak.XXXXXX")
-    mkdir -p "$work/run" "$work/home"
+    mkdir -p "$work/run" "$work/home" "$work/input"
     chmod 700 "$work/run"
-    # nothing of the running session comes along: a private runtime folder, home and session bus (dbus-run-session)
+    # nothing of the running session comes along: a private runtime folder, home and session bus (dbus-run-session), and no
+    # input device (an empty folder for the panel's mouse buttons)
     exec env -u WAYLAND_DISPLAY -u DISPLAY -u SWAYSOCK -u I3SOCK -u HYPRLAND_INSTANCE_SIGNATURE -u DBUS_SESSION_BUS_ADDRESS \
         -u XDG_CURRENT_DESKTOP -u XDG_SESSION_DESKTOP -u XDG_CONFIG_HOME -u XDG_DATA_HOME -u XDG_STATE_HOME -u XDG_CACHE_HOME \
         -u WAYLAND_SOCKET -u NIRI_SOCKET -u YGGDRASIL_COMPOSITOR_CTL \
-        XDG_RUNTIME_DIR="$work/run" HOME="$work/home" LEAK_STRESS_INNER="$work" LEAK_STRESS_PANEL="$(readlink -f "$panel")" \
-        LEAK_COMPOSITOR="$compositor" LEAK_STRESS_COMPOSITOR="$comp" \
+        XDG_RUNTIME_DIR="$work/run" HOME="$work/home" YGGDRASIL_PANEL_INPUT="$work/input" LEAK_STRESS_INNER="$work" \
+        LEAK_STRESS_PANEL="$(readlink -f "$panel")" LEAK_COMPOSITOR="$compositor" LEAK_STRESS_COMPOSITOR="$comp" \
         dbus-run-session -- "$0"
 fi
 
