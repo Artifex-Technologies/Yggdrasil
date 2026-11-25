@@ -608,7 +608,17 @@ fn the_panels_desktop_buttons_and_window_zones_work_on_it() {
     std::fs::write(conf.join("zones.conf"), "enabled = yes\nlayouts = halves\ngap = 8\n").unwrap();
     // the zones' trail (zones.log) is kept where the folder exists
     std::fs::create_dir_all(comp.dir.join("home/.local/state/yggdrasil")).unwrap();
-    let mut p = App::start(&comp, &panel, Some(&bus), &[("YGGDRASIL_A11Y", "off"), ("XDG_CURRENT_DESKTOP", "Yggdrasil")]);
+    // a slow network and Bluetooth (each answer takes 4 s; nmcli's Wi-Fi list waited 5.4 s for a scan on the laptop): the
+    // desktops must not wait for them, or the click on desktop 1 below finds none known and does nothing (YGG-129)
+    let slow = comp.dir.join("slow");
+    std::fs::create_dir_all(&slow).unwrap();
+    for name in ["nmcli", "bluetoothctl"] {
+        std::fs::write(slow.join(name), "#!/bin/sh\nexec sleep 4\n").unwrap();
+        std::fs::set_permissions(slow.join(name), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    }
+    let path = format!("{}:/usr/bin", slow.display());
+    let env = [("YGGDRASIL_A11Y", "off"), ("XDG_CURRENT_DESKTOP", "Yggdrasil"), ("PATH", path.as_str())];
+    let mut p = App::start(&comp, &panel, Some(&bus), &env);
     wait_for(&comp, &mut p, 60, "the bar and the dock", |c| {
         let l = c.layers();
         ["yggdrasil-panel", "yggdrasil-dock"].iter().all(|ns| layer(&l, ns).is_some_and(|x| x.size.0 > 0))
@@ -635,7 +645,7 @@ fn the_panels_desktop_buttons_and_window_zones_work_on_it() {
     std::thread::sleep(Duration::from_millis(2600));
     comp.must(&format!("pointer 59 {y}"));
     comp.must("click");
-    comp.wait(10, "desktop 1 shown from its button", |c| c.must("workspace") == ["1"]);
+    wait_for(&comp, &mut p, 10, "desktop 1 shown from its button", |c| c.must("workspace") == ["1"]);
     comp.wait(10, "the terminal has the keyboard again", |c| c.focus() == "window\ttest.terminal\tTerminal");
 
     // Super+Shift+Z (the panel's ZonesPick): the sheet opens for the window in front on its screen

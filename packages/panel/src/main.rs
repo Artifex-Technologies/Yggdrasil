@@ -3769,8 +3769,13 @@ impl State {
                 }
             }
             Action::Workspace(i) => {
-                if let Some(d) = self.model.status.desktops.get(i) {
-                    wm::show_desktop(&d.id);
+                // the bar draws desktop 1 before it has read the desktops: a click then reads them now, as "+" does (YGG-129)
+                let id = match self.model.status.desktops.get(i) {
+                    Some(d) => Some(d.id.clone()),
+                    None => status::desktops(yggdrasil_wm::Desk::detect().as_ref()).0.get(i).map(|d| d.id.clone()),
+                };
+                if let Some(id) = id {
+                    wm::show_desktop(&id);
                     self.model.status.current = i;
                     self.dirty = true;
                 }

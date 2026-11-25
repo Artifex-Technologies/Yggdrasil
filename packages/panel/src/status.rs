@@ -124,7 +124,9 @@ fn read_net() -> Net {
         &std::fs::read_to_string("/proc/net/route").unwrap_or_default(),
         std::path::Path::new("/sys"),
         &out("nmcli", &["-t", "-f", "TYPE,STATE", "device"]),
-        &out("nmcli", &["-t", "-f", "IN-USE,SIGNAL", "dev", "wifi"]),
+        // the signal of the network in use only: never a scan (`dev wifi` alone rescans when the last scan is 30 s old and
+        // waits for it, 5.4 s on the laptop, and the bar's desktops waited with it: YGG-129)
+        &out("nmcli", &["-t", "-f", "IN-USE,SIGNAL", "dev", "wifi", "list", "--rescan", "no"]),
     )
 }
 
@@ -180,9 +182,23 @@ pub fn spawn(tx: calloop::channel::Sender<Status>) {
         let mut signing_in: Option<String> = None;
         let mut parts = Parts::ALL;
         let mut sent: Option<Status> = None;
+        let mut send = |now: &Status| -> bool {
+            if !sent.as_ref().is_some_and(|s| looks_same(s, now)) {
+                if tx.send(now.clone()).is_err() {
+                    return false;
+                }
+                sent = Some(now.clone());
+            }
+            true
+        };
         loop {
             if parts.desktops {
                 (now.desktops, now.current) = desktops(desk.as_ref());
+                // the desktops go at once: the network and Bluetooth below run programs that can take seconds (bluetoothctl
+                // waits up to 2 s twice), and the bar's desktop buttons do nothing until it knows the desktops (YGG-129)
+                if (parts.net || parts.bt) && !send(&now) {
+                    return;
+                }
             }
             if parts.net {
                 now.net = read_net();
@@ -208,11 +224,8 @@ pub fn spawn(tx: calloop::channel::Sender<Status>) {
             if let (Some(sig), false, Net::Wifi(_)) = (parts.signal, parts.net, now.net) {
                 now.net = Net::Wifi(sig);
             }
-            if !sent.as_ref().is_some_and(|s| looks_same(s, &now)) {
-                if tx.send(now.clone()).is_err() {
-                    return;
-                }
-                sent = Some(now.clone());
+            if !send(&now) {
+                return;
             }
             // wait for the next change, then for its burst to settle
             let Ok(first) = woken.recv() else { return };
