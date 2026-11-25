@@ -79,7 +79,7 @@ impl PointerGrab<App> for MoveGrab {
         let delta = event.location - self.start.location;
         let to = (self.origin.to_f64() + delta).to_i32_round();
         data.space.map_element(self.window.clone(), to, true);
-        crate::state::x11_place(&self.window, to, self.window.geometry().size);
+        crate::state::x11_place(&self.window, to, crate::state::window_size(&self.window));
     }
 
     fn button(&mut self, data: &mut App, handle: &mut PointerInnerHandle<'_, App>, event: &ButtonEvent) {

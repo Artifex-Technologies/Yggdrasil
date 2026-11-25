@@ -16,11 +16,17 @@ use smithay::desktop::{layer_map_for_output, LayerSurface, Window, WindowSurface
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::{self, ResizeEdge};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::{Logical, Point, Rectangle};
+use smithay::utils::{FrameExtents, Logical, Point, Rectangle};
 use smithay::wayland::shell::wlr_layer::Layer;
 
 use super::{win_has, App};
 use crate::deco::{self, Hit};
+
+/// How far out from its window an X11 program's surface takes clicks. A program that draws its own shadow (GTK, Chromium) keeps
+/// its resize border at the inner edge of the shadow and lets clicks on the rest through to what is behind, by an X input
+/// shape that XWayland does not hand on: the surface would take them all over the shadow, which is not drawn. GTK 3 takes
+/// them 10 pixels out, GTK 4 12 (a click past GTK 3's would be lost: the X server finds no window of it there).
+const X11_BORDER: f64 = 10.0;
 
 /// What is under a point of the space, the frontmost thing there.
 pub enum Under {
@@ -104,17 +110,21 @@ impl App {
                 return Some(Under::Controls(w.clone(), deco::hit(pos.x - r.loc.x as f64)));
             }
         }
-        // where the surface's own origin is (the window's geometry may start inside it, past a client-side shadow)
+        let inner = Rectangle::new(loc, geo.size).to_f64();
+        let around = |by: f64| inner + FrameExtents::new(by, by, by, by);
+        let grips = self.bar_visible(w);
+        // where the surface's own origin is (the window's geometry may start inside it, past a client-side shadow); an X11
+        // window's surface only as far out as X11_BORDER, and not past the window where the compositor's grips are
         let render = loc - geo.loc;
-        if let Some((s, p)) = w.surface_under(pos - render.to_f64(), WindowSurfaceType::ALL) {
-            return Some(Under::Window(w.clone(), s, (p + render).to_f64()));
+        if w.x11_surface().is_none() || around(if grips { 0.0 } else { X11_BORDER }).contains(pos) {
+            if let Some((s, p)) = w.surface_under(pos - render.to_f64(), WindowSurfaceType::ALL) {
+                return Some(Under::Window(w.clone(), s, (p + render).to_f64()));
+            }
         }
-        if !self.bar_visible(w) {
+        if !grips {
             return None;
         }
-        let inner = Rectangle::new(loc, geo.size).to_f64();
-        let g = deco::GRIP as f64;
-        let outer = Rectangle::new((inner.loc.x - g, inner.loc.y - g).into(), (inner.size.w + 2.0 * g, inner.size.h + 2.0 * g).into());
+        let outer = around(deco::GRIP as f64);
         if inner.contains(pos) || !outer.contains(pos) {
             return None;
         }

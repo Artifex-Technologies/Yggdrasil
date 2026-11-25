@@ -376,24 +376,28 @@ impl App {
         for h in self.heads.list.iter().filter(|h| h.enabled) {
             h.output.change_current_state(None, None, None, None);
         }
+        // (a client-side shadow is counted in those pixels too: the window keeps its place and size, the X window is placed
+        // around it)
         for w in self.space.elements() {
             if let Some(x) = w.x11_surface() {
-                let _ = x.configure(None);
+                let r = state::x11_rect(x);
+                state::x11_place(w, r.loc, r.size);
             }
         }
         self.x11_resources(true);
     }
 
-    /// Is the point over an X11 menu or tooltip? A click there is the menu's, not the window's behind it.
+    /// Is the point over an X11 menu or tooltip (anywhere on its X window, a shadow it draws included)? A click there is the
+    /// menu's, not the window's behind it.
     pub fn over_overlay(&self, pos: Point<f64, Logical>) -> bool {
-        self.overlays.iter().any(|x| x.geometry().to_f64().contains(pos))
+        self.overlays.iter().any(|x| x.last_configure().to_f64().contains(pos))
     }
 
-    /// The surface of an X11 menu or tooltip under the point, and where that surface's origin is on screen.
+    /// The surface of an X11 menu or tooltip under the point, and where that surface's origin is on screen (its X window's).
     pub fn overlay_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
         for x in self.overlays.iter().rev() {
             let Some(s) = x.wl_surface() else { continue };
-            let loc = x.geometry().loc;
+            let loc = x.last_configure().loc;
             if let Some((s, p)) =
                 smithay::desktop::utils::under_from_surface_tree(&s, pos - loc.to_f64(), (0, 0), smithay::desktop::WindowSurfaceType::ALL)
             {
@@ -434,7 +438,7 @@ impl XwmHandler for App {
     }
 
     // a new window or menu is placed when it is shown (map_window_request, mapped_override_redirect_window); Smithay converts
-    // its first geometry at the client scale as it is (our fork; 0.7.0 rounded 1.25 down to 1)
+    // its first geometry at the client scale as it is (0.7.0 rounded 1.25 down to 1)
     fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
@@ -452,7 +456,8 @@ impl XwmHandler for App {
         if window.set_mapped(true).is_err() {
             return;
         }
-        let geo = window.geometry();
+        // the X window as the program made it (with the shadow it draws, if any)
+        let geo = window.last_configure();
         if is_helper(&window) {
             let _ = window.configure(geo);
             if !self.overlays.iter().any(|x| same(x, &window)) {
@@ -469,13 +474,15 @@ impl XwmHandler for App {
         let game_full = is_game(&window) && screen.w > 0 && geo.size.w >= screen.w && geo.size.h >= screen.h;
         let start = o.current_location() + self.cascade();
         let w = Window::new_x11_window(window.clone());
-        // back where the program's last window closed (places.rs), as a Wayland window
+        // The X window goes where any would, its client-side shadow (_GTK_FRAME_EXTENTS) inside; the compositor keeps the window
+        // less that shadow, as a Wayland window's geometry. Or back where the program's last window closed (places.rs).
+        let shadow = state::shadow(&window);
         let place = if game_full {
-            Rectangle::new(start, geo.size)
+            Rectangle::new(start, geo.size) - shadow
         } else {
-            self.remembered_place(&w).unwrap_or_else(|| fit_in(zone, Rectangle::new(start, geo.size)))
+            self.remembered_place(&w).unwrap_or_else(|| fit_in(zone, Rectangle::new(start, geo.size)) - shadow)
         };
-        let _ = window.configure(place);
+        state::x11_place(&w, place.loc, place.size);
         self.space.map_element(w.clone(), place.loc, true);
         // its own icon, for the dock (x11asked.rs)
         if let Some(r) = &self.x11_reader {
@@ -543,7 +550,7 @@ impl XwmHandler for App {
         _reorder: Option<Reorder>,
     ) {
         self.wake();
-        let mut geo = window.geometry();
+        let mut geo = window.last_configure();
         match self.x11_window(&window) {
             Some(win) if self.placed_by_layout(&win) => {
                 let _ = window.configure(None);
@@ -588,6 +595,15 @@ impl XwmHandler for App {
         if property == WmWindowProperty::MotifHints && !self.decorates_all() {
             if let Some(s) = window.wl_surface() {
                 self.set_decorated(&s, !window.is_decorated());
+            }
+        }
+        // its client-side shadow changed (GTK and Chromium drop it when maximized, draw it again when restored): the window keeps
+        // its place and size, the X window is placed around it anew, so the picture stays where the X server has it. Only on a
+        // change: GTK sets the same shadow again each time it lays its window out.
+        if property == WmWindowProperty::FrameExtents && state::placed_shadow(&window) != state::shadow(&window) {
+            if let Some(w) = self.x11_window(&window) {
+                let r = state::x11_rect(&window);
+                state::x11_place(&w, r.loc, r.size);
             }
         }
     }
@@ -653,7 +669,7 @@ impl XwmHandler for App {
             X11Edge::BottomLeft => ResizeEdge::BottomLeft,
             X11Edge::BottomRight => ResizeEdge::BottomRight,
         };
-        let size = w.geometry().size;
+        let size = state::window_size(&w);
         pointer.set_grab(self, ResizeGrab { start, window: w, edges, origin, size }, SERIAL_COUNTER.next_serial(), Focus::Clear);
     }
 
