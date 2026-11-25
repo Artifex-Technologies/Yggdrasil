@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::deco::{self, Bar, Hit, Key as BarKey};
 use crate::draw::Fonts;
-use crate::grabs::{MoveGrab, ResizeGrab};
+use crate::grabs::{ByButton, ByFinger, DragGrab, Follow, Move, Resize};
 use crate::shortcuts::{self, Action, Binding, Mods};
 use crate::switcher;
 use crate::tiling::{self, Profile};
@@ -230,6 +230,9 @@ pub struct App {
     pub touch_wake_at: Option<std::time::Instant>,
     /// Fingers that went down on a screen that was off: their moves and lifts reach no program either.
     pub touch_swallowed: Vec<smithay::backend::input::TouchSlot>,
+    /// The fingers down on the touchscreen now (touch.rs): a finger's drag draws its icon at its finger, and a program moves,
+    /// resizes or drags only with a finger still down.
+    pub fingers: Vec<crate::touch::Finger>,
     pub bindings: Vec<Binding>,
     /// A modifier key with a tap binding went down and nothing else was pressed since (its key code and what letting go does):
     /// Super on its own opens the start menu, Ctrl on its own is a tap of Find my mouse.
@@ -335,12 +338,14 @@ pub struct App {
     input_stamp: crate::configs::Stamp,
     /// The pointer the compositor draws (pointer.rs): what programs asked it to look like, when it last moved, the theme's pictures.
     pub cursor: crate::pointer::Pointer,
-    /// A drag and drop a program started (a file dragged out of Minos): while it lasts the pointer is a closed hand whatever
-    /// the windows under it ask for, and the picture the program gave for it (its icon) is drawn under the pointer.
-    pub dragging: bool,
-    pub dnd_icon: Option<WlSurface>,
-    /// where the icon sits from the pointer's hotspot (the program's own offsets, added up as it commits them)
-    pub dnd_offset: Point<i32, Logical>,
+    /// A drag and drop a program started with the button held (a file dragged out of Minos): while it lasts the pointer is a
+    /// closed hand whatever the windows under it ask for, and the drag's icon is drawn under the pointer.
+    pub pointer_drag: Option<Drag>,
+    /// One a program started with a finger (that finger's slot): its icon is drawn under the finger, and the pointer keeps its
+    /// own look. Each device's drag is its own: the mouse and a finger can drag at once, and each drag ends on its own.
+    pub finger_drag: Option<(smithay::backend::input::TouchSlot, Drag)>,
+    /// Whose drag a call through a drag's grab is for (grabs.rs, `DragGrab`): the pointer's, a finger's, or None outside one.
+    pub drag_by: Option<GrabType>,
     /// The standard window list (ext-foreign-toplevel-list; its handles are kept in toplevels.rs) and the window and screen
     /// copies of ext-image-copy-capture (capture.rs: the panel's previews; headless only).
     pub toplevel_list: smithay::wayland::foreign_toplevel_list::ForeignToplevelListState,
@@ -374,6 +379,36 @@ pub struct App {
     pub closing: Vec<crate::look::Closing>,
     /// The backend takes a closing window's last picture from the screen (headless); without that there is no closing animation.
     pub pictures_of_closing: bool,
+}
+
+/// A drag and drop a program started, with the button or a finger: the picture the program gave for it (its icon) and where
+/// that sits from the pointer's hotspot or the finger (the program's own offsets, added up as it commits them).
+pub struct Drag {
+    pub icon: Option<WlSurface>,
+    pub offset: Point<i32, Logical>,
+}
+
+impl Drag {
+    /// A drag starting now with `icon`: the offset its first picture was committed with (before the drag began).
+    fn new(icon: Option<WlSurface>) -> Drag {
+        let offset = icon.as_ref().and_then(buffer_delta).unwrap_or_default();
+        Drag { icon, offset }
+    }
+
+    /// `surface` committed: when it is this drag's icon, a move its program made (wl_surface.offset) moves it from the pointer
+    /// or finger.
+    fn committed(&mut self, surface: &WlSurface) {
+        if self.icon.as_ref() == Some(surface) {
+            if let Some(d) = buffer_delta(surface) {
+                self.offset += d;
+            }
+        }
+    }
+}
+
+/// The offset a surface's last picture was committed with (wl_surface.offset), taken: each is counted once.
+fn buffer_delta(surface: &WlSurface) -> Option<Point<i32, Logical>> {
+    with_states(surface, |st| st.cached_state.get::<SurfaceAttributes>().current().buffer_delta.take())
 }
 
 /// How many workspaces there are.
@@ -797,6 +832,7 @@ impl App {
             power: Default::default(),
             touch_wake_at: None,
             touch_swallowed: vec![],
+            fingers: vec![],
             bindings: {
                 let text = std::fs::read_to_string(shortcuts::config_path()).unwrap_or_default();
                 let (b, bad) = shortcuts::load(&text);
@@ -859,9 +895,9 @@ impl App {
             zoom: 1.0,
             cursor_theme: None,
             cursor: Default::default(),
-            dragging: false,
-            dnd_icon: None,
-            dnd_offset: Point::from((0, 0)),
+            pointer_drag: None,
+            finger_drag: None,
+            drag_by: None,
             input_stamp: crate::configs::stamp(yggdrasil_wm::input::InputConf::path()),
             input: input_conf,
             input_devices: vec![],
@@ -2363,7 +2399,7 @@ impl App {
         self.activate_surface(&surface);
         let size = window_size(&window);
         if button == 0x110 {
-            pointer.set_grab(self, MoveGrab { start, window, origin: loc }, serial, Focus::Clear);
+            pointer.set_grab(self, ByButton { start, what: Move { window, origin: loc } }, serial, Focus::Clear);
         } else {
             let (right, bottom) = (pos.x - loc.x as f64 > size.w as f64 / 2.0, pos.y - loc.y as f64 > size.h as f64 / 2.0);
             let edges = match (right, bottom) {
@@ -2372,7 +2408,7 @@ impl App {
                 (false, true) => ResizeEdge::BottomLeft,
                 (false, false) => ResizeEdge::TopLeft,
             };
-            pointer.set_grab(self, ResizeGrab { start, window, edges, origin: loc, size }, serial, Focus::Clear);
+            pointer.set_grab(self, ByButton { start, what: Resize { window, edges, origin: loc, size } }, serial, Focus::Clear);
         }
         true
     }
@@ -2391,7 +2427,7 @@ impl App {
             self.activate_surface(&surface);
             let origin = self.space.element_location(&window).unwrap_or_default();
             let size = window_size(&window);
-            pointer.set_grab(self, ResizeGrab { start, window, edges, origin, size }, serial, Focus::Clear);
+            pointer.set_grab(self, ByButton { start, what: Resize { window, edges, origin, size } }, serial, Focus::Clear);
             return true;
         }
         let Some((window, hit)) = self.bar_at(pos) else { return false };
@@ -2413,7 +2449,7 @@ impl App {
                     self.set_maximized(&surface, on);
                 } else {
                     let origin = self.space.element_location(&window).unwrap_or_default();
-                    pointer.set_grab(self, MoveGrab { start, window, origin }, serial, Focus::Clear);
+                    pointer.set_grab(self, ByButton { start, what: Move { window, origin } }, serial, Focus::Clear);
                 }
             }
         }
@@ -2474,9 +2510,12 @@ impl App {
         // where a picture made by the compositor (in logical coordinates of the space) goes on this output
         let at = |p: Point<i32, Logical>| -> Point<f64, smithay::utils::Physical> { cam.point(p.to_f64()) };
         let screen = logical_size(output);
-        // a drag's icon, under the pointer (which is drawn on top of the scene)
-        if let Some(icon) = self.dnd_icon.as_ref().filter(|i| i.is_alive()) {
-            let p = at(self.pointer_location.to_i32_round() + self.dnd_offset).to_i32_round();
+        // the drags' icons: the pointer's under the pointer (which is drawn on top of the scene), a finger's under the finger
+        for (icon, held, offset) in self.drag_icons() {
+            if !icon.is_alive() {
+                continue;
+            }
+            let p = at(held.to_i32_round() + offset).to_i32_round();
             out.extend(lift(
                 render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<R>>(renderer, icon, p, scale, 1.0, Kind::Unspecified),
                 p,
@@ -2543,7 +2582,8 @@ impl App {
                 out.extend(crate::look::closing_piece(renderer, c, buffer, geo, alpha).map(R::Elem::from));
             }
         }
-        let grabbed = self.pointer.is_grabbed();
+        // a button or a finger held: a window moved or resized by hand is drawn where the hand puts it, not animated after it
+        let grabbed = self.pointer.is_grabbed() || self.seat.get_touch().is_some_and(|t| t.is_grabbed());
         let front = self.front_window();
         let windows: Vec<Window> = self.space.elements().rev().cloned().collect();
         for w in windows {
@@ -2856,8 +2896,8 @@ impl App {
             let out = self.output_at(self.pointer_location);
             smithay::desktop::utils::send_frames_surface_tree(s, &out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
         }
-        if let Some(icon) = &self.dnd_icon {
-            let out = self.output_at(self.pointer_location);
+        for (icon, held, _) in self.drag_icons() {
+            let out = self.output_at(held);
             smithay::desktop::utils::send_frames_surface_tree(icon, &out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
         }
         let out = primary;
@@ -3093,7 +3133,7 @@ impl App {
         }
         let under = self.target_under(pos);
         if under.is_none()
-            && !self.dragging
+            && self.pointer_drag.is_none()
             && !matches!(self.cursor.status, CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Default))
         {
             // over no program (the background, the compositor's own title bars): the default arrow
@@ -3278,11 +3318,12 @@ impl CompositorHandler for App {
                 eprintln!("x11: menu or tooltip {} committed, its picture {size:?}", x.window_id());
             }
         }
-        // a drag's icon moved by its program (wl_surface.offset): it keeps its place from the pointer
-        if self.dnd_icon.as_ref() == Some(surface) {
-            if let Some(d) = with_states(surface, |st| st.cached_state.get::<SurfaceAttributes>().current().buffer_delta.take()) {
-                self.dnd_offset += d;
-            }
+        // a drag's icon moved by its program (wl_surface.offset): it keeps its place from the pointer or finger
+        if let Some(d) = self.pointer_drag.as_mut() {
+            d.committed(surface);
+        }
+        if let Some((_, d)) = self.finger_drag.as_mut() {
+            d.committed(surface);
         }
         self.popups.commit(surface);
         // a menu's (xdg_popup's) first commit is answered with its first configure: without it the program never shows the menu
@@ -3455,7 +3496,7 @@ impl SeatHandler for App {
         smithay::wayland::selection::primary_selection::set_primary_focus(&self.display_handle, seat, client);
     }
     fn cursor_image(&mut self, _: &Seat<Self>, image: CursorImageStatus) {
-        if self.dragging {
+        if self.pointer_drag.is_some() {
             // the drag's closed hand stays; a window under it (its edge, a column divider) does not change it
             return;
         }
@@ -3513,10 +3554,19 @@ fn pressed_by(focus: Option<&(PtrFocus, Point<f64, Logical>)>, asker: &ObjectId)
     focus.is_some_and(|(f, _)| f.surface().id().same_client_as(asker))
 }
 
+/// The button or the finger a program's own move or resize request came with (`App::own_press`): where it went down, and on
+/// which surface.
+enum Press {
+    Button(smithay::input::pointer::GrabStartData<App>),
+    Finger(smithay::input::touch::GrabStartData<App>),
+}
+
 impl WaylandDndGrabHandler for App {
-    /// A program started dragging (with the left button held, or a finger down, on its own window): a closed hand, its icon
-    /// under the pointer, and the drag grab that routes the offer to the window under it. A program asking with a press that is
-    /// not its own is told its drag is cancelled, and nothing changes.
+    /// A program started dragging, with the left button held or a finger down on its own window: the drag grab that routes the
+    /// offer to the window under the pointer or the finger, and the drag's look: with the button, a closed hand and its icon
+    /// under the pointer; with a finger, its icon under the finger (the pointer stays as it is). A program asking with a press
+    /// or finger that is not its own, or with a finger that has lifted (`finger_down`), is told its drag is cancelled, and
+    /// nothing changes.
     fn dnd_requested<S: Source>(&mut self, source: S, icon: Option<WlSurface>, seat: Seat<Self>, serial: Serial, type_: GrabType) {
         // the program asking: its data source's, or without one (a drag within the program) its origin surface's
         let any: &dyn std::any::Any = &source;
@@ -3525,6 +3575,8 @@ impl WaylandDndGrabHandler for App {
         else {
             return source.cancel();
         };
+        // each look is set only after its grab: a drag the new one replaced (the program's own earlier one with the same press or
+        // finger) was cancelled as it went, which ended that look
         match type_ {
             GrabType::Pointer => {
                 let pointer = seat.get_pointer().unwrap();
@@ -3532,40 +3584,37 @@ impl WaylandDndGrabHandler for App {
                     return source.cancel();
                 };
                 let grab = DnDGrab::new_pointer(&self.display_handle, start, source, seat);
-                pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Keep);
+                pointer.set_grab(self, DragGrab { grab, by: type_ }, serial, smithay::input::pointer::Focus::Keep);
+                self.pointer_drag = Some(Drag::new(icon));
+                self.cursor.status = CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Grabbing);
             }
             GrabType::Touch => {
                 let Some(touch) = seat.get_touch() else { return source.cancel() };
-                let Some(start) = touch.grab_start_data().filter(|s| pressed_by(s.focus.as_ref(), &asker)) else {
+                // Smithay found the touchscreen's grab under `serial`, which outlasts its finger while another is down
+                let Some(start) = touch.grab_start_data().filter(|s| self.finger_down(serial) && pressed_by(s.focus.as_ref(), &asker))
+                else {
                     return source.cancel();
                 };
+                let slot = start.slot;
                 let grab = DnDGrab::new_touch(&self.display_handle, start, source, seat);
-                touch.set_grab(self, grab, serial);
+                touch.set_grab(self, DragGrab { grab, by: type_ }, serial);
+                self.finger_drag = Some((slot, Drag::new(icon)));
             }
         }
-        // set only now: a drag this one replaced (the program's own earlier one) was cancelled as it went, which ended its look
-        self.dragging = true;
-        // the offset the icon's first picture was committed with (before the drag began)
-        self.dnd_offset = icon
-            .as_ref()
-            .and_then(|i| with_states(i, |st| st.cached_state.get::<SurfaceAttributes>().current().buffer_delta.take()))
-            .unwrap_or_default();
-        self.dnd_icon = icon;
-        self.cursor.status = CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Grabbing);
         self.wake();
     }
 }
 
 impl DndGrabHandler for App {
-    /// The drag ended (dropped on a window, or let go where nothing takes it): the arrow until a window sets its own.
+    /// A drag ended with a drop (on a window, or let go where nothing takes it): its look ends (`drag_ended`).
     fn dropped(&mut self, _target: Option<DndTarget<'_, Self>>, _validated: bool, _seat: Seat<Self>, _at: Point<f64, Logical>) {
-        self.end_drag();
+        self.drag_ended();
     }
 
-    /// The drag ended without a drop: the touchscreen cancelled the finger, another grab took the button (the program's own
-    /// move), or the program went away. The same as a drop: Smithay main ends these here, not in `dropped`.
+    /// A drag ended without a drop: the touchscreen cancelled the finger, another grab took the button or the finger (the
+    /// program's own move), or the program went away. The same as a drop: Smithay main ends these here, not in `dropped`.
     fn cancelled(&mut self, _seat: Seat<Self>, _at: Point<f64, Logical>) {
-        self.end_drag();
+        self.drag_ended();
     }
 }
 
@@ -3668,20 +3717,56 @@ impl DndFocus<App> for PtrFocus {
 }
 
 impl App {
-    /// A drag's look (the closed hand, its icon) ends with its grab: Smithay reports every end of a drag's grab, the pointer's
-    /// or a finger's, to `dropped` or `cancelled`. Pointer motion must not end it: a finger's drag goes on while the mouse moves.
-    fn end_drag(&mut self) {
-        self.dragging = false;
-        self.dnd_icon = None;
-        self.cursor.status = CursorImageStatus::default_named();
+    /// A drag ended (`dropped`, `cancelled`): its look ends with its grab, and only its own (`drag_by` says whose). The
+    /// pointer's drag takes its icon and closed hand with it (the arrow until a window sets its own); a finger's takes its icon
+    /// and leaves the pointer as it is. An X11 program's drag (Smithay's window manager starts it, and the program draws its own
+    /// icon and sets the pointer through XWayland) leaves the arrow, unless the pointer is in a drag of its own. Smithay reports
+    /// every end of a drag's grab here, so nothing else ends a look: a finger's drag goes on while the mouse moves, and the
+    /// mouse's while a finger moves or lifts.
+    fn drag_ended(&mut self) {
+        match self.drag_by {
+            Some(GrabType::Touch) => self.finger_drag = None,
+            Some(GrabType::Pointer) => {
+                self.pointer_drag = None;
+                self.cursor.status = CursorImageStatus::default_named();
+            }
+            None if self.pointer_drag.is_none() => self.cursor.status = CursorImageStatus::default_named(),
+            None => return,
+        }
         self.wake();
     }
 
-    /// What a program may move or resize its window with: the pointer's grab under `serial`, if the button went down on one of
-    /// the program's own surfaces (`pressed_by`).
-    fn own_press(&self, surface: &ToplevelSurface, serial: Serial) -> Option<smithay::input::pointer::GrabStartData<App>> {
-        let start = self.pointer.with_grab(|s, g| (s == serial).then(|| g.start_data().clone())).flatten()?;
-        pressed_by(start.focus.as_ref(), &surface.wl_surface().id()).then_some(start)
+    /// The drags' icons, each with where its pointer or finger is (the icon goes at its offset from there): the pointer's drag's
+    /// at the pointer, a finger's at that finger.
+    fn drag_icons(&self) -> impl Iterator<Item = (&WlSurface, Point<f64, Logical>, Point<i32, Logical>)> + '_ {
+        let pointer = self.pointer_drag.as_ref().map(|d| (d, self.pointer_location));
+        let finger = self.finger_drag.as_ref().and_then(|(slot, d)| Some((d, self.fingers.iter().find(|f| f.slot == *slot)?.at)));
+        pointer.into_iter().chain(finger).filter_map(|(d, at)| Some((d.icon.as_ref()?, at, d.offset)))
+    }
+
+    /// What a program may move or resize its window with: the pointer's grab under `serial`, else the touchscreen's, if that
+    /// button or finger went down on one of the program's own surfaces (`pressed_by`), and a finger only while it is still down
+    /// (`finger_down`).
+    fn own_press(&self, surface: &ToplevelSurface, serial: Serial) -> Option<Press> {
+        let asker = surface.wl_surface().id();
+        if let Some(start) = self.pointer.with_grab(|s, g| (s == serial).then(|| g.start_data().clone())).flatten() {
+            return pressed_by(start.focus.as_ref(), &asker).then_some(Press::Button(start));
+        }
+        let start = self.seat.get_touch()?.with_grab(|s, g| (s == serial).then(|| g.start_data().clone())).flatten()?;
+        (self.finger_down(serial) && pressed_by(start.focus.as_ref(), &asker)).then_some(Press::Finger(start))
+    }
+
+    /// The window does `what` (a move or a resize) as the button or finger of a program's own request goes, until that button
+    /// is let go or that finger lifts (grabs.rs).
+    fn follow_press(&mut self, press: Press, serial: Serial, what: impl Follow) {
+        match press {
+            Press::Button(start) => self.pointer.clone().set_grab(self, ByButton { start, what }, serial, Focus::Clear),
+            Press::Finger(start) => {
+                if let Some(touch) = self.seat.get_touch() {
+                    touch.set_grab(self, ByFinger::new(start, what), serial);
+                }
+            }
+        }
     }
 }
 
@@ -3714,26 +3799,29 @@ impl XdgShellHandler for App {
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, serial: Serial) {
-        let start = self.own_press(&surface, serial);
+        let press = self.own_press(&surface, serial);
         if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
-            eprintln!("move request, serial {:?}, grab ok: {}", serial, start.is_some());
+            let with = match &press {
+                Some(Press::Button(_)) => "the button",
+                Some(Press::Finger(_)) => "a finger",
+                None => "no press of its own",
+            };
+            eprintln!("move request, serial {serial:?}, with {with}");
         }
-        let pointer = self.pointer.clone();
-        let (Some(start), Some(window)) = (start, self.window_of(&surface)) else {
+        let (Some(press), Some(window)) = (press, self.window_of(&surface)) else {
             return;
         };
         let origin = self.space.element_location(&window).unwrap_or_default();
-        pointer.set_grab(self, MoveGrab { start, window, origin }, serial, Focus::Clear);
+        self.follow_press(press, serial, Move { window, origin });
     }
 
     fn resize_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, serial: Serial, edges: ResizeEdge) {
-        let pointer = self.pointer.clone();
-        let (Some(start), Some(window)) = (self.own_press(&surface, serial), self.window_of(&surface)) else {
+        let (Some(press), Some(window)) = (self.own_press(&surface, serial), self.window_of(&surface)) else {
             return;
         };
         let origin = self.space.element_location(&window).unwrap_or_default();
         let size = window_geometry(&window).size;
-        pointer.set_grab(self, ResizeGrab { start, window, edges, origin, size }, serial, Focus::Clear);
+        self.follow_press(press, serial, Resize { window, edges, origin, size });
     }
 
     fn minimize_request(&mut self, surface: ToplevelSurface) {

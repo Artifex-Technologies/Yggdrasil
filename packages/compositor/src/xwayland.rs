@@ -31,7 +31,7 @@ use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, PropMode};
 use x11rb::wrapper::ConnectionExt as _;
 
-use crate::grabs::{MoveGrab, ResizeGrab};
+use crate::grabs::{ByButton, Move, Resize};
 use crate::state::{self, App, KbFocus, PtrFocus};
 
 /// Make X11 programs possible: XWayland starts when the first X11 program connects, not with the compositor (about 23 MB and
@@ -711,7 +711,7 @@ impl XwmHandler for App {
             return;
         };
         let Some(origin) = self.space.element_location(&w) else { return };
-        pointer.set_grab(self, MoveGrab { start, window: w, origin }, SERIAL_COUNTER.next_serial(), Focus::Clear);
+        pointer.set_grab(self, ByButton { start, what: Move { window: w, origin } }, SERIAL_COUNTER.next_serial(), Focus::Clear);
     }
 
     fn resize_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32, edge: X11Edge) {
@@ -731,7 +731,8 @@ impl XwmHandler for App {
             X11Edge::BottomRight => ResizeEdge::BottomRight,
         };
         let size = state::window_size(&w);
-        pointer.set_grab(self, ResizeGrab { start, window: w, edges, origin, size }, SERIAL_COUNTER.next_serial(), Focus::Clear);
+        let what = Resize { window: w, edges, origin, size };
+        pointer.set_grab(self, ByButton { start, what }, SERIAL_COUNTER.next_serial(), Focus::Clear);
     }
 
     // The clipboard and the middle-click selection between X11 and Wayland programs. An X11 program may read them only while

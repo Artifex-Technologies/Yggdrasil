@@ -457,6 +457,8 @@ pub struct State {
     pub seat_caps: u32,
     /// wl_touch's events: ("down", id, x, y) on the surface, ("motion", ...), ("up", id, 0, 0), ("frame", ...)
     pub touches: Vec<(&'static str, i32, f64, f64)>,
+    /// the serial of the last finger down (a move, a resize or a drag made with that finger names it)
+    pub touch_serial: u32,
     /// every layer surface's configures (width, height), each acked, in the order the surfaces were made
     pub layer_sizes: Vec<(u32, u32)>,
     pub layer_configures: HashMap<usize, Vec<(u32, u32)>>,
@@ -1049,7 +1051,10 @@ impl Dispatch<WlSeat, ()> for State {
 impl Dispatch<WlTouch, ()> for State {
     fn event(st: &mut Self, _: &WlTouch, event: wl_touch::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         match event {
-            wl_touch::Event::Down { id, x, y, .. } => st.touches.push(("down", id, x, y)),
+            wl_touch::Event::Down { serial, id, x, y, .. } => {
+                st.touch_serial = serial;
+                st.touches.push(("down", id, x, y));
+            }
             wl_touch::Event::Motion { id, x, y, .. } => st.touches.push(("motion", id, x, y)),
             wl_touch::Event::Up { id, .. } => st.touches.push(("up", id, 0.0, 0.0)),
             wl_touch::Event::Frame => st.touches.push(("frame", 0, 0.0, 0.0)),

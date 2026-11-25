@@ -1,8 +1,9 @@
 //! The window look of Yggdrasil's Hyprland session (packages/session/hyprland/yggdrasil.lua) on the headless backend, drawn in
 //! software: the 1-pixel border in the accent colour (80 % in front, faint behind), the corners rounded at 10, the shadow (18
 //! wide, the third power), the gaps (8 around a maximized or tiled window, 4 + 4 between tiled ones), nothing of it in full
-//! screen; and the animations (open, close, move: 800 ms on Hyprland's default curve), none with "reduce motion". Each is held to
-//! a snapshot (tests/snapshots/*.png) and to numbers worked out from the session's values.
+//! screen; and the animations (open, close, move: 800 ms on Hyprland's default curve), none with "reduce motion" nor for a window
+//! moved or resized by hand (the pointer or a finger). Each is held to a snapshot (tests/snapshots/*.png) and to numbers worked
+//! out from the session's values.
 //!
 //! The animations are looked at with the compositor's clock stopped and moved on by hand (the control socket's `clock`).
 
@@ -11,6 +12,8 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::*;
+use wayland_client::Proxy;
+use wayland_protocols::xdg::shell::client::xdg_toplevel::ResizeEdge;
 
 const BLUE: u32 = 0xff0000ff;
 const YELLOW: u32 = 0xffffff00;
@@ -274,6 +277,69 @@ fn reduce_motion_draws_every_window_at_once() {
     let v = c.window("test.v", "V");
     c.draw(&v, (100, 60), YELLOW);
     assert_eq!(comp.screenshot("HEADLESS-1").count((0, 0, 640, 400), RGB_YELLOW), 0, "the new one opens slowly");
+}
+
+/// A window moved or resized by hand (its program's own move and resize, with the button held or a finger down on it) is drawn
+/// where the pointer or the finger puts it at every frame, however the clock stands: no animation then, as on Hyprland.
+#[test]
+fn a_window_moved_or_resized_by_hand_is_drawn_under_the_hand_at_once() {
+    let _l = limit(60, "moved by hand");
+    let comp = animated(&["--size", "1000x600"]);
+    let mut c = comp.connect();
+    let (_k, _p) = c.input();
+    let w = c.window("test.w", "W");
+    c.draw(&w, (300, 200), BLUE);
+    comp.must(&format!("place {} 50 100 300 200", client_id(&comp, "test.w")));
+    c.roundtrip();
+    // its opening starts with the first frame drawn (one now), and is over 800 ms later
+    let _ = comp.screenshot("HEADLESS-1");
+    comp.must("clock +800");
+    assert!(comp.screenshot("HEADLESS-1").fills((50, 100, 300, 200), RGB_BLUE, 10), "opened where it was put");
+
+    // its program's own move with the button held on it: under the pointer at once, and the place it left bare
+    comp.must("pointer 150 200");
+    c.until("the pointer on the window", |st| st.pointer_on == Some(w.surface.id()));
+    c.state.button_serial = 0;
+    comp.must("press");
+    c.until("the press", |st| st.button_serial != 0);
+    w.toplevel._move(&c.seat, c.state.button_serial);
+    c.roundtrip();
+    comp.must("pointer 250 200");
+    let pic = comp.screenshot("HEADLESS-1");
+    assert!(pic.fills((150, 100, 300, 200), RGB_BLUE, 10), "under the pointer at once");
+    assert_eq!(pic.count((60, 120, 50, 160), BG), 50 * 160, "gone from where it was");
+    comp.must("release");
+
+    // the same with a finger (the first touch gives the seat its touch), and it stays there when the finger lifts
+    comp.must("touch-down 0 960 560");
+    comp.must("touch-up 0");
+    c.until("the seat has touch", |st| st.seat_caps & 4 != 0);
+    let _touch = c.touch();
+    let finger_on = |c: &mut Client, (x, y): (i32, i32)| {
+        c.state.touch_serial = 0;
+        comp.must(&format!("touch-down 1 {x} {y}"));
+        c.until("the finger down", |st| st.touch_serial != 0);
+        c.state.touch_serial
+    };
+    let serial = finger_on(&mut c, (250, 200));
+    w.toplevel._move(&c.seat, serial);
+    c.roundtrip();
+    comp.must("touch-move 1 350 200");
+    let pic = comp.screenshot("HEADLESS-1");
+    assert!(pic.fills((250, 100, 300, 200), RGB_BLUE, 10), "under the finger at once");
+    assert_eq!(pic.count((160, 120, 50, 160), BG), 50 * 160, "gone from where it was");
+    comp.must("touch-up 1");
+    assert!(comp.screenshot("HEADLESS-1").fills((250, 100, 300, 200), RGB_BLUE, 10), "and there when the finger lifts");
+
+    // resized with a finger from its bottom right corner: its picture stretched at once to the size the finger gives it
+    let serial = finger_on(&mut c, (530, 280));
+    w.toplevel.resize(&c.seat, serial, ResizeEdge::BottomRight);
+    c.roundtrip();
+    comp.must("touch-move 1 590 320");
+    c.until("asked to take the size the finger gives it", |st| st.wins[w.index].size == (360, 240));
+    // (less its outermost pixel all round, which the stretch blends with what is beside it)
+    assert!(comp.screenshot("HEADLESS-1").fills((251, 101, 358, 238), RGB_BLUE, 10), "that size at once");
+    comp.must("touch-up 1");
 }
 
 /// CPU time (every thread's, in microseconds) and memory (resident and proportional, kB) of a process.

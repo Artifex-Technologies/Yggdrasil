@@ -285,7 +285,7 @@ What works (each checked by hand in the nested window):
 - **Panels and backgrounds** (wlr-layer-shell): the whole Labyrinth desktop runs in it: the wallpaper, the top bar, Fylgja's notch and the dock from `yggdrasil-panel` drew correctly beside a Settings window.
 - **Screen lock** (ext-session-lock): `yggdrasil-lock` locked, typed the test password and unlocked (exit 0). While locked only the locker's own picture is drawn and only it gets input.
 - **Idle** (ext-idle-notify): `yggdrasil-idle` was told when the user went idle, and its dimming overlay (layer-shell + viewporter) was accepted.
-- **Moving a window** by its own title bar (the xdg `move` request): dragging Settings' title area moved the window; checked with a real pointer drag. **Resizing, maximize and full screen** (the matching requests, remembering and restoring the old size) are written but not yet tried by hand. Since 2026-11-24 a program's own move and resize requests are followed only while the button is held on one of that program's own surfaces (a subsurface or a menu of it counts): Smithay hands the request on with nothing but its serial, and every program can learn the serials. A request made with another program's press moves and resizes nothing (`tests/grabs.rs`), nor does one made with the compositor's own Super+drag or grip, which starts on no program's surface.
+- **Moving a window** by its own title bar (the xdg `move` request): dragging Settings' title area moved the window; checked with a real pointer drag. **Resizing, maximize and full screen** (the matching requests, remembering and restoring the old size) are written but not yet tried by hand. Since 2026-11-24 a program's own move and resize requests are followed only while the button is held on one of that program's own surfaces (a subsurface or a menu of it counts): Smithay hands the request on with nothing but its serial, and every program can learn the serials. A request made with another program's press moves and resizes nothing (`tests/grabs.rs`), nor does one made with the compositor's own Super+drag or grip, which starts on no program's surface. Since 2026-11-25 the same goes for a finger on a touchscreen: a request made with a finger down on one of the program's own surfaces is followed until that finger lifts or the touchscreen cancels it (the program hears nothing of that finger meanwhile but its lift; other fingers go on as they were), and one made with another program's finger moves and resizes nothing (`tests/grabs.rs`, headless). Only a finger still down counts: Smithay keeps the first finger's serial until every finger is up, so a request made with a finger that has already lifted while another is still down (a palm beside it), even once a new finger has taken its slot, moves and resizes nothing, and the next finger reaches the program under it (`tests/grabs.rs`). A window moved or resized by hand, with the pointer or a finger, is drawn where the hand puts it at every frame, not animated after it (`tests/look.rs`, animations on).
 - **Window list for the panel** (`wlr-foreign-toplevel-management`, written here because Smithay does not ship it): the panel found it, the top bar showed the active window's title ("Settings") and the dock lit a dot under its icon. Activate, close, minimize, maximize and full screen from the panel are written (minimized windows are kept aside and brought back by activate) but not yet tried by hand.
 - **Shortcuts handled by the compositor** (`shortcuts.rs`; when this was written they were KDE's `kglobalacceld`, today Hyprland binds the keys): the Super key on its own (start menu, through the panel's D-Bus service), Super+E/I/L/V/S/C/F/Q, Alt+F4, Alt+Tab, Super+arrows (maximize, restore or minimize, snap left and right), Super+Return. `~/.config/labyrinth/shortcuts.conf` changes or removes any of them. Checked in the nested window with test bindings (the host desktop keeps the Super key and Alt+Tab to itself): Ctrl+Shift+Left snapped the focused window to the left half, and Ctrl+Shift+Space opened the panel's start menu. The Super tap, Alt+Tab and the rest are written but could not be tried there.
 - **Window controls** drawn by the compositor for programs that ask for server-side decoration (`xdg-decoration`, mostly Qt programs): no title bar, only a grip and the round minimize, maximize and close buttons in the top right corner of the window with no background of their own (they take on the look of the program under them), level with the program's own menu or tool bar; the program keeps the whole height of its window. Drag by the grip (double click maximizes); or hold Super and drag anywhere with the left button to move, the right button to resize; grips just outside the edges resize too. A program that asks to draw its own controls (Minos, Settings, the Marketplace) gets none. `YGGDRASIL_COMPOSITOR_DECORATE=all` gives every window the pill (for testing). Checked in the nested window with Wireshark: the pill sat beside its menu row. Moving by the grip, Super+drag and the edge grips are written but were not tried by hand.
@@ -306,8 +306,9 @@ connects (since 2026-11-24, below). `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it 
   snap, close, the window controls, Super+drag and the program's own move and resize requests use the same code as for Wayland
   windows. An X11 program's own move or resize request (`_NET_WM_MOVERESIZE`) is followed only while the button is held on
   that X11 window itself; any other is ignored, as one sent while the button is held on a Wayland window (`tests/grabs.rs`),
-  on the desktop or on the lock screen. Known limitation: X11 does not tell which X11 program sent the request, so while the
-  button is held on an X11 window, another X11 program may still move that window. Hiding or destroying it is the same
+  on the desktop or on the lock screen. Known limitations: X11 does not tell which X11 program sent the request, so while the
+  button is held on an X11 window, another X11 program may still move that window; and a request made with a finger on an
+  X11 window is not followed (a Wayland program's is). Hiding or destroying it is the same
   clean-up as a closed Wayland window.
 - Menus and tooltips (override-redirect windows), and menus, tooltips, notifications and splash screens that go through the window
   manager, are drawn where they ask, on top, never get the keyboard and are not listed; a click on one goes to it.
@@ -434,12 +435,18 @@ it (maximized, then restored): its X window then goes around the window, which l
 2026-11-24, with Smithay main's XDND). Only the program whose window the button or finger went down on may turn that press
 into a drag: Smithay checks only the drag's serial, and every program can learn the serials. A program that asks with another
 program's press or finger, or with the compositor's own Super+drag or grip, is told its drag is cancelled, and nothing else
-changes: no closed hand, and the press, the finger or the move goes on. This check is the compositor's own (`dnd_requested`,
-not in our Smithay fork); an X11 program's drag is checked by the fork's first XDND fix (below). A drag's closed hand and its
-icon last exactly as long as the drag: they end when it is dropped, and when it ends without a drop (a touchscreen's cancel,
-another grab taking the button, or the dragging program going away), which Smithay main reports through
-`DndGrabHandler::cancelled`. Nothing else ends them, so a finger's drag keeps its closed hand while the mouse moves
-(`tests/dnd.rs`). A Wayland program's drag over an X11 window is told to it in XDND by Smithay's window manager, which asks
+changes: no closed hand, and the press, the finger or the move goes on. So is one that asks with its own finger after that
+finger lifted while another is still down (Smithay keeps the first finger's serial until every finger is up): no icon, and the
+next finger reaches the window under it. This check is the compositor's own (`dnd_requested`,
+not in our Smithay fork); an X11 program's drag is checked by the fork's first XDND fix (below). A drag made with the button
+turns the pointer into a closed hand and draws the drag's icon under the pointer; one made with a finger draws its icon under
+that finger and leaves the pointer as it is (since 2026-11-25). The mouse and a finger can each drag at once, each with its
+own look. A drag's look lasts exactly as long as that drag: it ends when the drag is dropped, and when it ends without a drop
+(a touchscreen's cancel, another grab taking the button or the finger, or the dragging program going away), which Smithay
+main reports through `DndGrabHandler::cancelled` without saying whose drag it was; the compositor's own grab around each drag
+(`grabs::DragGrab`) says whose, so only that one's look ends. Nothing else ends it: a finger's drag keeps its icon under the
+finger while the mouse moves, and the mouse's drag its closed hand while a finger's drag ends (`tests/dnd.rs`). A Wayland
+program's drag over an X11 window is told to it in XDND by Smithay's window manager, which asks
 the Wayland program for the data when the X11 one does; while an X11 program drags, the window manager covers the screen with
 a window of its own that takes XDND and stands in for the Wayland windows, and steps aside over X11 windows, so two X11
 programs still speak XDND to each other. An X11 program's drag icon under the pointer is passed over while a button is held
@@ -452,9 +459,8 @@ goes away ends the drag for good, and a drag the X11 program gave up ends with t
 XWayland's transfers with its X connection (above): when it closes, the window manager's clipboard, middle-click selection
 and XdndSelection transfers end before the compositor lets the window manager go; a stale transfer replaced by a new request
 is removed before it is answered, so a failed answer can no longer leave its pipe watched; and a drop on an X11 window that
-was not finished yet is cancelled (`tests/dnd.rs`). Known limitations: the drag's icon and closed hand are drawn at the mouse
-pointer, also during a finger's drag; and while a Wayland program's drag is over an X11 window (or dropped there and not
-finished yet), any X11 program can ask for its data, since X11 cannot tell programs apart. X11 programs that read a drag's
+was not finished yet is cancelled (`tests/dnd.rs`). Known limitation: while a Wayland program's drag is over an X11 window (or
+dropped there and not finished yet), any X11 program can ask for its data, since X11 cannot tell programs apart. X11 programs that read a drag's
 data before the drop (Wine; Chromium, Electron and CEF programs on X11) can take drops this way.
 
 **Our Smithay fork** (github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit in

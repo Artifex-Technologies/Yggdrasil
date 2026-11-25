@@ -254,7 +254,7 @@ impl Default for WinLook {
 }
 
 /// Where a window is drawn this frame and how opaque, from where it should be (`goal`): an animation in between, or the goal.
-/// `moved_by_hand`: the pointer drags or resizes it (no animation then, as on Hyprland).
+/// `moved_by_hand`: the pointer or a finger drags or resizes it (no animation then, as on Hyprland).
 pub fn place(
     look: &mut WinLook,
     goal: Rectangle<i32, Logical>,
