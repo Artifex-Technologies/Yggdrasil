@@ -315,6 +315,38 @@ fn xwayland_starts_when_the_first_x11_program_connects() {
     assert!(files(&d2).iter().all(|f| !std::path::Path::new(f).exists()), "{d2}'s files removed, XWayland never started");
 }
 
+/// Programs on libxcb (Xlib's too: nearly every X11 program) come through the display's abstract socket first, x11rb (the
+/// other tests' programs) only through its socket file: the first program on the abstract one starts XWayland as well, its
+/// window is managed, and a program through the file then reaches the same XWayland.
+#[test]
+fn xwayland_starts_when_the_first_x11_program_comes_through_the_abstract_socket() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    use std::os::linux::net::SocketAddrExt;
+    use std::os::unix::net::{SocketAddr, UnixStream};
+    use x11rb::rust_connection::{DefaultStream, RustConnection};
+    let _l = limit(60, "XWayland on the abstract socket");
+    let (comp, display) = with_xwayland_on(&["--size", "800x600"], |_| {});
+    let name = format!("/tmp/.X11-unix/X{}", display.trim_start_matches(':'));
+    let stream = UnixStream::connect_addr(&SocketAddr::from_abstract_name(name).unwrap()).expect("the display's abstract socket");
+    let (stream, _) = DefaultStream::from_unix_stream(stream).unwrap();
+    let conn = RustConnection::connect_to_stream(stream, 0).expect("XWayland answers on the abstract socket");
+    let pid = xwayland_of(&comp);
+    assert!(pid.is_some(), "Xwayland runs once a program has connected");
+    let root = conn.setup().roots[0].root;
+    let win = conn.generate_id().unwrap();
+    conn.create_window(0, win, root, 0, 0, 200, 150, 0, WindowClass::INPUT_OUTPUT, 0, &CreateWindowAux::new()).unwrap();
+    conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"abstract\0Abstract\0").unwrap();
+    conn.map_window(win).unwrap();
+    conn.flush().unwrap();
+    comp.wait(10, "the window managed", |c| c.window("Abstract").is_some());
+    let (second, _) = x11rb::connect(Some(&display)).expect("a program through the socket file");
+    drop(second);
+    assert_eq!(xwayland_of(&comp), pid, "one XWayland for both sockets");
+}
+
 #[test]
 fn an_x11_programs_own_icon_is_kept_for_the_dock() {
     if !xwayland_installed() {

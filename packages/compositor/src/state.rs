@@ -295,6 +295,8 @@ pub struct App {
     pub x11_display: Option<u32>,
     /// The display's sockets while no X11 program has connected yet (XWayland starts on them then: xwayland.rs, start).
     pub x11_sockets: Option<smithay::xwayland::X11Sockets>,
+    /// The watches on those sockets, which all go when the first X11 program connects (xwayland.rs, watch).
+    pub x11_watches: Vec<smithay::reexports::calloop::RegistrationToken>,
     /// The running XWayland's event source: removed when XWayland has gone away, which lets its display go (xwayland.rs).
     pub xwayland_source: Option<smithay::reexports::calloop::RegistrationToken>,
     /// When GTK's settings.ini last changed: XSETTINGS are published again when it does (reload_config).
@@ -834,6 +836,7 @@ impl App {
             xwm: None,
             x11_display: None,
             x11_sockets: None,
+            x11_watches: vec![],
             xwayland_source: None,
             gtk_ini_time: None,
             x11_reader: None,

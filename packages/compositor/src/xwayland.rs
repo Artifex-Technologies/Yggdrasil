@@ -60,9 +60,14 @@ fn watch(app: &mut App, handle: &LoopHandle<'static, App>, display: Option<u32>)
     let fds = sockets.poll_fds().into_iter().map(|f| f.try_clone_to_owned()).collect::<Result<Vec<OwnedFd>, _>>()?;
     for fd in fds {
         let h = handle.clone();
-        // the first connection on either socket (the file one or the abstract one) starts XWayland; each watch goes once it fires
-        handle
+        // the first connection on either socket (the file one or the abstract one) starts XWayland, which listens on both from
+        // then on: every watch goes then, this one too, and its copy of the socket with it (a copy kept here would hold the
+        // abstract socket's name after XWayland went away, and the display could not be bound again)
+        let token = handle
             .insert_source(Generic::new(fd, Interest::READ, Mode::Level), move |_, _, app| {
+                for t in std::mem::take(&mut app.x11_watches) {
+                    h.remove(t);
+                }
                 if let Some(sockets) = app.x11_sockets.take() {
                     if let Err(e) = spawn(app, h.clone(), sockets) {
                         eprintln!("yggdrasil-compositor: XWayland could not start ({e}); X11 programs will not run");
@@ -71,6 +76,7 @@ fn watch(app: &mut App, handle: &LoopHandle<'static, App>, display: Option<u32>)
                 Ok(PostAction::Remove)
             })
             .map_err(|e| e.error)?;
+        app.x11_watches.push(token);
     }
     app.x11_sockets = Some(sockets);
     app.x11_display = Some(display_number);

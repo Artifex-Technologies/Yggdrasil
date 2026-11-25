@@ -390,7 +390,11 @@ best size of it as a PNG for each window class in the runtime folder's `yggdrasi
 when the window shows, and again when its title changes), and the panel looks there for an icon its theme does not have and
 watches the folder, so the icon shows a moment after the window (`tests/x11.rs`, `tests/apps.rs`). When XWayland goes away
 (it crashed or was killed), its windows go and the next X11 program starts a new one on the same display, so programs already
-told DISPLAY reach it (since 2026-11-24, `tests/x11.rs`). A paste or a drop still being handed over when it goes ends with it:
+told DISPLAY reach it (since 2026-11-24, `tests/x11.rs`), whichever of the display's two sockets the first program came
+through: the abstract one, which programs on libxcb try first, or the socket file, the only one x11rb uses since its 0.14 (the
+tests' own programs). The compositor watches both until a program connects, then leaves both to XWayland. Before 2026-11-25 the
+watch on the other socket stayed, and after a first program through the file it held the abstract socket's name, so the display
+could not be bound again (`tests/x11.rs`, `tests/dnd.rs`). A paste or a drop still being handed over when it goes ends with it:
 the clipboard or the middle-click selection in either direction, and a drop's data. A Wayland program writing into its pipe
 finds it closed (EPIPE); one reading gets what was already in the pipe, then its end; one whose drop on an X11 window was not
 finished yet is told the drop was cancelled. This holds also when the compositor was busy and an X11 program had asked for the

@@ -16,8 +16,8 @@ yggdrasil-wm = { path = "../wm" }
 smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "backend_drm", "backend_gbm", "backend_udev", "backend_libinput", "backend_session_libseat", "renderer_gl", "renderer_pixman", "desktop", "wayland_frontend", "use_system_lib", "xwayland"] }
 tiny-skia = "0.12"
 # x11asked.rs and xwayland.rs: X11 properties read and written on connections of their own (the active window and the input
-# focus, programs' own icons, WM_STATE, XWayland's X resources); 0.13, beside the 0.14 Smithay main and winit use
-x11rb = "0.13"
+# focus, programs' own icons, WM_STATE, XWayland's X resources); the 0.14 Smithay main and winit use, one copy in the build
+x11rb = "0.14"
 ab_glyph = "0.2"
 wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
