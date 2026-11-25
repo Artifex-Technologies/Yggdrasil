@@ -22,7 +22,8 @@
 #   laptop-tty.sh -- ARGS ...     more for the compositor (--run COMMAND ...)
 #   YGG_PANEL_TRACE=1 laptop-tty.sh   the same, with the panel's Wayland messages in the log (WAYLAND_DEBUG=client)
 # Environment: YGG_PANEL, YGG_SETTINGS, YGG_TERMINAL (the programs, by name or path; empty: left out),
-# YGGDRASIL_COMPOSITOR_RENDERER=pixman (software drawing), YGG_NO_DBUS=1 (no bus of its own).
+# YGGDRASIL_COMPOSITOR_RENDERER=pixman (software drawing), YGGDRASIL_COMPOSITOR_CURSOR_PLANE=0 (the pointer drawn into each
+# frame, never on a cursor plane: a pointer that misbehaves only with the plane is the driver's), YGG_NO_DBUS=1 (no bus of its own).
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 BIN=${CARGO_TARGET_DIR:-$HERE/../../../target}/release/yggdrasil-compositor
