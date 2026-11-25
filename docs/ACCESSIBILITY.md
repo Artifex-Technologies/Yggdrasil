@@ -52,14 +52,19 @@ left over, and nothing reads it.
 `at-spi2-core` 2.62 (what Arch ships) announces that a screen reader is running with the `IsEnabled` property of `org.a11y.Status`; it has no
 `ScreenReaderEnabled` property. `accesskit_unix` 0.21, the version egui/eframe 0.36 pulls in, waits for `ScreenReaderEnabled`, so Settings,
 Minos and the other egui apps most likely never switch their accessibility on, even with Orca running. `accesskit_unix` 0.24 (used by the
-panel) watches `IsEnabled` and does work (see the test above). The fix is upstream (a newer egui/eframe) or carrying a patch; **recheck
-with Orca before trusting the table below**, and again when eframe is upgraded.
+panel) watches `IsEnabled` and does work (`tests/a11y/panel_a11y.sh`, below, switches the panel's on through it). The fix is
+upstream (a newer egui/eframe) or carrying a patch; **recheck with Orca before trusting the table below**, and again when eframe
+is upgraded.
 
 ## Known limitations (2026-11-19)
 
 1. **Screen readers and the panel:** the bar, dock, pop-ups and kept notifications are described to screen readers
-   (`packages/panel/src/a11y.rs`, AccessKit over AT-SPI; checked by reading the tree in a nested session,
-   `tests/a11y/nested_panel_a11y.sh`); the start menu, calendar, Fylgja and the lock screen are not.
+   (`packages/panel/src/a11y.rs`, AccessKit over AT-SPI); the start menu, calendar, Fylgja and the lock screen are not.
+   `tests/a11y/panel_a11y.sh` checks it with the panel on Yggdrasil's compositor in its headless mode and an accessibility bus
+   of its own (at-spi2-core's launcher and registry, never the desktop's): the tree as a screen reader reads it from the
+   registry (the bar's buttons, the dock, a notification's pop-up and the kept list, the "click" action on every button), and
+   a reader's click on the start button opening the start menu. It passed on 2026-11-25; with the panel's screen-reader
+   support off (`YGGDRASIL_A11Y=off`) every check of the tree fails.
 2. **The lock screen is silent:** it announces nothing ("Screen locked", "Wrong password") and gives no audible cue.
 3. **No keyboard path to the dock, bar, tray and toast buttons:** they are mouse-only, the Allow / Deny prompts of "Ask before
    connecting" included.
