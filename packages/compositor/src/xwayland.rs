@@ -24,6 +24,7 @@ use smithay::wayland::selection::primary_selection::{
 };
 use smithay::wayland::selection::SelectionTarget;
 use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState};
+use smithay::xwayland::xwm::settings::Value;
 use smithay::xwayland::xwm::{Reorder, ResizeEdge as X11Edge, WmWindowProperty, XwmId};
 use smithay::xwayland::{X11Sockets, X11Surface, X11Wm, XWayland, XWaylandClientData, XWaylandEvent, XwmHandler};
 use x11rb::connection::Connection as _;
@@ -113,7 +114,6 @@ fn spawn(app: &mut App, handle: LoopHandle<'static, App>, sockets: X11Sockets) -
                             let _ = wm.set_randr_primary_output(Some(&app.output));
                             app.xwm = Some(wm);
                             app.x11_display = Some(display_number);
-                            // the reader first: it also keeps XSETTINGS, which x11_resources sends it
                             app.x11_reader = crate::x11asked::Reader::start(display_number, &wm_handle);
                             app.x11_resources(true);
                         }
@@ -203,13 +203,20 @@ pub fn with_resources(old: &str, set: &[(&str, String)]) -> String {
     s
 }
 
-/// Set X resources on XWayland's root window (RESOURCE_MANAGER, as xrdb does), the other lines kept. On a thread of its own:
-/// the X server is a client of this compositor and may be waiting on it.
 /// A value in XSETTINGS.
 #[derive(Clone, Debug, PartialEq)]
 pub enum XVal {
     Int(i32),
     Str(String),
+}
+
+impl From<XVal> for Value {
+    fn from(v: XVal) -> Value {
+        match v {
+            XVal::Int(i) => Value::Integer(i),
+            XVal::Str(s) => Value::String(s),
+        }
+    }
 }
 
 /// GTK's own settings file (settings.ini, which ygg-theme and Settings write).
@@ -221,21 +228,23 @@ pub fn gtk_ini_path() -> std::path::PathBuf {
     config.join("gtk-3.0/settings.ini")
 }
 
+/// The settings.ini keys GTK also reads from XSETTINGS: the key, its XSETTINGS name, a number (true/false or digits) rather
+/// than text.
+const GTK_XSETTINGS: [(&str, &str, bool); 10] = [
+    ("gtk-theme-name", "Net/ThemeName", false),
+    ("gtk-icon-theme-name", "Net/IconThemeName", false),
+    ("gtk-font-name", "Gtk/FontName", false),
+    ("gtk-sound-theme-name", "Net/SoundThemeName", false),
+    ("gtk-decoration-layout", "Gtk/DecorationLayout", false),
+    ("gtk-xft-hintstyle", "Xft/HintStyle", false),
+    ("gtk-xft-rgba", "Xft/RGBA", false),
+    ("gtk-xft-antialias", "Xft/Antialias", true),
+    ("gtk-xft-hinting", "Xft/Hinting", true),
+    ("gtk-enable-animations", "Gtk/EnableAnimations", true),
+];
+
 /// GTK's settings from settings.ini's [Settings] group, under the names XSETTINGS gives them (only the ones the file sets).
 pub fn gtk_xsettings(ini: &str) -> Vec<(String, XVal)> {
-    // settings.ini key, XSETTINGS name, a number (true/false or digits) rather than text
-    const MAP: [(&str, &str, bool); 10] = [
-        ("gtk-theme-name", "Net/ThemeName", false),
-        ("gtk-icon-theme-name", "Net/IconThemeName", false),
-        ("gtk-font-name", "Gtk/FontName", false),
-        ("gtk-sound-theme-name", "Net/SoundThemeName", false),
-        ("gtk-decoration-layout", "Gtk/DecorationLayout", false),
-        ("gtk-xft-hintstyle", "Xft/HintStyle", false),
-        ("gtk-xft-rgba", "Xft/RGBA", false),
-        ("gtk-xft-antialias", "Xft/Antialias", true),
-        ("gtk-xft-hinting", "Xft/Hinting", true),
-        ("gtk-enable-animations", "Gtk/EnableAnimations", true),
-    ];
     let mut in_settings = false;
     let mut out = vec![];
     for l in ini.lines().map(str::trim) {
@@ -245,7 +254,7 @@ pub fn gtk_xsettings(ini: &str) -> Vec<(String, XVal)> {
         }
         let Some((k, v)) = l.split_once('=').filter(|_| in_settings) else { continue };
         let (k, v) = (k.trim(), v.trim().trim_matches('"'));
-        let Some((_, name, number)) = MAP.iter().find(|(key, _, _)| *key == k) else { continue };
+        let Some((_, name, number)) = GTK_XSETTINGS.iter().find(|(key, _, _)| *key == k) else { continue };
         let value = if *number {
             match v {
                 "true" => XVal::Int(1),
@@ -264,36 +273,8 @@ pub fn gtk_xsettings(ini: &str) -> Vec<(String, XVal)> {
     out
 }
 
-/// The XSETTINGS property (`_XSETTINGS_SETTINGS`, the freedesktop XSETTINGS layout): little-endian, every setting last changed
-/// at `serial`.
-pub fn xsettings_blob(serial: u32, items: &[(String, XVal)]) -> Vec<u8> {
-    let pad = |b: &mut Vec<u8>, n: usize| b.extend(std::iter::repeat_n(0u8, (4 - n % 4) % 4));
-    // byte order (LSBFirst), three unused, the serial, how many
-    let mut b = vec![0u8, 0, 0, 0];
-    b.extend(serial.to_le_bytes());
-    b.extend((items.len() as u32).to_le_bytes());
-    for (name, v) in items {
-        b.push(match v {
-            XVal::Int(_) => 0,
-            XVal::Str(_) => 1,
-        });
-        b.push(0);
-        b.extend((name.len() as u16).to_le_bytes());
-        b.extend(name.as_bytes());
-        pad(&mut b, name.len());
-        b.extend(serial.to_le_bytes());
-        match v {
-            XVal::Int(i) => b.extend(i.to_le_bytes()),
-            XVal::Str(s) => {
-                b.extend((s.len() as u32).to_le_bytes());
-                b.extend(s.as_bytes());
-                pad(&mut b, s.len());
-            }
-        }
-    }
-    b
-}
-
+/// Set X resources on XWayland's root window (RESOURCE_MANAGER, as xrdb does), the other lines kept. On a thread of its own:
+/// the X server is a client of this compositor and may be waiting on it.
 fn set_x_resources(display: u32, set: Vec<(&'static str, String)>) {
     let _ = std::thread::Builder::new().name("x-resources".into()).spawn(move || {
         let Ok((conn, screen)) = x11rb::rust_connection::RustConnection::connect(Some(&format!(":{display}"))) else { return };
@@ -328,7 +309,7 @@ impl App {
     /// 1.0, as KDE does for programs that scale themselves: the fonts of GTK and Qt programs, and Chromium-based ones (Steam's
     /// window) whole, grow back to the desktop's size). Set when the window manager starts, when the scale changes and when
     /// the pointer's theme does.
-    pub fn x11_resources(&self, dpi: bool) {
+    pub fn x11_resources(&mut self, dpi: bool) {
         // only once XWayland runs: a connection to the display before then would start it
         let (Some(d), true) = (self.x11_display, self.xwm.is_some()) else { return };
         let scale = self.x11_client_scale();
@@ -337,16 +318,21 @@ impl App {
         if dpi {
             set.push(("Xft.dpi", ((96.0 * scale).round() as u32).to_string()));
         }
-        // XSETTINGS too (GTK programs under X11 read their DPI, pointer, theme and font there, and follow changes at once)
-        if let Some(r) = &self.x11_reader {
-            let ini = std::fs::read_to_string(gtk_ini_path()).unwrap_or_default();
-            let mut items = gtk_xsettings(&ini);
-            items.push(("Gtk/CursorThemeName".into(), XVal::Str(theme.clone())));
-            items.push(("Gtk/CursorThemeSize".into(), XVal::Int((size as f64 * scale).round() as i32)));
-            items.push(("Xft/DPI".into(), XVal::Int((96.0 * scale * 1024.0).round() as i32)));
-            let serial = self.xsettings_serial.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            r.settings(xsettings_blob(serial, &items));
+        // XSETTINGS too (GTK programs under X11 read their DPI, pointer, theme and font there, and follow changes at once), kept
+        // by Smithay's window manager, which owns _XSETTINGS_S0 from its start. A setting settings.ini no longer has is taken out.
+        let ini = std::fs::read_to_string(gtk_ini_path()).unwrap_or_default();
+        let mut items = gtk_xsettings(&ini);
+        items.push(("Gtk/CursorThemeName".into(), XVal::Str(theme)));
+        items.push(("Gtk/CursorThemeSize".into(), XVal::Int((size as f64 * scale).round() as i32)));
+        items.push(("Xft/DPI".into(), XVal::Int((96.0 * scale * 1024.0).round() as i32)));
+        let gone: Vec<String> =
+            GTK_XSETTINGS.iter().map(|(_, n, _)| n.to_string()).filter(|n| !items.iter().any(|(i, _)| i == n)).collect();
+        if let Some(wm) = &mut self.xwm {
+            let _ = wm.set_xsettings(items.into_iter().map(|(n, v)| (n, v.into())));
+            let _ = wm.remove_xsettings(gone.into_iter());
         }
+        // Smithay only queues them on its window manager's X connection: they are sent once it has handled its next X event.
+        // Changing the root's RESOURCE_MANAGER (set_x_resources) brings it one at once.
         set_x_resources(d, set);
     }
 
@@ -884,23 +870,6 @@ mod tests {
             ]
         );
         assert!(gtk_xsettings("").is_empty());
-    }
-
-    #[test]
-    fn xsettings_are_laid_out_as_the_spec_says() {
-        let b = xsettings_blob(7, &[("Xft/DPI".into(), XVal::Int(122880)), ("Net/ThemeName".into(), XVal::Str("Adw".into()))]);
-        let mut want = vec![0u8, 0, 0, 0, 7, 0, 0, 0, 2, 0, 0, 0];
-        // an integer: type 0, name length 7, the name padded to 8, serial, value
-        want.extend([0, 0, 7, 0]);
-        want.extend(b"Xft/DPI\0");
-        want.extend([7, 0, 0, 0]);
-        want.extend(122880i32.to_le_bytes());
-        // a string: type 1, name length 13 padded to 16, serial, length 3, the text padded to 4
-        want.extend([1, 0, 13, 0]);
-        want.extend(b"Net/ThemeName\0\0\0");
-        want.extend([7, 0, 0, 0, 3, 0, 0, 0]);
-        want.extend(b"Adw\0");
-        assert_eq!(b, want);
     }
 
     #[test]

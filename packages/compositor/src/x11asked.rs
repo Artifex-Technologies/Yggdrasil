@@ -18,10 +18,6 @@
 //! icon its theme does not have. The first window of a class gives it; it is read when the window is shown and again when its
 //! title changes (a program that sets its icon after its window shows).
 //!
-//! It also is the X11 display's XSETTINGS manager (the freedesktop XSETTINGS spec): it owns `_XSETTINGS_S0` with a window of
-//! its own and keeps the settings in its `_XSETTINGS_SETTINGS`, which the compositor sends it (xwayland.rs, x11_resources: the
-//! DPI, the pointer, GTK's theme, icons and font). GTK programs under X11 read them there and follow a change at once.
-//!
 //! It also keeps ICCCM's WM_STATE in step with minimizing: Iconic when a window is minimized, Normal when it is shown again.
 //! Smithay only writes it when a window is mapped or unmapped. Wine watches it: a game that minimized itself (old DirectX 9
 //! games do when they lose the focus) is restored only when WM_STATE goes back to Normal. Without that Wine kept the game at
@@ -32,7 +28,7 @@ use std::sync::mpsc::{channel, Sender};
 use smithay::reexports::calloop::channel::{channel as loop_channel, Event};
 use smithay::reexports::calloop::LoopHandle;
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt, EventMask, InputFocus, PropMode};
+use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, EventMask, InputFocus, PropMode};
 use x11rb::wrapper::ConnectionExt as _;
 
 use crate::state::App;
@@ -62,8 +58,6 @@ enum Job {
     Ask(u32),
     /// this window's own icon, kept for its class (unless the class has one already)
     Icon(u32, String),
-    /// the XSETTINGS to publish now (the `_XSETTINGS_SETTINGS` property's bytes)
-    Settings(Vec<u8>),
     /// this X11 window has the keyboard now (0: none has: a Wayland window or nothing has it)
     Activate(u32),
     /// WM_STATE: Iconic (minimized) or Normal
@@ -168,9 +162,6 @@ impl Reader {
                 let atoms = Atoms { fullscreen, max_vert, max_horz };
                 let net_wm_icon = atom("_NET_WM_ICON");
                 let icons = yggdrasil_conf::dirs::window_icons();
-                let xsettings = (atom(&format!("_XSETTINGS_S{screen}")), atom("_XSETTINGS_SETTINGS"), atom("MANAGER"));
-                // the window that owns the XSETTINGS selection, once the first settings came
-                let mut xs_owner: Option<u32> = None;
                 // the root's properties are watched: Smithay rewrites _NET_ACTIVE_WINDOW on every focus event, with the window
                 // the event was reported on (the root, for a focus set on a window), so the right one is written again
                 let _ = conn.change_window_attributes(root, &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE));
@@ -216,30 +207,6 @@ impl Reader {
                         };
                         let window = match job {
                             Job::Ask(w) => w,
-                            Job::Settings(blob) => {
-                                let (Some(selection), Some(prop), Some(manager)) = xsettings else { continue };
-                                let newly = xs_owner.is_none();
-                                let owner = match xs_owner {
-                                    Some(w) => w,
-                                    None => {
-                                        use x11rb::protocol::xproto::{CreateWindowAux, WindowClass};
-                                        let Ok(w) = conn.generate_id() else { continue };
-                                        let aux = CreateWindowAux::new();
-                                        let _ = conn.create_window(0, w, root, -1, -1, 1, 1, 0, WindowClass::INPUT_ONLY, 0, &aux);
-                                        let _ = conn.set_selection_owner(w, selection, x11rb::CURRENT_TIME);
-                                        xs_owner = Some(w);
-                                        w
-                                    }
-                                };
-                                let _ = conn.change_property8(PropMode::REPLACE, owner, prop, prop, &blob);
-                                if newly {
-                                    // programs that started first are told a manager is there (the MANAGER client message)
-                                    let event = ClientMessageEvent::new(32, root, manager, [x11rb::CURRENT_TIME, selection, owner, 0, 0]);
-                                    let _ = conn.send_event(false, root, EventMask::STRUCTURE_NOTIFY, event);
-                                }
-                                let _ = conn.flush();
-                                continue;
-                            }
                             Job::Icon(w, class) => {
                                 let (Some(dir), Some(file), Some(prop)) =
                                     (&icons, yggdrasil_conf::dirs::window_icon_file(&class), net_wm_icon)
@@ -318,11 +285,6 @@ impl Reader {
     /// Ask what this window asked for (answered later, only when it asked for something).
     pub fn ask(&self, window: u32) {
         self.send(Job::Ask(window));
-    }
-
-    /// Publish these XSETTINGS (the property's bytes: xwayland.rs, xsettings_blob).
-    pub fn settings(&self, blob: Vec<u8>) {
-        self.send(Job::Settings(blob));
     }
 
     /// Keep this window's own icon for its class (`class`), unless the class has one already.

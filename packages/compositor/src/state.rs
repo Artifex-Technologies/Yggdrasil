@@ -288,8 +288,6 @@ pub struct App {
     pub x11_sockets: Option<smithay::xwayland::X11Sockets>,
     /// The running XWayland's event source: removed when XWayland has gone away, which lets its display go (xwayland.rs).
     pub xwayland_source: Option<smithay::reexports::calloop::RegistrationToken>,
-    /// The XSETTINGS serial: one more each time they are published (xwayland.rs, x11_resources).
-    pub xsettings_serial: std::sync::atomic::AtomicU32,
     /// When GTK's settings.ini last changed: XSETTINGS are published again when it does (reload_config).
     gtk_ini_time: Option<std::time::SystemTime>,
     /// Reads what an X11 window asked for before it was shown (x11asked.rs).
@@ -655,7 +653,6 @@ impl App {
             x11_display: None,
             x11_sockets: None,
             xwayland_source: None,
-            xsettings_serial: Default::default(),
             gtk_ini_time: None,
             x11_reader: None,
             x11_active: None,
