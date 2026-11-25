@@ -63,4 +63,4 @@ lto = "thin"
 #             end when XWayland's X connection closes (before, such a transfer's pipe becoming ready ended the compositor)
 #   5bb77de9  rustfmt only
 [patch.crates-io]
-smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "5bb77de946b466e031a63deef6c200bed091990b" }
+smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "cef101c1bd0f7c4b533fcbe19abd06a6b90ca7ce" }

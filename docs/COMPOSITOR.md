@@ -452,6 +452,9 @@ a window of its own that takes XDND and stands in for the Wayland windows, and s
 programs still speak XDND to each other. An X11 program's drag icon under the pointer is passed over while a button is held
 (only then can a drag go on, so X11 menus take the pointer again after a drag was given up), and XWayland going away in the
 middle of a drag ends only its own part: a Wayland program's drag goes on to the Wayland windows, and a Wayland program whose drop on an X11 window was not finished yet is told the drop was cancelled (`tests/dnd.rs`).
+A drag made with a finger goes the same way: a Wayland program's, onto a Wayland or an X11 window, dropped where the finger
+lifts. An X11 program hears a finger as the pointer and its left button (XWayland emulates them for programs that do not
+take touch themselves), so it starts a drag with one as with a mouse (`tests/dnd.rs`).
 Smithay main's drag and drop needed three fixes, carried in our fork: only a drag started on XWayland's surfaces can become
 an X11 program's drag (so an X11 program can no longer take over a press on a Wayland window, or the compositor's own move or
 resize; X11 programs are not told apart there, so one can still take over a press on another's window), a drop target that
