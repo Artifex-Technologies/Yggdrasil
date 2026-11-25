@@ -171,7 +171,7 @@ impl Player {
     }
 
     /// Opens a stream (an https:// address), with its sound as a separate stream when the site sends them apart (YouTube above
-    /// 720p), from `start` seconds. Used by Ratatoskr.
+    /// 720p), from `start` seconds. Used by Apollo.
     pub fn open_stream(url: &str, audio: Option<&str>, start: Option<f64>, wake: Box<dyn Fn() + Send + Sync>) -> Result<Player, String> {
         Self::open_stream_with(url, audio, start, None, None, wake)
     }

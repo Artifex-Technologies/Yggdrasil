@@ -2,7 +2,7 @@
 //! look as Minos and Settings).
 //!
 //!   yggdrasil-player [FILE]
-//!   yggdrasil-player [--title TEXT] [--audio URL] [--start SECONDS] [--mute] [--user-agent UA] [--referrer URL] URL     a stream (https://, or a ytdlp: source yt-dlp fetches), as Ratatoskr plays videos: the
+//!   yggdrasil-player [--title TEXT] [--audio URL] [--start SECONDS] [--mute] [--user-agent UA] [--referrer URL] URL     a stream (https://, or a ytdlp: source yt-dlp fetches), as Apollo plays videos: the
 //!                                                                          picture's address, the sound's when it comes apart
 //!
 //! Keys: Space or K play/pause, Left/Right (J/L) ten seconds back/on, Up/Down volume, M mute, F or a double-click full screen,
@@ -29,7 +29,7 @@ const STEP_MS: i64 = 10_000;
 const VIDEO_TYPES: [&str; 14] = ["mkv", "mp4", "m4v", "avi", "mov", "webm", "wmv", "flv", "mpg", "mpeg", "ts", "m2ts", "ogv", "3gp"];
 
 struct Playing {
-    /// The window's title: the file's name, or the title Ratatoskr passed for a stream.
+    /// The window's title: the file's name, or the title Apollo passed for a stream.
     title: String,
     vlc: vlc::Player,
     tex: Option<TextureHandle>,

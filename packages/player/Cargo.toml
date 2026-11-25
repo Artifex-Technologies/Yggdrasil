@@ -14,7 +14,7 @@ name = "yggdrasil-player"
 path = "src/main.rs"
 required-features = ["app"]
 
-# the window needs these; the library (src/vlc.rs, for Ratatoskr) needs none of them
+# the window needs these; the library (src/vlc.rs, for Apollo) needs none of them
 [features]
 default = ["app"]
 app = ["dep:yggdrasil-ui", "dep:eframe", "dep:zbus"]
