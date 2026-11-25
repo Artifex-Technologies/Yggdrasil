@@ -1154,7 +1154,7 @@ fn give_an_x11_drag_up(comp: &Compositor, x: &X11, win: XWindow, from: (i32, i32
     x.send(stand_in, x.leave, [win, 0, 0, 0, 0]);
     x.window(b"after\0After\0", EventMask::NO_EVENT);
     comp.wait(10, "the window shown after the leave managed", |c| c.window("After").is_some());
-    comp.must(&format!("place {} 600 350 300 200", id_of(comp, "After")));
+    place_x11(comp, "After", (600, 350));
     comp.must("release");
 }
 
@@ -1352,7 +1352,7 @@ fn an_x11_program_cannot_take_a_wayland_drag_over() {
     h.conn.set_selection_owner(hidden, h.selection, x11rb::CURRENT_TIME).unwrap();
     h.window(b"later\0Later\0", EventMask::NO_EVENT);
     comp.wait(10, "the window shown after it managed", |c| c.window("Later").is_some());
-    comp.must(&format!("place {} 600 350 300 200", id_of(&comp, "Later")));
+    place_x11(&comp, "Later", (600, 350));
     let (px, py) = (ti.at.0 + 150, ti.at.1 + 100);
     let over = h.conn.translate_coordinates(h.root, h.root, px as i16, py as i16).unwrap().reply().unwrap().child;
     assert!(over == x11rb::NONE || h.aware_of(over).is_none(), "no stand-in for the X11 program's drag");
@@ -1418,6 +1418,9 @@ fn kill_xwayland(comp: &Compositor) -> u32 {
 fn goes_on(comp: &mut Compositor, display: &str, gone: u32) {
     let answer = comp.ctl("outputs");
     assert!(answer.is_ok() && matches!(comp.child.try_wait(), Ok(None)), "the compositor ended: {answer:?}\n{}", comp.log_tail(20));
+    // the display is bound again before the next program connects (as tests/x11.rs's restart test waits)
+    let again = format!("it starts again with the next X11 program (DISPLAY={display})");
+    comp.wait(10, "the display bound again", |c| c.log.lock().unwrap().iter().any(|l| l.contains(&again)));
     let next = X11::connect(display);
     next.window(b"next\0Next\0", EventMask::NO_EVENT);
     comp.wait(10, "the next X11 program's window managed", |c| c.window("Next").is_some());
