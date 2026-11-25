@@ -1738,7 +1738,10 @@ fn draw_pane(
     // empty folder could not be pasted into with the mouse).
     let mut bg_area = ui.available_rect_before_wrap();
     bg_area.max.y -= 26.0; // the item count below the list
-    let bg = ui.interact(bg_area, ui.id().with(("minos-list-bg", cx.pi)), Sense::click());
+                           // a drag on it draws a box that selects what it covers (YGG-77)
+    let bg = ui.interact(bg_area, ui.id().with(("minos-list-bg", cx.pi)), Sense::click_and_drag());
+    let drag_scroll = drag_scrolls(ui.ctx());
+    ui.ctx().data_mut(|d| d.remove::<Vec<(Rect, PathBuf)>>(egui::Id::new(("minos-item-rects", cx.pi))));
     let read_only = in_pc || in_archive;
     bg.context_menu(|ui| {
         if ui.add_enabled(clip_has && !read_only, egui::Button::new("Paste")).clicked() {
@@ -1858,6 +1861,7 @@ fn draw_pane(
                                 });
                             });
                             let r = row.response();
+                            record_item(&ectx, cx.pi, Rect::from_min_size(r.rect.min, vec2(r.rect.width(), 30.0)), &e.path);
                             entry_interact(&ectx, &r, e, pos, &order, shown, selected, anchor, &cx, actions);
                         });
                     });
@@ -1865,7 +1869,8 @@ fn draw_pane(
                 // In a narrow pane only the name and the size are kept, so the table never outgrows the pane.
                 let avail_w = ui.available_width();
                 let narrow = avail_w < 560.0;
-                let mut tb = TableBuilder::new(ui).striped(true).resizable(!narrow).sense(Sense::click_and_drag());
+                let mut tb =
+                    TableBuilder::new(ui).striped(true).resizable(!narrow).sense(Sense::click_and_drag()).drag_to_scroll(drag_scroll);
                 if let Some(r) = want_row {
                     tb = tb.scroll_to_row(r, None);
                 }
@@ -1928,6 +1933,7 @@ fn draw_pane(
                             });
                         });
                         let r = row.response();
+                        record_item(&ectx, cx.pi, Rect::from_min_size(r.rect.min, vec2(r.rect.width(), 28.0)), &e.path);
                         entry_interact(&ectx, &r, e, pos, &order, shown, selected, anchor, &cx, actions);
                     });
                 });
@@ -1937,74 +1943,109 @@ fn draw_pane(
             let size = GALLERY_SIZES[st.gallery_size.min(GALLERY_SIZES.len() - 1)];
             let per_row = (ui.available_width() / (size + 12.0 + ui.spacing().item_spacing.x)).floor().max(1.0) as usize;
             ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("minos-cols"), per_row));
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    for (pos, &i) in order.iter().enumerate() {
-                        let e = &shown[i];
-                        let cell = vec2(size + 12.0, size + 34.0);
-                        let (rect, _) = ui.allocate_exact_size(cell, Sense::hover());
-                        let r = ui.interact(rect, ui.id().with(("cell", pos)), Sense::click_and_drag());
-                        if selected.contains(&e.path) {
-                            ui.painter().rect_filled(rect, CornerRadius::same(8), pal.select);
-                        } else if r.hovered() {
-                            ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
-                        }
-                        let img_rect = Rect::from_min_size(rect.min + vec2(6.0, 4.0), vec2(size, size));
-                        let tint = st.color_for(&e.path).map(rgb);
-                        let cut = is_cut(ui.ctx(), &e.path);
-                        if !e.is_dir && !in_archive && is_image(&e.path) && ui.is_rect_visible(rect) {
-                            let alpha = if cut { (255.0 * CUT_OPACITY) as u8 } else { 255 };
-                            egui::Image::new(file_uri(&e.path))
-                                .fit_to_exact_size(img_rect.size())
-                                .corner_radius(6)
-                                .tint(Color32::from_white_alpha(alpha))
-                                .paint_at(ui, img_rect);
-                        } else {
-                            let mut painter = ui.painter().clone();
-                            if cut {
-                                painter.multiply_opacity(CUT_OPACITY);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .scroll_source(egui::containers::scroll_area::ScrollSource { drag: drag_scroll, ..Default::default() })
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        for (pos, &i) in order.iter().enumerate() {
+                            let e = &shown[i];
+                            let cell = vec2(size + 12.0, size + 34.0);
+                            let (rect, _) = ui.allocate_exact_size(cell, Sense::hover());
+                            let r = ui.interact(rect, ui.id().with(("cell", pos)), Sense::click_and_drag());
+                            if selected.contains(&e.path) {
+                                ui.painter().rect_filled(rect, CornerRadius::same(8), pal.select);
+                            } else if r.hovered() {
+                                ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
                             }
-                            paint_entry_icon(&painter, &pal, st, e, img_rect);
-                        }
-                        let mut badge_x = -10.0;
-                        if let Some(b) = cloud::badge_for(&e.path, cx.links, cx.reports) {
-                            paint_badge(ui.painter(), rect.right_top() + vec2(badge_x, 12.0), b, &pal);
-                            badge_x -= 16.0;
-                        }
-                        if let Some(a) = drive_avail(cx.st, e) {
-                            paint_avail(ui.painter(), rect.right_top() + vec2(badge_x, 12.0), a, &pal);
-                        }
-                        let mut shown_name = e.name.clone();
-                        let max_chars = ((size + 12.0) / 7.0) as usize;
-                        if shown_name.chars().count() > max_chars {
-                            shown_name = shown_name.chars().take(max_chars.saturating_sub(1)).collect::<String>() + "...";
-                        }
-                        let name_rect = Rect::from_min_max(
-                            pos2(rect.left() + 2.0, rect.bottom() - 28.0),
-                            pos2(rect.right() - 2.0, rect.bottom() - 4.0),
-                        );
-                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("minos-name-rect", e.path.clone())), name_rect));
-                        let mut editing = false;
-                        ui.scope_builder(UiBuilder::new().max_rect(name_rect), |ui| {
-                            editing = inline_rename(ui, &pal, e);
-                        });
-                        if !editing {
-                            ui.painter().text(
-                                pos2(rect.center().x, rect.bottom() - 16.0),
-                                Align2::CENTER_CENTER,
-                                shown_name,
-                                FontId::proportional(13.0),
-                                tint.unwrap_or(pal.text),
+                            let img_rect = Rect::from_min_size(rect.min + vec2(6.0, 4.0), vec2(size, size));
+                            let tint = st.color_for(&e.path).map(rgb);
+                            let cut = is_cut(ui.ctx(), &e.path);
+                            if !e.is_dir && !in_archive && is_image(&e.path) && ui.is_rect_visible(rect) {
+                                let alpha = if cut { (255.0 * CUT_OPACITY) as u8 } else { 255 };
+                                egui::Image::new(file_uri(&e.path))
+                                    .fit_to_exact_size(img_rect.size())
+                                    .corner_radius(6)
+                                    .tint(Color32::from_white_alpha(alpha))
+                                    .paint_at(ui, img_rect);
+                            } else {
+                                let mut painter = ui.painter().clone();
+                                if cut {
+                                    painter.multiply_opacity(CUT_OPACITY);
+                                }
+                                paint_entry_icon(&painter, &pal, st, e, img_rect);
+                            }
+                            let mut badge_x = -10.0;
+                            if let Some(b) = cloud::badge_for(&e.path, cx.links, cx.reports) {
+                                paint_badge(ui.painter(), rect.right_top() + vec2(badge_x, 12.0), b, &pal);
+                                badge_x -= 16.0;
+                            }
+                            if let Some(a) = drive_avail(cx.st, e) {
+                                paint_avail(ui.painter(), rect.right_top() + vec2(badge_x, 12.0), a, &pal);
+                            }
+                            let mut shown_name = e.name.clone();
+                            let max_chars = ((size + 12.0) / 7.0) as usize;
+                            if shown_name.chars().count() > max_chars {
+                                shown_name = shown_name.chars().take(max_chars.saturating_sub(1)).collect::<String>() + "...";
+                            }
+                            let name_rect = Rect::from_min_max(
+                                pos2(rect.left() + 2.0, rect.bottom() - 28.0),
+                                pos2(rect.right() - 2.0, rect.bottom() - 4.0),
                             );
+                            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("minos-name-rect", e.path.clone())), name_rect));
+                            // a child that takes no room in the wrapping row: a scope would, and push the next cell down
+                            let mut name_ui = ui.new_child(UiBuilder::new().max_rect(name_rect));
+                            let editing = inline_rename(&mut name_ui, &pal, e);
+                            if !editing {
+                                ui.painter().text(
+                                    pos2(rect.center().x, rect.bottom() - 16.0),
+                                    Align2::CENTER_CENTER,
+                                    shown_name,
+                                    FontId::proportional(13.0),
+                                    tint.unwrap_or(pal.text),
+                                );
+                            }
+                            let r = r.on_hover_text(&e.name);
+                            if want_row == Some(pos) {
+                                r.scroll_to_me(None);
+                            }
+                            record_item(ui.ctx(), cx.pi, rect, &e.path);
+                            entry_interact(ui.ctx(), &r, e, pos, &order, shown, selected, anchor, &cx, actions);
                         }
-                        let r = r.on_hover_text(&e.name);
-                        if want_row == Some(pos) {
-                            r.scroll_to_me(None);
-                        }
-                        entry_interact(ui.ctx(), &r, e, pos, &order, shown, selected, anchor, &cx, actions);
-                    }
+                    });
                 });
-            });
+        }
+    }
+    // the box (YGG-77): from where the drag on empty space began to the pointer, selecting what it covers as it moves
+    {
+        let ctx = ui.ctx().clone();
+        let box_id = egui::Id::new(("minos-box", cx.pi));
+        // a finger draws a box only after a double tap (one finger drags to scroll); the mouse always does
+        let finger_ok =
+            !ctx.input(|i| i.any_touches()) || ctx.data(|d| d.get_temp::<Taps>(egui::Id::new("minos-taps"))).is_some_and(|t| t.armed);
+        if bg.drag_started() && finger_ok {
+            if let Some(start) = ctx.input(|i| i.pointer.press_origin()) {
+                let base = if ctx.input(|i| i.modifiers.command) { selected.clone() } else { BTreeSet::new() };
+                ctx.data_mut(|d| d.insert_temp(box_id, BoxDrag { start, base }));
+            }
+        }
+        if let Some(b) = ctx.data(|d| d.get_temp::<BoxDrag>(box_id)) {
+            if bg.dragged() {
+                if let Some(now) = ctx.input(|i| i.pointer.interact_pos()) {
+                    let area = Rect::from_two_pos(b.start, now);
+                    let items: Vec<(Rect, PathBuf)> =
+                        ctx.data(|d| d.get_temp(egui::Id::new(("minos-item-rects", cx.pi)))).unwrap_or_default();
+                    *selected = box_covers(&items, area, &b.base);
+                    *anchor = None;
+                    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, box_id));
+                    let a = accent_colour();
+                    painter.rect_filled(area, 2, Color32::from_rgba_unmultiplied(a.r(), a.g(), a.b(), 40));
+                    painter.rect_stroke(area, 2, egui::Stroke::new(1.0, a), egui::StrokeKind::Inside);
+                    ctx.request_repaint();
+                }
+            } else {
+                ctx.data_mut(|d| d.remove::<BoxDrag>(box_id));
+            }
         }
     }
     if new_sort.key != sort.key || new_sort.descending != sort.descending {
@@ -5090,6 +5131,87 @@ mod session {
 }
 
 /// The accent for drop targets: the operating system's default (its branding), else Yggdrasil's.
+/// Where an item is this frame, for a box being drawn (YGG-77). A table row's response reaches below the row (egui_extras),
+/// so rows are given as their top and the table's row height.
+fn record_item(ctx: &egui::Context, pi: usize, rect: Rect, path: &Path) {
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<Vec<(Rect, PathBuf)>>(egui::Id::new(("minos-item-rects", pi))).push((rect, path.to_path_buf()))
+    });
+}
+
+// ---- box selection (YGG-77) ----
+
+/// A box being drawn in a pane: where the press began, and the selection it adds to (Ctrl held at the start), or none.
+#[derive(Clone, Debug)]
+struct BoxDrag {
+    start: egui::Pos2,
+    base: BTreeSet<PathBuf>,
+}
+
+/// What a box covers: every item whose rectangle it touches, added to `base`.
+fn box_covers(items: &[(Rect, PathBuf)], area: Rect, base: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
+    let mut out = base.clone();
+    out.extend(items.iter().filter(|(r, _)| r.intersects(area)).map(|(_, p)| p.clone()));
+    out
+}
+
+/// A second tap this soon after a tap, this near it, starts a box when the finger then drags (a double tap and drag);
+/// a tap is a touch shorter and stiller than these.
+const DOUBLE_TAP_S: f64 = 0.4;
+const DOUBLE_TAP_NEAR: f32 = 40.0;
+const TAP_MAX_S: f64 = 0.35;
+const TAP_STILL: f32 = 12.0;
+
+/// The finger's taps, for the double tap and drag. `armed`: the finger now down is a second tap's, so a drag from empty
+/// space draws a box instead of scrolling.
+#[derive(Clone, Debug, Default)]
+struct Taps {
+    last_tap: Option<(f64, egui::Pos2)>,
+    press: Option<(f64, egui::Pos2)>,
+    armed: bool,
+}
+
+impl Taps {
+    fn start(&mut self, now: f64, at: egui::Pos2) {
+        self.armed = self.last_tap.is_some_and(|(t, p)| now - t <= DOUBLE_TAP_S && p.distance(at) <= DOUBLE_TAP_NEAR);
+        self.press = Some((now, at));
+    }
+    fn end(&mut self, now: f64, at: egui::Pos2) {
+        let tap = self.press.is_some_and(|(t, p)| now - t <= TAP_MAX_S && p.distance(at) <= TAP_STILL);
+        // the second tap of a double tap is not the first of another
+        self.last_tap = if tap && !self.armed { Some((now, at)) } else { None };
+        self.press = None;
+        self.armed = false;
+    }
+}
+
+/// Reads this frame's touches into the tap state; whether dragging the list should scroll it: only with a finger that is
+/// not drawing a box (a mouse drag on empty space draws one, even on a computer with a touchscreen).
+fn drag_scrolls(ctx: &egui::Context) -> egui::containers::scroll_area::DragScroll {
+    use egui::containers::scroll_area::DragScroll;
+    let id = egui::Id::new("minos-taps");
+    let mut taps: Taps = ctx.data(|d| d.get_temp(id)).unwrap_or_default();
+    let touching = ctx.input(|i| {
+        for e in &i.events {
+            if let egui::Event::Touch { phase, pos, .. } = e {
+                match phase {
+                    egui::TouchPhase::Start => taps.start(i.time, *pos),
+                    egui::TouchPhase::End | egui::TouchPhase::Cancel => taps.end(i.time, *pos),
+                    egui::TouchPhase::Move => {}
+                }
+            }
+        }
+        i.any_touches()
+    });
+    let armed = taps.armed;
+    ctx.data_mut(|d| d.insert_temp(id, taps));
+    if touching && !armed {
+        DragScroll::Always
+    } else {
+        DragScroll::Never
+    }
+}
+
 fn accent_colour() -> Color32 {
     let a = yggdrasil_conf::integrations::default_accent();
     Color32::from_rgb(a[0], a[1], a[2])
@@ -5161,5 +5283,64 @@ mod clipboard_tests {
         assert!(paths_from_clipboard("hello world").is_empty());
         assert!(paths_from_clipboard("file:///no/such/file").is_empty());
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod box_tests {
+    use super::*;
+
+    fn at(x: f32, y: f32) -> egui::Pos2 {
+        pos2(x, y)
+    }
+
+    /// YGG-77: a box selects the items it touches; with Ctrl it adds to what was selected; the other way round (drawn up
+    /// and to the left) covers the same.
+    #[test]
+    fn a_box_selects_what_it_covers() {
+        let items: Vec<(Rect, PathBuf)> = (0..6)
+            .map(|i| (Rect::from_min_size(at(10.0, 10.0 + 30.0 * i as f32), vec2(300.0, 28.0)), PathBuf::from(format!("/d/f{i}"))))
+            .collect();
+        let names = |s: &BTreeSet<PathBuf>| s.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect::<Vec<_>>();
+        let area = Rect::from_two_pos(at(400.0, 75.0), at(200.0, 130.0));
+        assert_eq!(names(&box_covers(&items, area, &BTreeSet::new())), ["f2", "f3", "f4"]);
+        let base: BTreeSet<PathBuf> = [PathBuf::from("/d/f0")].into();
+        assert_eq!(names(&box_covers(&items, area, &base)), ["f0", "f2", "f3", "f4"]);
+        assert!(box_covers(&items, Rect::from_two_pos(at(320.0, 0.0), at(400.0, 500.0)), &BTreeSet::new()).is_empty());
+    }
+
+    /// A double tap then drag draws a box: the second touch is armed only when it comes soon after a tap, near it; a long
+    /// or moving touch is no tap, and a third tap starts afresh.
+    #[test]
+    fn a_double_tap_arms_the_box() {
+        let mut t = Taps::default();
+        t.start(1.0, at(100.0, 100.0));
+        assert!(!t.armed);
+        t.end(1.1, at(102.0, 101.0));
+        t.start(1.3, at(110.0, 105.0));
+        assert!(t.armed, "a second tap soon and near");
+        t.end(2.0, at(300.0, 400.0));
+        assert!(!t.armed);
+        // too late, too far, or after a drag: not armed
+        t.start(3.0, at(100.0, 100.0));
+        t.end(3.1, at(100.0, 100.0));
+        t.start(3.6, at(100.0, 100.0));
+        assert!(!t.armed, "too late");
+        t.end(3.7, at(100.0, 100.0));
+        t.start(3.8, at(200.0, 100.0));
+        assert!(!t.armed, "too far");
+        t.end(3.85, at(200.0, 100.0));
+        t.start(4.5, at(100.0, 100.0));
+        t.end(4.6, at(150.0, 100.0));
+        t.start(4.7, at(150.0, 100.0));
+        assert!(!t.armed, "the first touch moved: no tap");
+        // the touch that armed does not count as the first tap of another double tap
+        let mut t = Taps::default();
+        t.start(5.0, at(10.0, 10.0));
+        t.end(5.1, at(10.0, 10.0));
+        t.start(5.2, at(10.0, 10.0));
+        t.end(5.3, at(10.0, 10.0));
+        t.start(5.4, at(10.0, 10.0));
+        assert!(!t.armed);
     }
 }
