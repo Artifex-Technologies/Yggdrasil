@@ -1261,7 +1261,9 @@ impl App {
     }
 
     /// Tells the programs whose windows are on `output` how to allocate their GPU buffers: the scanout feedback for a window
-    /// the screen tried to show directly (or does), the renderer's otherwise (Smithay's choice from the frame's states).
+    /// the screen tried to show directly (or does), the renderer's otherwise (Smithay's choice from the frame's states). No
+    /// window is tried: each is drawn through look::Clipped or xwayland::OpaqueElement, which offer Smithay's DrmCompositor no
+    /// buffer to put on a plane, so every window is told the renderer's.
     pub fn send_dmabuf_feedback(
         &self,
         output: &Output,
