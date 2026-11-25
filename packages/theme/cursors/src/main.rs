@@ -2,9 +2,9 @@
 //! drawing; resample.rs: its Lanczos shrinking; text.rs: its text) and written as an X cursor theme. The pixels are
 //! Pillow's, so the theme is the one the script made.
 
-pub mod draw;
-pub mod resample;
-pub mod text;
+mod draw;
+mod resample;
+mod text;
 
 use draw::{d_arc, d_ellipse_fill, d_ellipse_outline, d_line, d_polygon_fill, d_rounded_rectangle_fill, DrawError, Img, Ink};
 use std::path::Path;
@@ -508,8 +508,15 @@ fn fail(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1)
 }
 
+fn main() {
+    let mut args = std::env::args_os().map(|a| a.to_string_lossy().into_owned());
+    let argv0 = args.next().unwrap_or_default();
+    let rest: Vec<String> = args.collect();
+    std::process::exit(run(&argv0, &rest));
+}
+
 /// ygg-cursors OUTDIR [--preview]; the exit code.
-pub fn main(argv0: &str, args: &[String]) -> i32 {
+fn run(argv0: &str, args: &[String]) -> i32 {
     let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
     let Some(out) = positional.first() else {
         println!("{DOC}");

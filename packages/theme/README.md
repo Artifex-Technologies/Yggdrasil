@@ -32,9 +32,9 @@ way: fontconfig's pacman hook links it into `/etc/fonts/conf.d`), prefers Atkins
 ## ygg-cursors
 
 `ygg-cursors OUTDIR [--preview]` draws the cursor theme (the package runs it when it is built): 22 shapes, 96 names, five
-sizes, an animated busy ring, written as X cursor files. It is Rust now (`src/cursors`), replacing the Python script (kept in
+sizes, an animated busy ring, written as X cursor files. It is Rust now (the crate in `cursors/`), replacing the Python script (kept in
 `python/ygg-cursors` for a rollback until 2026-11-15; git has it), and it draws **every pixel as the script did with Pillow**: I translated the parts of
-Pillow 13.0 the script used (`src/cursors/NOTICE-Pillow` has Pillow's licence and what was translated):
+Pillow 13.0 the script used (`cursors/src/NOTICE-Pillow` has Pillow's licence and what was translated):
 
 - the drawing at 8x (`draw.rs`): ImageDraw's polygon fill, lines and wide lines with curved joints, filled ellipses and
   ellipse outlines, pie slices, arcs and rounded rectangles, from libImaging/Draw.c and ImageDraw.py, with C's float and
