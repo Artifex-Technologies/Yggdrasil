@@ -229,7 +229,7 @@ before that change, the Rust one took 2.4 MB RSS and 0.3 MB PSS, 0 wake-ups and 
 | on disk | | ygg-cursors 13.9 KB (scripts; the interpreter is shared) | ygg-cursors 664 KB (binaries) | |
 
 ygg-cursors was measured again on 2026-11-25, both sides, with this script as it is (10 runs each after two unmeasured,
-alternating). Until then it was the one port slower than its script: 1604 ms wall and 1599 ms CPU against 1057 and
+alternating). Until then it was slower than its script: 1604 ms wall and 1599 ms CPU against 1057 and
 1054 ms, at 15.1 MB, with a 447 KB binary. What changed, each step measured on its own the same day with the same kind of
 launcher (median of 7 to 9 runs, one thread, Rust before → after):
 

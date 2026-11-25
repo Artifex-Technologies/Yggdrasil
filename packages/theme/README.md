@@ -101,7 +101,9 @@ Until 2026-11-25 `ygg-cursors` was slower than Python with Pillow, whose drawing
 - Drawn spans are written as whole pixels, each thread clears and reuses one canvas, and fc-match is asked once (on a
   thread of its own, while the shapes are drawn).
 - `ygg-cursors` is its own crate (`cursors/`) so it can be built at opt-level 3 while `ygg-theme` stays built for size
-  (`Cargo.toml`: one workspace, both crates built, tested and checked from this folder).
+  (`Cargo.toml`: one workspace, both crates built, tested and checked from this folder). An opt-level in `RUSTFLAGS` wins
+  over both (CachyOS's own makepkg.conf sets 3 and the build machine's CPU); the published packages are built with Labyrinth
+  OS's makepkg.conf, whose `RUSTFLAGS` only rewrite source paths, so they keep the split and run on any x86-64.
 - Up to four threads draw the frames: as many as the CPUs it may use, fewer when the build asks for fewer jobs (make's
   `-jN` in `MAKEFLAGS`, as makepkg passes it, or `CARGO_BUILD_JOBS`). The main thread writes each file in the script's order
   as soon as its frames are drawn, and draws the help cursor itself (FreeType is for one thread). With one job it draws on
