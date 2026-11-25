@@ -89,9 +89,26 @@ smithay::render_elements! {
     Strip = crate::look::Strip,
 }
 
-/// How a window's picture is drawn on an output: clipped to its rectangle (physical pixels) with the corners' radius (None for
-/// its menus), and stretched about its corner (the point and the scale; 1 but for an animation).
-pub type Shape = (Option<(Rectangle<i32, smithay::utils::Physical>, i32)>, Point<i32, smithay::utils::Physical>, Scale<f64>);
+impl Elem {
+    /// How the compositor changes a program's picture while drawing it (look::Change), which keeps its buffer off the planes.
+    pub fn change(&self) -> Option<crate::look::Change> {
+        match self {
+            Elem::Clipped(c) => c.change(),
+            Elem::Opaque(o) => o.change(),
+            _ => None,
+        }
+    }
+}
+
+impl PixElem {
+    /// The same for the software renderer's elements.
+    pub fn change(&self) -> Option<crate::look::Change> {
+        match self {
+            PixElem::Clipped(c) => c.change(),
+            _ => None,
+        }
+    }
+}
 
 /// A renderer the scene can be drawn with: the GPU one of the nested window (GLES) and the software one of the headless
 /// backend (pixman). They differ only in how a window that must be drawn opaque is drawn.
@@ -111,7 +128,7 @@ pub trait Draw:
         renderer: &mut Self,
         els: Vec<WaylandSurfaceRenderElement<Self>>,
         opaque: bool,
-        shape: Shape,
+        shape: crate::look::Shape,
     ) -> Vec<Self::Elem>;
 }
 
@@ -122,14 +139,14 @@ impl Draw for GlesRenderer {
         renderer: &mut Self,
         els: Vec<WaylandSurfaceRenderElement<Self>>,
         opaque: bool,
-        shape: Shape,
+        shape: crate::look::Shape,
     ) -> Vec<Elem> {
         match opaque.then(|| app.opaque_shader(renderer)).flatten() {
             // (a game: drawn as it is, neither rounded nor stretched)
             Some(program) => {
                 els.into_iter().map(|inner| Elem::Opaque(crate::xwayland::OpaqueElement { inner, program: program.clone() })).collect()
             }
-            None => els.into_iter().map(|e| Elem::Clipped(crate::look::Clipped::new(e, shape.0, shape.1, shape.2))).collect(),
+            None => els.into_iter().map(|e| Elem::Clipped(crate::look::Clipped::new(e, shape))).collect(),
         }
     }
 }
@@ -137,8 +154,14 @@ impl Draw for GlesRenderer {
 impl Draw for PixmanRenderer {
     type Elem = PixElem;
     // no shader to ignore the alpha channel with; games do not run headless
-    fn window_elements(_: &mut App, _: &mut Self, els: Vec<WaylandSurfaceRenderElement<Self>>, _: bool, shape: Shape) -> Vec<PixElem> {
-        els.into_iter().map(|e| PixElem::Clipped(crate::look::Clipped::new(e, shape.0, shape.1, shape.2))).collect()
+    fn window_elements(
+        _: &mut App,
+        _: &mut Self,
+        els: Vec<WaylandSurfaceRenderElement<Self>>,
+        _: bool,
+        shape: crate::look::Shape,
+    ) -> Vec<PixElem> {
+        els.into_iter().map(|e| PixElem::Clipped(crate::look::Clipped::new(e, shape))).collect()
     }
 }
 
@@ -1326,9 +1349,10 @@ impl App {
     }
 
     /// Tells the programs whose windows are on `output` how to allocate their GPU buffers: the scanout feedback for a window
-    /// the screen tried to show directly (or does), the renderer's otherwise (Smithay's choice from the frame's states). No
-    /// window is tried: each is drawn through look::Clipped or xwayland::OpaqueElement, which offer Smithay's DrmCompositor no
-    /// buffer to put on a plane, so every window is told the renderer's.
+    /// the screen tried to show directly and could not for its buffer's format or the GPU's refusal (or does show directly),
+    /// the renderer's otherwise (Smithay's choice from the frame's states). A window is tried when its element (look::Clipped,
+    /// xwayland::OpaqueElement) offers its buffer, which it does while it is drawn exactly as the program made it (a full
+    /// screen window once it has settled); the element has the surface's own id, so the frame's state for it is the surface's.
     pub fn send_dmabuf_feedback(
         &self,
         output: &Output,
@@ -2510,7 +2534,8 @@ impl App {
             if cam.zoom == 1.0 {
                 els.into_iter().map(R::Elem::from).collect()
             } else {
-                els.into_iter().map(|e| R::Elem::from(crate::look::Clipped::new(e, None, at, Scale::from(cam.zoom)))).collect()
+                let shape = crate::look::Shape { scale, clip: None, origin: at, rescale: Scale::from(cam.zoom) };
+                els.into_iter().map(|e| R::Elem::from(crate::look::Clipped::new(e, shape))).collect()
             }
         };
         let primary = output == &self.output;
@@ -2666,7 +2691,8 @@ impl App {
                             Kind::Unspecified,
                         ));
                     }
-                    out.extend(R::window_elements(self, renderer, menus, false, (None, corner, stretch)));
+                    let shape = crate::look::Shape { scale: Scale::from(s0), clip: None, origin: corner, rescale: stretch };
+                    out.extend(R::window_elements(self, renderer, menus, false, shape));
                     render_elements_from_surface_tree(renderer, t.wl_surface(), draw_at, s0, alpha, Kind::Unspecified)
                 }
                 None => w.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, draw_at, Scale::from(s0), alpha),
@@ -2687,7 +2713,8 @@ impl App {
             let opaque = w
                 .x11_surface()
                 .is_some_and(|x| x.is_fullscreen() || crate::xwayland::is_game(x) || crate::xwayland::listed(x, &self.opaque_apps));
-            out.extend(R::window_elements(self, renderer, main, opaque, (Some(clip), corner, stretch)));
+            let shape = crate::look::Shape { scale: Scale::from(s0), clip: Some(clip), origin: corner, rescale: stretch };
+            out.extend(R::window_elements(self, renderer, main, opaque, shape));
             out.extend(back.into_iter().map(R::Elem::from));
         }
         layer_els(

@@ -325,25 +325,13 @@ mod tests {
     #[test]
     fn a_copy_drawn_with_opengl_es_is_upright() {
         use smithay::backend::allocator::Fourcc;
-        use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
         use smithay::backend::renderer::element::solid::SolidColorRenderElement;
         use smithay::backend::renderer::element::{Id, Kind};
         use smithay::backend::renderer::gles::{GlesRenderbuffer, GlesRenderer};
         use smithay::backend::renderer::utils::CommitCounter;
         use smithay::utils::{Rectangle, Transform};
 
-        let Some(device) = EGLDevice::enumerate().ok().and_then(|mut all| all.find(|d| d.is_software())) else {
-            eprintln!("no software EGL device (Mesa): skipped");
-            return;
-        };
-        // SAFETY: the display lives as long as the renderer made from it, both in this test
-        let Ok(display) = (unsafe { EGLDisplay::new(device) }) else {
-            eprintln!("the software EGL device gave no display: skipped");
-            return;
-        };
-        let context = EGLContext::new(&display).expect("an EGL context");
-        // SAFETY: the context is current only on this thread
-        let mut renderer = unsafe { GlesRenderer::new(context) }.expect("OpenGL ES");
+        let Some(mut renderer) = crate::look::storage::software_gles() else { return };
         let (w, h) = (64, 48);
         // red across the top 8 rows, the rest the clear colour (blue)
         let top = SolidColorRenderElement::new(

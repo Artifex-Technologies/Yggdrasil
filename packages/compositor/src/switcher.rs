@@ -421,7 +421,8 @@ where
             };
             let stretch = Scale::from((d.w / geo.size.w as f64, d.h / geo.size.h as f64));
             let clip = (rect, (PICTURE_RADIUS * s).round() as i32);
-            out.extend(els.into_iter().map(|e| R::Elem::from(crate::look::Clipped::new(e, Some(clip), corner, stretch))));
+            let shape = crate::look::Shape { scale: Scale::from(s), clip: Some(clip), origin: corner, rescale: stretch };
+            out.extend(els.into_iter().map(|e| R::Elem::from(crate::look::Clipped::new(e, shape))));
         }
         // the frame, title and icon
         let size = g.cards[i].size;

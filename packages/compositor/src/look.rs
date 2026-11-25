@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
 use smithay::backend::renderer::element::surface::{WaylandSurfaceRenderElement, WaylandSurfaceTexture};
-use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement};
+use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
 use smithay::backend::renderer::utils::{CommitCounter, DamageSet, OpaqueRegions};
 use smithay::backend::renderer::{Color32F, Frame, ImportAll, ImportMem, Renderer, Texture};
 use smithay::utils::{Buffer as BufferCoords, Logical, Physical, Point, Rectangle, Scale, Size, Transform};
@@ -702,30 +702,91 @@ fn corner(r: i32) -> Arc<Corner> {
         .clone()
 }
 
+/// How a program's picture is drawn on an output (`Clipped`): made at the output's `scale`, clipped to the window's rectangle
+/// (physical pixels) with the corners' radius (None for its menus and for what the magnifier zooms), and stretched about
+/// `origin` by `rescale` (1 but while an animation runs, under the magnifier and on a switcher card).
+#[derive(Clone, Copy, Debug)]
+pub struct Shape {
+    pub scale: Scale<f64>,
+    pub clip: Option<(Rectangle<i32, Physical>, i32)>,
+    pub origin: Point<i32, Physical>,
+    pub rescale: Scale<f64>,
+}
+
+/// How the compositor changes a program's picture while drawing it. A picture it changes cannot go to the screen as the program
+/// made it (its buffer on a plane, direct scanout): it is composited. Gamescope likewise scans a game out unless one of a list
+/// of reasons to composite applies (src/Backends/DRMBackend.cpp); these are the reasons in how a window is drawn here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    /// stretched: an animation moves or resizes it, the magnifier zooms, a switcher card shows it small
+    Stretched,
+    /// drawn see-through: an animation fades it in or out
+    Faded,
+    /// its corners rounded
+    Rounded,
+    /// cut off at its window's edge (the program drew outside its window: a shadow of its own)
+    Cut,
+}
+
+impl std::fmt::Display for Change {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Change::Stretched => "the compositor stretches it (an animation, the magnifier)",
+            Change::Faded => "the compositor fades it (an animation)",
+            Change::Rounded => "the compositor rounds its corners",
+            Change::Cut => "the compositor cuts off what the program draws outside its window",
+        })
+    }
+}
+
+/// How a picture made at `picture` (physical pixels) is changed when it is drawn stretched by `rescale`, at `alpha`, and clipped
+/// to `clip` (a rectangle and its corners' radius); None: drawn exactly as the program made it.
+pub fn change(
+    picture: Rectangle<i32, Physical>,
+    clip: Option<(Rectangle<i32, Physical>, i32)>,
+    rescale: Scale<f64>,
+    alpha: f32,
+) -> Option<Change> {
+    if rescale != Scale::from(1.0) {
+        return Some(Change::Stretched);
+    }
+    if alpha < 1.0 {
+        return Some(Change::Faded);
+    }
+    match clip {
+        Some((_, radius)) if radius > 0 => Some(Change::Rounded),
+        Some((c, _)) if !c.contains_rect(picture) => Some(Change::Cut),
+        _ => None,
+    }
+}
+
 /// A part of a window's own picture (a surface of it, or of one of its menus), stretched about the window's corner while an
 /// animation runs (`origin`, `rescale`), and the window's own surfaces clipped to its rounded rectangle (its corners cut,
 /// nothing outside drawn: as on Hyprland, a program's own shadow outside its window geometry is not shown). Menus are not
-/// clipped.
+/// clipped. A picture drawn exactly as the program made it (a full screen window once it has settled) offers its buffer to
+/// Smithay's DrmCompositor, which then may put it on the primary plane (direct scanout); any `Change` keeps it composited.
 pub struct Clipped<R: Renderer> {
     inner: WaylandSurfaceRenderElement<R>,
     /// the window's rectangle on the output (physical pixels), the corners' radius and which of their pixels are kept
     clip: Option<(Rectangle<i32, Physical>, i32, Arc<Corner>)>,
     origin: Point<i32, Physical>,
     rescale: Scale<f64>,
+    change: Option<Change>,
 }
 
 impl<R: Renderer + ImportAll> Clipped<R> {
-    pub fn new(
-        inner: WaylandSurfaceRenderElement<R>,
-        clip: Option<(Rectangle<i32, Physical>, i32)>,
-        origin: Point<i32, Physical>,
-        rescale: Scale<f64>,
-    ) -> Self {
-        let clip = clip.map(|(c, radius)| {
+    pub fn new(inner: WaylandSurfaceRenderElement<R>, shape: Shape) -> Self {
+        let clip = shape.clip.map(|(c, radius)| {
             let radius = radius.min(c.size.w / 2).min(c.size.h / 2).max(0);
             (c, radius, corner(radius))
         });
-        Clipped { inner, clip, origin, rescale }
+        let change = change(inner.geometry(shape.scale), clip.as_ref().map(|(c, r, _)| (*c, *r)), shape.rescale, inner.alpha());
+        Clipped { inner, clip, origin: shape.origin, rescale: shape.rescale, change }
+    }
+
+    /// How the compositor changes the picture (None: its buffer is offered for direct scanout).
+    pub fn change(&self) -> Option<Change> {
+        self.change
     }
 
     fn stretched(&self) -> bool {
@@ -901,6 +962,16 @@ where
         }
         Ok(())
     }
+
+    // The program's own buffer, only while it is drawn exactly as made: its place, size, source, turn, damage and opaque parts
+    // are then the inner element's, as Smithay judges a plane by them. Its kind stays the inner one (Unspecified for a window),
+    // so Smithay tries it on the primary plane only, never on an overlay plane.
+    fn underlying_storage(&self, renderer: &mut R) -> Option<UnderlyingStorage<'_>> {
+        match self.change {
+            None => self.inner.underlying_storage(renderer),
+            Some(_) => None,
+        }
+    }
 }
 
 /// The clip a window's picture gets on an output: its rectangle in physical pixels, and the rounding (none in full screen).
@@ -1016,5 +1087,227 @@ mod tests {
         let p = r.physical((0, 0).into(), 1.5);
         assert_eq!((p.loc.x, p.size.w), (16, 166 - 16));
         assert_eq!(stretch(RectF { x: 0.0, y: 0.0, w: 200.0, h: 50.0 }, (100, 100).into()), (2.0, 0.5));
+    }
+
+    /// The values the scene (state.rs) gives a window's picture through `place`, `stretch` and `clip_of`, and what they make of it.
+    #[test]
+    fn only_a_picture_drawn_as_made_may_go_to_the_screen_directly() {
+        let look = Look::new(None, true, false);
+        let ms = Duration::from_millis;
+        let screen = Rectangle::<i32, Logical>::from_size((1920, 1080).into());
+        let made = Rectangle::<i32, Physical>::from_size((1920, 1080).into());
+        let one = Scale::from(1.0);
+        let shown = |w: &mut WinLook, at: Duration, full: bool, cam: &Camera| {
+            let (rect, alpha) = place(w, screen, false, true, false, at);
+            let (sx, sy) = stretch(rect, screen.size);
+            (Some(clip_of(rect, cam, &look, full)), Scale::from((sx * cam.zoom, sy * cam.zoom)), alpha)
+        };
+        let plain = Camera::plain((0, 0).into(), 1.0);
+        // a full screen window opening: stretched and faded in, then as it was made
+        let mut w = WinLook::default();
+        let (clip, k, a) = shown(&mut w, ms(0), true, &plain);
+        assert_eq!(change(made, clip, k, a), Some(Change::Stretched));
+        let (clip, k, a) = shown(&mut w, ms(200), true, &plain);
+        assert_eq!(change(made, clip, k, a), Some(Change::Stretched));
+        let (clip, k, a) = shown(&mut w, ms(900), true, &plain);
+        assert_eq!((clip, k, a), (Some((made, 0)), one, 1.0));
+        assert_eq!(change(made, clip, k, a), None, "settled in full screen: square, its own size, opaque");
+        // the same window not full screen: its corners are rounded
+        let (clip, k, a) = shown(&mut w, ms(900), false, &plain);
+        assert_eq!(change(made, clip, k, a), Some(Change::Rounded));
+        // under the magnifier: stretched by the zoom
+        let zoomed = Camera { zoom: 2.0, ..plain };
+        let (clip, k, a) = shown(&mut w, ms(900), true, &zoomed);
+        assert_eq!(change(made, clip, k, a), Some(Change::Stretched));
+        // faded without being stretched (an X11 game opening: OpaqueElement draws it unstretched)
+        assert_eq!(change(made, Some((made, 0)), one, 0.5), Some(Change::Faded));
+        // a program's own shadow around its full screen window is cut off at the window's edge
+        let shadowed = Rectangle::<i32, Physical>::new((-20, -20).into(), (1960, 1120).into());
+        assert_eq!(change(shadowed, Some((made, 0)), one, 1.0), Some(Change::Cut));
+        // a part of the window inside it (a subsurface), and a menu (never clipped): as made
+        let part = Rectangle::<i32, Physical>::new((100, 100).into(), (300, 200).into());
+        assert_eq!(change(part, Some((made, 0)), one, 1.0), None);
+        assert_eq!(change(part, None, one, 1.0), None);
+        // at a fractional scale the window's rectangle and its picture round to the same pixels
+        let frac = Camera::plain((0, 0).into(), 1.25);
+        let small = Rectangle::<i32, Logical>::from_size((1536, 864).into());
+        let (clip, _) = clip_of(RectF::of(small), &frac, &look, true);
+        assert_eq!(change(made, Some((clip, 0)), one, 1.0), None, "{clip:?}");
+    }
+}
+
+/// A window's element and its buffer: a Wayland program of its own on one end of a socket pair (wayland-client, in a thread),
+/// Smithay's compositor and shared memory on the other, the picture imported by the software renderer, as the headless backend
+/// does. Only the GPU renderer's elements reach a plane; whether an element offers its buffer does not depend on the renderer.
+/// The program and the GPU renderer on Mesa's software device are shared with the tests of xwayland::OpaqueElement and readback.
+#[cfg(test)]
+pub(crate) mod storage {
+    use std::os::fd::AsFd;
+    use std::os::unix::net::UnixStream;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
+    use smithay::backend::renderer::element::surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement};
+    use smithay::backend::renderer::element::{Kind, RenderElement, UnderlyingStorage};
+    use smithay::backend::renderer::gles::GlesRenderer;
+    use smithay::backend::renderer::pixman::PixmanRenderer;
+    use smithay::backend::renderer::utils::on_commit_buffer_handler;
+    use smithay::reexports::wayland_server::backend::ClientData;
+    use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_surface};
+    use smithay::reexports::wayland_server::{Client, Display};
+    use smithay::utils::{Logical, Physical, Rectangle, Scale};
+    use smithay::wayland::buffer::BufferHandler;
+    use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
+    use smithay::wayland::shm::{ShmHandler, ShmState};
+    use wayland_client::globals::{registry_queue_init, GlobalListContents};
+    use wayland_client::protocol::{wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_registry::WlRegistry};
+    use wayland_client::protocol::{wl_shm, wl_shm::WlShm, wl_shm_pool::WlShmPool, wl_surface::WlSurface};
+    use wayland_client::{Connection, Dispatch, QueueHandle};
+
+    use super::{clip_of, Camera, Change, Clipped, Look, RectF, Shape};
+
+    pub(crate) struct Server {
+        compositor: CompositorState,
+        shm: ShmState,
+        surface: Option<wl_surface::WlSurface>,
+    }
+
+    #[derive(Default)]
+    struct Data(CompositorClientState);
+    impl ClientData for Data {}
+
+    impl CompositorHandler for Server {
+        fn compositor_state(&mut self) -> &mut CompositorState {
+            &mut self.compositor
+        }
+        fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
+            &client.get_data::<Data>().expect("the test's client").0
+        }
+        fn commit(&mut self, surface: &wl_surface::WlSurface) {
+            on_commit_buffer_handler::<Self>(surface);
+            self.surface = Some(surface.clone());
+        }
+    }
+    impl BufferHandler for Server {
+        fn buffer_destroyed(&mut self, _: &wl_buffer::WlBuffer) {}
+    }
+    impl ShmHandler for Server {
+        fn shm_state(&self) -> &ShmState {
+            &self.shm
+        }
+    }
+    smithay::delegate_dispatch2!(Server);
+
+    struct Program;
+    impl Dispatch<WlRegistry, GlobalListContents> for Program {
+        fn event(
+            _: &mut Self,
+            _: &WlRegistry,
+            _: <WlRegistry as wayland_client::Proxy>::Event,
+            _: &GlobalListContents,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+    wayland_client::delegate_noop!(Program: ignore WlCompositor);
+    wayland_client::delegate_noop!(Program: ignore WlShm);
+    wayland_client::delegate_noop!(Program: ignore WlShmPool);
+    wayland_client::delegate_noop!(Program: ignore WlBuffer);
+    wayland_client::delegate_noop!(Program: ignore WlSurface);
+
+    /// A program shows one picture of `size` (XRGB): the server's side of its surface, and the connection that keeps it.
+    pub(crate) fn one_picture(size: (i32, i32)) -> (Display<Server>, Server, wl_surface::WlSurface, Connection) {
+        let mut display: Display<Server> = Display::new().unwrap();
+        let mut dh = display.handle();
+        let mut server =
+            Server { compositor: CompositorState::new::<Server>(&dh), shm: ShmState::new::<Server>(&dh, vec![]), surface: None };
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        dh.insert_client(ours, Arc::new(Data::default())).unwrap();
+        let program = std::thread::spawn(move || {
+            let conn = Connection::from_socket(theirs).unwrap();
+            let (globals, mut queue) = registry_queue_init::<Program>(&conn).unwrap();
+            let qh = queue.handle();
+            let compositor: WlCompositor = globals.bind(&qh, 1..=6, ()).unwrap();
+            let shm: WlShm = globals.bind(&qh, 1..=1, ()).unwrap();
+            let bytes = size.0 * size.1 * 4;
+            let fd = rustix::fs::memfd_create("picture", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
+            rustix::fs::ftruncate(&fd, bytes as u64).unwrap();
+            let pool = shm.create_pool(fd.as_fd(), bytes, &qh, ());
+            let buffer = pool.create_buffer(0, size.0, size.1, size.0 * 4, wl_shm::Format::Xrgb8888, &qh, ());
+            let surface = compositor.create_surface(&qh, ());
+            surface.attach(Some(&buffer), 0, 0);
+            surface.damage_buffer(0, 0, size.0, size.1);
+            surface.commit();
+            queue.roundtrip(&mut Program).unwrap();
+            conn
+        });
+        while !program.is_finished() {
+            display.dispatch_clients(&mut server).unwrap();
+            display.flush_clients().unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let conn = program.join().unwrap();
+        let surface = server.surface.clone().expect("the program's surface was committed");
+        (display, server, surface, conn)
+    }
+
+    /// The GPU renderer on Mesa's software OpenGL ES (llvmpipe, through its software EGL device: no GPU, no screen); None, and
+    /// the test skipped, where there is none.
+    pub(crate) fn software_gles() -> Option<GlesRenderer> {
+        let Some(device) = EGLDevice::enumerate().ok().and_then(|mut all| all.find(|d| d.is_software())) else {
+            eprintln!("no software EGL device (Mesa): skipped");
+            return None;
+        };
+        // SAFETY: the test makes no EGL display outside Smithay, which tracks its own; the context keeps the display
+        let Ok(display) = (unsafe { EGLDisplay::new(device) }) else {
+            eprintln!("the software EGL device gave no display: skipped");
+            return None;
+        };
+        let context = EGLContext::new(&display).expect("an EGL context");
+        // SAFETY: the context is current only on the test's thread
+        Some(unsafe { GlesRenderer::new(context) }.expect("OpenGL ES"))
+    }
+
+    #[test]
+    fn a_full_screen_windows_element_offers_its_buffer_and_a_changed_one_does_not() {
+        let (_display, _server, surface, _conn) = one_picture((640, 400));
+        let mut r = PixmanRenderer::new().unwrap();
+        let look = Look::new(None, true, false);
+        let cam = Camera::plain((0, 0).into(), 1.0);
+        let screen = RectF::of(Rectangle::<i32, Logical>::from_size((640, 400).into()));
+        let one = Scale::from(1.0);
+        let shape = |clip, rescale| Shape { scale: one, clip, origin: (0, 0).into(), rescale };
+        let element = |r: &mut PixmanRenderer, alpha: f32| -> WaylandSurfaceRenderElement<PixmanRenderer> {
+            let mut els = render_elements_from_surface_tree(r, &surface, (0, 0), one, alpha, Kind::Unspecified);
+            assert_eq!(els.len(), 1);
+            els.remove(0)
+        };
+        let offered =
+            |c: &Clipped<PixmanRenderer>, r: &mut PixmanRenderer| matches!(c.underlying_storage(r), Some(UnderlyingStorage::Wayland(_)));
+        // the program's own element offers its buffer: the reference
+        assert!(matches!(element(&mut r, 1.0).underlying_storage(&mut r), Some(UnderlyingStorage::Wayland(_))));
+        // full screen, settled: square corners, the window's own size, opaque
+        let full = Clipped::new(element(&mut r, 1.0), shape(Some(clip_of(screen, &cam, &look, true)), one));
+        assert_eq!(full.change(), None);
+        assert!(offered(&full, &mut r), "a full screen window's buffer goes to the DRM compositor");
+        // the same picture as a window (rounded), opening (stretched, faded), faded alone, cut, and under the magnifier
+        let cases = [
+            (Clipped::new(element(&mut r, 1.0), shape(Some(clip_of(screen, &cam, &look, false)), one)), Change::Rounded),
+            (Clipped::new(element(&mut r, 0.4), shape(Some(clip_of(screen, &cam, &look, true)), Scale::from(0.6))), Change::Stretched),
+            (Clipped::new(element(&mut r, 0.4), shape(Some(clip_of(screen, &cam, &look, true)), one)), Change::Faded),
+            (
+                Clipped::new(element(&mut r, 1.0), shape(Some((Rectangle::<i32, Physical>::from_size((600, 400).into()), 0)), one)),
+                Change::Cut,
+            ),
+            (Clipped::new(element(&mut r, 1.0), shape(None, Scale::from(2.0))), Change::Stretched),
+        ];
+        for (c, why) in &cases {
+            assert_eq!(c.change(), Some(*why));
+            assert!(!offered(c, &mut r), "{why:?}: the buffer stays hidden");
+        }
+        // a menu (not clipped) drawn as it is offers it too
+        assert!(offered(&Clipped::new(element(&mut r, 1.0), shape(None, one)), &mut r));
     }
 }

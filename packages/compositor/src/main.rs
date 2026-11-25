@@ -166,7 +166,8 @@ pub fn plain_signals(c: &mut std::process::Command) -> &mut std::process::Comman
     }
 }
 
-/// A YGGDRASIL_COMPOSITOR_* switch that is on unless it says 0, no, off or false (explicit sync, the cursor plane).
+/// A YGGDRASIL_COMPOSITOR_* switch that is on unless it says 0, no, off or false (explicit sync, the cursor plane, direct
+/// scanout).
 pub fn switched_on(var: Option<&str>) -> bool {
     !matches!(var.map(|v| v.trim().to_ascii_lowercase()).as_deref(), Some("0" | "no" | "off" | "false"))
 }
@@ -454,7 +455,7 @@ mod tests {
 
     #[test]
     fn a_switch_is_on_unless_it_says_off() {
-        // YGGDRASIL_COMPOSITOR_EXPLICIT_SYNC, YGGDRASIL_COMPOSITOR_CURSOR_PLANE
+        // YGGDRASIL_COMPOSITOR_EXPLICIT_SYNC, YGGDRASIL_COMPOSITOR_CURSOR_PLANE, YGGDRASIL_COMPOSITOR_SCANOUT
         assert!(switched_on(None));
         assert!(switched_on(Some("1")));
         assert!(switched_on(Some("")));

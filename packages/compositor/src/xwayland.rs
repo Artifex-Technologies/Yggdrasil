@@ -898,8 +898,17 @@ impl Element for OpaqueElement {
     fn alpha(&self) -> f32 {
         self.inner.alpha()
     }
+    // never a scanout candidate: an overlay plane would show the buffer's alpha channel (see underlying_storage)
     fn kind(&self) -> Kind {
-        self.inner.kind()
+        Kind::Unspecified
+    }
+}
+
+impl OpaqueElement {
+    /// How the compositor changes the picture beyond ignoring its alpha channel: it draws it as it is (neither rounded nor
+    /// stretched), only faded by an animation.
+    pub fn change(&self) -> Option<crate::look::Change> {
+        (self.inner.alpha() < 1.0).then_some(crate::look::Change::Faded)
     }
 }
 
@@ -919,10 +928,14 @@ impl RenderElement<GlesRenderer> for OpaqueElement {
         r
     }
 
-    // No underlying buffer is offered (that would let a hardware backend show it directly, alpha and all); a hardware backend
-    // that wants to scan full screen games out directly must put them on a plane that ignores alpha.
-    fn underlying_storage(&self, _renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
-        None
+    // The program's buffer, for direct scanout of a full screen game: Smithay puts a buffer on the primary plane only as its
+    // twin without alpha (Argb8888 as Xrgb8888), which ignores the alpha channel as OPAQUE_SHADER does, and the kind keeps it
+    // off the overlay planes, which would show the alpha channel. Not while an animation fades it.
+    fn underlying_storage(&self, renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
+        match self.change() {
+            None => self.inner.underlying_storage(renderer),
+            Some(_) => None,
+        }
     }
 }
 
@@ -988,6 +1001,35 @@ mod tests {
         assert!(!is_game_class("steam"), "Steam's own client is not a game");
         assert!(!is_game_class("xterm"));
         assert!(!is_game_class("exe"));
+    }
+
+    /// Every full screen X11 window (each Proton game) is drawn through OpaqueElement. It offers the program's buffer to Smithay's
+    /// DrmCompositor (the primary plane, direct scanout) while it draws it as it is, hides it while an animation fades it, and is
+    /// never a scanout candidate, whatever its surface's element was made as (an overlay plane would show the alpha channel the
+    /// opaque shader ignores). A real surface element from the Wayland program of look::storage, imported and the opaque shader
+    /// built by Mesa's software OpenGL ES; skipped where there is none.
+    #[test]
+    fn a_full_screen_x11_windows_element_offers_its_buffer_only_while_drawn_as_it_is() {
+        use smithay::backend::renderer::element::surface::render_elements_from_surface_tree;
+
+        let Some(mut r) = crate::look::storage::software_gles() else { return };
+        let (_display, _server, surface, _conn) = crate::look::storage::one_picture((640, 400));
+        let program = r.compile_custom_texture_shader(OPAQUE_SHADER, &[]).expect("the opaque shader builds on OpenGL ES 2");
+        let opaque = |r: &mut GlesRenderer, alpha: f32, kind: Kind| {
+            let mut els: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+                render_elements_from_surface_tree(r, &surface, (0, 0), 1.0, alpha, kind);
+            assert_eq!(els.len(), 1);
+            OpaqueElement { inner: els.remove(0), program: program.clone() }
+        };
+        let full = opaque(&mut r, 1.0, Kind::Unspecified);
+        assert_eq!(full.change(), None);
+        assert!(matches!(full.underlying_storage(&mut r), Some(UnderlyingStorage::Wayland(_))), "a game's buffer goes on");
+        let fading = opaque(&mut r, 0.4, Kind::Unspecified);
+        assert_eq!(fading.change(), Some(crate::look::Change::Faded));
+        assert!(fading.underlying_storage(&mut r).is_none(), "a faded game stays composited");
+        for kind in [Kind::Unspecified, Kind::ScanoutCandidate, Kind::Cursor] {
+            assert_eq!(opaque(&mut r, 1.0, kind).kind(), Kind::Unspecified, "{kind:?}: no overlay plane");
+        }
     }
 
     #[test]

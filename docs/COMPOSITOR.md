@@ -531,9 +531,9 @@ machine, not yet Steam or a game. It has four workspaces, and up to nine
 when more are used (other programs see, switch and add them through `ext-workspace`; the panel follows them through yggdrasil-wm). On the hardware
 backend, hotplug has not been tried on real hardware; explicit sync for NVIDIA is built and checked nested on an RTX 2080 Ti
 but not yet on the hardware backend, and a machine with two GPUs picks the one with the screens (not tried on two cards);
-VRR (while a full screen window covers the screen) is built but not yet seen with a game; no window goes to a plane (direct
-scanout): every window is drawn through an element of the compositor's own (rounded corners, animations, a full screen X11
-window drawn opaque), which offers Smithay's DRM compositor no buffer, so a full screen game is always composited
+VRR (while a full screen window covers the screen) is built but not yet seen with a game; direct scanout of a full screen
+window (its buffer on the primary plane, offered only while the compositor draws it exactly as the program made it: not while
+it is stretched, faded, rounded or cut) is built and unit-tested, but has not been seen on a real GPU yet
 (packages/compositor/README.md, "Games on the hardware backend"); there is no tearing control (Smithay has no asynchronous
 page flips yet). Screen sharing through the portal (ScreenCast:
 yggdrasil-portal, the share picker and yggdrasil-screencast, packages/screencast) is built and tested headless, whole screens in
@@ -633,7 +633,7 @@ The table is round 1 as it was set up:
 | --- | --- | --- |
 | Bake-off: KWin alone | `kwin_wayland --xwayland --exit-with-session=steam` | KDE's compositor without Plasma; removed with KDE |
 | Bake-off: Hyprland | Hyprland (0.56 then), a generated Lua config | games may tear (`immediate` rule), VRR per `yggdrasil-bakeoff vrr` |
-| Bake-off: Yggdrasil's own compositor | `yggdrasil-compositor --drm --run steam` (added 2026-11-23), the screen at `highrr` through `YGGDRASIL_COMPOSITOR_MONITORS` | VRR per `yggdrasil-bakeoff vrr` (`YGGDRASIL_COMPOSITOR_VRR`); games always composited (no window goes to a plane); no tearing control yet; the session ends when Steam does |
+| Bake-off: Yggdrasil's own compositor | `yggdrasil-compositor --drm --run steam` (added 2026-11-23), the screen at `highrr` through `YGGDRASIL_COMPOSITOR_MONITORS` | VRR per `yggdrasil-bakeoff vrr` (`YGGDRASIL_COMPOSITOR_VRR`); a full screen game's buffer may go to the screen directly (primary plane); no tearing control yet; the session ends when Steam does |
 | Bake-off: COSMIC compositor | cosmic-comp 1.0 (Smithay, Rust) | Steam is started into it once its Wayland and X sockets exist |
 | Bake-off: gamescope | Valve's, `gamescope -e -f -- steam -gamepadui` | the Steam Deck way; a candidate for a game session, not for the desktop |
 | Bake-off: Plasma | the full KDE desktop | baseline; removed with KDE |
