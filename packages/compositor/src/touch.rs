@@ -2,7 +2,9 @@
 //! off), as the Hyprland session maps them (`hl.device({ output = panel })`): a touch on the glass lands on that screen even when
 //! a monitor is plugged in beside it.
 //! - **Touch** goes to programs as wl_touch (down, motion, up, frame, cancel, one slot a finger): the seat gets its touch the
-//!   first time a touchscreen is used. A finger put down on a window gives it the keyboard and raises it, as a click does.
+//!   first time a touchscreen is used. A finger put down on a window gives it the keyboard and raises it, as a click does. With
+//!   a finger down on its own window a program may move or resize that window, which then follows the finger (grabs.rs), or
+//!   start a drag, whose icon is drawn under that finger (`App::fingers`; the pointer keeps its own look).
 //! - **The pen** moves the pointer, and its tip is the left button, its first side button the right one and its second the
 //!   middle one, so every program takes it (tablet-v2, pressure and tilt for drawing programs, is not offered yet).
 //!
@@ -83,6 +85,7 @@ impl App {
         if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
             eprintln!("touch down {slot:?} at {:.0},{:.0}", pos.x, pos.y);
         }
+        self.finger_at(slot, pos);
         touch.down(self, under, &DownEvent { slot, location: pos, serial, time });
     }
 
@@ -92,6 +95,7 @@ impl App {
             return;
         }
         let Some(touch) = self.seat.get_touch() else { return };
+        self.finger_at(slot, pos);
         let under = self.target_under(pos);
         touch.motion(self, under, &MotionEvent { slot, location: pos, time });
     }
@@ -102,8 +106,17 @@ impl App {
             self.touch_swallowed.remove(i);
             return;
         }
+        self.fingers.retain(|(s, _)| *s != slot);
         let Some(touch) = self.seat.get_touch() else { return };
         touch.up(self, &UpEvent { slot, serial: SERIAL_COUNTER.next_serial(), time });
+    }
+
+    /// A finger is at `pos` now (`App::fingers`, where a finger's drag draws its icon).
+    fn finger_at(&mut self, slot: smithay::backend::input::TouchSlot, pos: Point<f64, Logical>) {
+        match self.fingers.iter_mut().find(|(s, _)| *s == slot) {
+            Some(f) => f.1 = pos,
+            None => self.fingers.push((slot, pos)),
+        }
     }
 
     /// A finger down while the touchscreen's screen is off: the first tap is remembered, a second within `DOUBLE_TAP` turns
@@ -135,6 +148,7 @@ impl App {
 
     pub fn touch_cancel(&mut self) {
         self.touch_swallowed.clear();
+        self.fingers.clear();
         if let Some(touch) = self.seat.get_touch() {
             touch.cancel(self);
         }
