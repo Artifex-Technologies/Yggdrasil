@@ -2250,6 +2250,86 @@ fn an_x11_program_cannot_take_a_wayland_drag_over() {
     until(&mut [&mut s, &mut t], "the dragging program told the drop finished", |l| l.finished);
 }
 
+/// The X11 program `x` asks for XdndSelection as `target` into its window `requestor`, at `time`: the property it is given,
+/// or None when it is refused.
+fn ask(
+    x: &X11,
+    programs: &mut [&mut Client],
+    requestor: XWindow,
+    target: Atom,
+    time: u32,
+) -> Option<x11rb::protocol::xproto::GetPropertyReply> {
+    let into = x.conn.intern_atom(false, b"ASKED").unwrap().reply().unwrap().atom;
+    x.conn.convert_selection(requestor, x.selection, target, into, time).unwrap();
+    x.conn.flush().unwrap();
+    let property = x.until(programs, "the answer to the X11 program's request", |e| match e {
+        Event::SelectionNotify(n) if n.requestor == requestor && n.target == target => Some(n.property),
+        _ => None,
+    });
+    (property != x11rb::NONE).then(|| x.conn.get_property(true, requestor, into, AtomEnum::ANY, 0, 1 << 16).unwrap().reply().unwrap())
+}
+
+/// A Wayland program drags a file over an X11 program that takes it. Until the drop no X11 program reads the file's URI
+/// through XdndSelection: not a program in the background that never showed a window (one that watches what is dragged),
+/// and not the target either, since X11 cannot tell which program asks (any program can name another's window). They are
+/// told only its types (TARGETS). Dropped there, the target reads it; once the target finished, nobody does.
+#[test]
+#[ignore = "needs the fork's fix that gives X11 programs a Wayland drag's data only after the drop (YGG-113)"]
+fn an_x11_program_cannot_read_a_wayland_drag_before_the_drop() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a Wayland drag read from X11");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program that takes the drop, on the right
+    let x = X11::connect(&display);
+    let win = x.window(b"x11target\0X11target\0", EventMask::NO_EVENT);
+    x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[XDND]).unwrap();
+    x.conn.flush().unwrap();
+    place_x11(&comp, "X11target", (600, 100));
+    // an X11 program in the background: no window shown, only one of its own for the answers
+    let b = X11::connect(&display);
+    let hidden = b.conn.generate_id().unwrap();
+    let aux = CreateWindowAux::new();
+    b.conn.create_window(x11rb::COPY_DEPTH_FROM_PARENT, hidden, b.root, 0, 0, 1, 1, 0, WindowClass::INPUT_OUTPUT, 0, &aux).unwrap();
+    b.conn.flush().unwrap();
+    // the Wayland program dragging, on the left
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.source")));
+    s.roundtrip();
+    let (si, xi) = (comp.window("test.source").unwrap(), comp.window("X11target").unwrap());
+    drag_from(&comp, &mut s, &sw, si.at, URI_MIME);
+    // over the X11 window, which takes it
+    x11_drawn(&comp, xi.at);
+    comp.must(&format!("pointer {} {}", xi.at.0 + 150, xi.at.1 + 100));
+    let source = x.message(&mut [&mut s], x.enter, "XdndEnter")[0];
+    x.message(&mut [&mut s], x.position, "XdndPosition");
+    x.send(source, x.status, [win, 1, 0, 0, x.copy]);
+    until(&mut [&mut s], "the dragging program told the X11 program's choice", |l| l.action == Some(DndAction::Copy));
+
+    // before the drop the program in the background is told the types (the window manager answers for the drag), and
+    // refused the URI; so is the target
+    let types = ask(&b, &mut [&mut s], hidden, b.targets, x11rb::CURRENT_TIME).expect("the types told");
+    assert!(types.value32().is_some_and(|mut t| t.any(|a| a == b.uri)), "the URI's type among them");
+    assert!(ask(&b, &mut [&mut s], hidden, b.uri, x11rb::CURRENT_TIME).is_none(), "the URI refused to the program in the background");
+    assert!(ask(&x, &mut [&mut s], win, x.uri, x11rb::CURRENT_TIME).is_none(), "the URI refused to the target before the drop");
+    assert_eq!(log(|l| l.sent), 0, "the dragging program not asked for the URI");
+
+    // let go: told of the drop (XdndDrop), the target asks for the URI and is given it
+    comp.must("release");
+    let dropped = x.message(&mut [&mut s], x.drop, "XdndDrop");
+    let got = ask(&x, &mut [&mut s], win, x.uri, dropped[2]).expect("the URI given to the target, not refused");
+    assert_eq!(got.value, URI, "what was dropped arrived");
+    x.send(source, x.finished, [win, 1, x.copy, 0, 0]);
+    until(&mut [&mut s], "the dragging program told the drop finished", |l| l.finished);
+    // the target finished: nobody reads it any more
+    assert!(ask(&b, &mut [&mut s], hidden, b.uri, x11rb::CURRENT_TIME).is_none(), "the URI refused once the drop finished");
+}
+
 // ------------------------------------------------------------------ XWayland going away in the middle of a transfer
 
 /// Places the X11 program's window `app` at `at` once XWayland has made its surface. The window is listed a moment before
