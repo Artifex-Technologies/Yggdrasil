@@ -34,6 +34,7 @@ _version "$startdir" "$_src"
 build() {
   cd "$_src"
   cargo build --release --locked --target-dir "$srcdir/target"
+  # on up to four threads, no more than MAKEFLAGS' -jN (makepkg.conf) allows
   "$srcdir/target/release/ygg-cursors" "$srcdir/cursors"
 }
 

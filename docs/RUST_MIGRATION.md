@@ -14,7 +14,7 @@ the bugs the port fixed and where the Rust one is worse.
 | the crash watch | start 49.7 → 0.61 ms CPU (−99 %) | 22.9 → 0.8 MB PSS (−97 %) | [crashwatch](../packages/crashwatch/README.md) |
 | pkg-root | a refused command 20.0 → 0.44 ms (−98 %) | 12.8 → 2.4 MB (−81 %) | [agora-helpers](../packages/agora-helpers/README.md) |
 | ygg-theme | `gtk4-theme` 116 → 32.9 ms (−72 %) | 57.6 → 32.3 MB (−44 %) | [theme](../packages/theme/README.md) |
-| ygg-cursors | 1057 → 1604 ms (**+52 %, slower**) | 31.5 → 15.1 MB (−52 %) | [theme](../packages/theme/README.md) |
+| ygg-cursors | the whole theme 1028 → 40.3 ms (−96 %), 1026 → 115 ms CPU (−89 %; it was 1604 ms, +52 %, until 2026-11-25) | 31.6 → 16.1 MB (−49 %) | [theme](../packages/theme/README.md) |
 | liki-build, liki-icns, liki-icon-import | a pack of 3,000 icons 127 → 30.3 ms (−76 %) | 22.5 → 5.7 MB (−74 %) | [liki](../packages/liki/README.md) |
 | yggdrasil-install-system | `--check` 35.6 → 0.72 ms (−98 %); a whole install (stand-ins) 106 → 62.4 ms CPU | 18.0 → 3.6 MB (−80 %) | [install-system](../packages/install-system/README.md) |
 | the lights hook (shell; now inside yggdrasil-idle) | lights-off 100 → 2.82 ms (−97 %), lights-on 20.5 → 0.91 ms (−96 %) | 175 processes per lights-off → 0 | [idle](../packages/idle/README.md) |
