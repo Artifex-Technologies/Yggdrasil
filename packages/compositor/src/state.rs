@@ -3460,7 +3460,7 @@ impl WaylandDndGrabHandler for App {
                 touch.set_grab(self, grab, serial);
             }
         }
-        // a drag now: the closed hand, and its icon under the pointer
+        // set only now: a drag this one replaced (the program's own earlier one) was cancelled as it went, which ended its look
         self.dragging = true;
         // the offset the icon's first picture was committed with (before the drag began)
         self.dnd_offset = icon
@@ -3476,6 +3476,12 @@ impl WaylandDndGrabHandler for App {
 impl DndGrabHandler for App {
     /// The drag ended (dropped on a window, or let go where nothing takes it): the arrow until a window sets its own.
     fn dropped(&mut self, _target: Option<DndTarget<'_, Self>>, _validated: bool, _seat: Seat<Self>, _at: Point<f64, Logical>) {
+        self.end_drag();
+    }
+
+    /// The drag ended without a drop: the touchscreen cancelled the finger, another grab took the button (the program's own
+    /// move), or the program went away. The same as a drop: Smithay main ends these here, not in `dropped`.
+    fn cancelled(&mut self, _seat: Seat<Self>, _at: Point<f64, Logical>) {
         self.end_drag();
     }
 }

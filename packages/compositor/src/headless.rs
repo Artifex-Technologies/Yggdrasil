@@ -54,6 +54,7 @@
 //!   input                        the mouse and keyboard settings in force (input.rs: Settings > Peripherals' input.conf)
 //!   touch-down ID X Y, touch-move ID X Y, touch-up ID
 //!                                a finger (ID 0 to 15) on a touchscreen, at X,Y of the touchscreen's screen (touch.rs)
+//!   touch-cancel                 the touchscreen cancels its fingers, as libinput's touch cancel does
 //!   power NAME on|off            switch an output on or off (as wlr-output-power does)
 //!   clock [stop|run|+MS]         the clock the animations run on: stop it, move a stopped one on, let it run again; without
 //!                                a word: "running" or "stopped" and its time (ms). For tests: a frame in an animation
@@ -261,7 +262,7 @@ pub struct Headless {
 }
 
 /// The commands, for an unknown one's answer.
-const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, switcher, frames, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, touch-down ID X Y, touch-move ID X Y, touch-up ID, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
+const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, switcher, frames, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, touch-down ID X Y, touch-move ID X Y, touch-up ID, touch-cancel, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
 
 /// About 60 frames a second at most, however often programs commit.
 const FRAME: Duration = Duration::from_millis(16);
@@ -673,7 +674,8 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec
 }
 
 /// A finger on a touchscreen, made here (touch.rs): `touch-down ID X Y`, `touch-move ID X Y` (X, Y in the touchscreen's own
-/// logical size, as libinput gives a touch: the laptop's screen, else the main one) and `touch-up ID`, each a frame of its own.
+/// logical size, as libinput gives a touch: the laptop's screen, else the main one) and `touch-up ID`, each a frame of its own;
+/// `touch-cancel` ends every finger without a lift.
 fn touch_command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, String>> {
     let slot = |id: &str| id.parse::<u32>().ok().filter(|n| *n < 16).map(|n| smithay::backend::input::TouchSlot::from(Some(n)));
     let at = |app: &App, x: &str, y: &str| -> Option<smithay::utils::Point<f64, smithay::utils::Logical>> {
@@ -681,7 +683,7 @@ fn touch_command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, St
         let r = state::output_rect(&app.touch_output());
         Some((r.loc.x as f64 + x.clamp(0.0, r.size.w as f64), r.loc.y as f64 + y.clamp(0.0, r.size.h as f64)).into())
     };
-    let usage = || Err("touch-down ID X Y, touch-move ID X Y, touch-up ID (ID 0 to 15)".to_string());
+    let usage = || Err("touch-down ID X Y, touch-move ID X Y, touch-up ID (ID 0 to 15), touch-cancel".to_string());
     let r = match words {
         [w @ ("touch-down" | "touch-move"), id, x, y] => match (slot(id), at(app, x, y)) {
             (Some(s), Some(p)) => {
@@ -703,6 +705,10 @@ fn touch_command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, St
             }
             None => usage(),
         },
+        ["touch-cancel"] => {
+            app.touch_cancel();
+            Ok(vec![])
+        }
         [w, ..] if w.starts_with("touch-") => usage(),
         _ => return None,
     };

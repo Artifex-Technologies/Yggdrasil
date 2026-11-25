@@ -22,6 +22,7 @@ use wayland_client::protocol::wl_data_device::{self, WlDataDevice};
 use wayland_client::protocol::wl_data_device_manager::{DndAction, WlDataDeviceManager};
 use wayland_client::protocol::wl_data_offer::{self, WlDataOffer};
 use wayland_client::protocol::wl_data_source::{self, WlDataSource};
+use wayland_client::protocol::wl_touch::{self, WlTouch};
 use wayland_client::{event_created_child, Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::xdg::shell::client::xdg_surface::{self, XdgSurface};
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self, XdgToplevel};
@@ -52,8 +53,9 @@ struct Log {
     sent: usize,
     finished: bool,
     cancelled: bool,
-    /// a program's looks at the serial counter (`look`)
+    /// a program's looks at the serial counter (`look`), and the serial of the last finger down it was told of
     looks: Vec<u32>,
+    touched: Option<u32>,
 }
 
 thread_local! {
@@ -126,6 +128,17 @@ impl Dispatch<XdgSurface, Look> for State {
 
 impl Dispatch<XdgToplevel, Look> for State {
     fn event(_: &mut Self, _: &XdgToplevel, _: xdg_toplevel::Event, _: &Look, _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+/// A program's touch: the serial of a finger down, which a drag made with that finger names.
+struct Finger;
+
+impl Dispatch<WlTouch, Finger> for State {
+    fn event(_: &mut Self, _: &WlTouch, event: wl_touch::Event, _: &Finger, _: &Connection, _: &QueueHandle<Self>) {
+        if let wl_touch::Event::Down { serial, .. } = event {
+            log(|l| l.touched = Some(serial));
+        }
+    }
 }
 
 /// Dispatches the programs until `done`, at most 5 s.
@@ -306,6 +319,70 @@ fn a_program_cannot_drag_with_another_programs_press() {
     assert_eq!(comp.window("test.pressed").unwrap().at, (ai.at.0 + 40, ai.at.1), "the move goes on");
     comp.must("release");
     comp.must("key-up super");
+}
+
+/// A program that starts its drag again with the same press (the button still held) replaces its first drag: that one is told it
+/// is cancelled, and the closed hand stays for the new one until the button is let go.
+#[test]
+fn a_drag_started_again_with_the_same_press_keeps_the_closed_hand() {
+    let _l = limit(60, "a drag started again");
+    let comp = Compositor::start(&["--size", "1000x600"]);
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    let si = comp.window("test.source").unwrap();
+    drag_from(&comp, &mut s, &sw, si.at, MIME);
+    let pointer = comp.must("pointer-look");
+    assert!(pointer[0].ends_with("\tgrabbing"), "the drag's closed hand: {pointer:?}");
+    let m: WlDataDeviceManager = s.globals.bind(&s.qh, 3..=3, ()).expect("wl_data_device_manager 3");
+    let device: WlDataDevice = m.get_data_device(&s.seat, &s.qh, ());
+    device.start_drag(Some(&text(&s, &m)), &sw.surface, None, s.state.button_serial);
+    until(&mut [&mut s], "the first drag told it is cancelled", |l| l.cancelled);
+    assert_eq!(comp.must("pointer-look"), pointer, "the closed hand stays for the new drag");
+    comp.must("release");
+    s.roundtrip();
+    let pointer = comp.must("pointer-look");
+    assert!(!pointer[0].ends_with("\tgrabbing"), "the closed hand gone with the drag: {pointer:?}");
+}
+
+/// A drag made with a finger, which the touchscreen then cancels (libinput's touch cancel: the touch was a palm, or the system
+/// took it for a gesture): the drag ends there. The dragging program is told it is cancelled, and the pointer is no longer the
+/// drag's closed hand (on a touchscreen alone no mouse moves to put it right).
+#[test]
+fn a_finger_drag_the_touchscreen_cancels_ends_with_its_closed_hand() {
+    let _l = limit(60, "a finger's drag cancelled");
+    let comp = Compositor::start(&["--size", "1000x600"]);
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.source")));
+    s.roundtrip();
+    let si = comp.window("test.source").unwrap();
+    let (x, y) = (si.at.0 + 100, si.at.1 + 100);
+    // the first touch gives the seat its touch; the program then takes it
+    comp.must(&format!("touch-down 0 {x} {y}"));
+    comp.must("touch-up 0");
+    s.until("the seat has touch", |st| st.seat_caps & 4 != 0);
+    let _touch = s.seat.get_touch(&s.qh, Finger);
+    s.roundtrip();
+
+    // a finger down on the window, and the program drags its text with it: the closed hand
+    comp.must(&format!("touch-down 1 {x} {y}"));
+    until(&mut [&mut s], "the finger down", |l| l.touched.is_some());
+    let m: WlDataDeviceManager = s.globals.bind(&s.qh, 3..=3, ()).expect("wl_data_device_manager 3");
+    let device: WlDataDevice = m.get_data_device(&s.seat, &s.qh, ());
+    device.start_drag(Some(&text(&s, &m)), &sw.surface, None, log(|l| l.touched.unwrap()));
+    s.roundtrip();
+    let pointer = comp.must("pointer-look");
+    assert!(pointer[0].ends_with("\tgrabbing"), "the drag's closed hand: {pointer:?}");
+
+    // the touchscreen cancels the finger: the drag ends, and its closed hand with it
+    comp.must("touch-cancel");
+    until(&mut [&mut s], "the dragging program told its drag is cancelled", |l| l.cancelled);
+    let pointer = comp.must("pointer-look");
+    assert!(!pointer[0].ends_with("\tgrabbing"), "the closed hand gone with the drag: {pointer:?}");
 }
 
 // ------------------------------------------------------------------ X11 programs (XDND)
