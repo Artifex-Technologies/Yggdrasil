@@ -122,6 +122,45 @@ pub fn phone_link(sys: &std::path::Path, dev: &str, name_of: &dyn Fn(&str) -> Op
     }
 }
 
+/// What kind of link carries a connection: Wi-Fi, a phone sharing its connection over USB (ipheth, RNDIS), or a wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Link {
+    Wifi,
+    Phone,
+    Wired,
+}
+
+/// The link `dev` is, from /sys (`sys`; a made-up one in tests).
+pub fn link_kind(sys: &std::path::Path, dev: &str) -> Link {
+    let net = sys.join("class/net").join(dev);
+    if net.join("wireless").is_dir() {
+        return Link::Wifi;
+    }
+    let driver = std::fs::read_link(net.join("device/driver")).ok();
+    match driver.as_ref().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned()).as_deref() {
+        Some("ipheth" | "rndis_host") => Link::Phone,
+        _ => Link::Wired,
+    }
+}
+
+/// The interface the internet goes through (YGG-107): the IPv4 default route with the lowest metric in `route` (the text of
+/// /proc/net/route), among real links: one with a device under /sys/class/net (`sys`). A tunnel's own default route (a VPN,
+/// Tailscale) is not where the traffic leaves this computer. None when no real link has a default route.
+pub fn internet_link(route: &str, sys: &std::path::Path) -> Option<String> {
+    route
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let x: Vec<&str> = l.split_whitespace().collect();
+            let up = x.get(3).and_then(|f| u32::from_str_radix(f, 16).ok()).is_some_and(|f| f & 1 != 0);
+            let default = x.len() >= 8 && x[1] == "00000000" && x[7] == "00000000" && up;
+            let real = default && !x[0].contains('/') && sys.join("class/net").join(x[0]).join("device").exists();
+            real.then(|| (x[6].parse::<i64>().unwrap_or(0), x[0].to_string()))
+        })
+        .min()
+        .map(|(_, d)| d)
+}
+
 /// An iPhone's name, asked once per phone over its USB pairing (`idevicename -u UDID`, libimobiledevice through usbmuxd; it
 /// answers only for a phone that trusts this computer) and kept for the next asking.
 pub fn iphone_name(udid: &str) -> Option<String> {
@@ -217,6 +256,45 @@ pub fn nmcli(args: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_link_the_internet_goes_through() {
+        let sys = std::env::temp_dir().join(format!("netjoin-route-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&sys);
+        let dev = |name: &str, driver: Option<&str>, wireless: bool| {
+            let d = sys.join("devices").join(name);
+            std::fs::create_dir_all(&d).unwrap();
+            if let Some(drv) = driver {
+                std::fs::create_dir_all(sys.join("drivers").join(drv)).unwrap();
+                std::os::unix::fs::symlink(sys.join("drivers").join(drv), d.join("driver")).unwrap();
+            }
+            let net = sys.join("class/net").join(name);
+            std::fs::create_dir_all(&net).unwrap();
+            std::os::unix::fs::symlink(&d, net.join("device")).unwrap();
+            if wireless {
+                std::fs::create_dir_all(net.join("wireless")).unwrap();
+            }
+        };
+        dev("wlan0", Some("iwlwifi"), true);
+        dev("usb0", Some("ipheth"), false);
+        dev("eth0", Some("r8169"), false);
+        std::fs::create_dir_all(sys.join("class/net/wg0")).unwrap(); // a tunnel: no device
+        let head = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n";
+        let line = |i: &str, metric: u32| format!("{i}\t00000000\t010200C0\t0003\t0\t0\t{metric}\t00000000\t0\t0\t0\n");
+        // the phone (metric 100) under the Wi-Fi (600): the phone carries it; a VPN's own default route is not a link
+        let route = format!("{head}{}{}{}", line("wlan0", 600), line("usb0", 100), line("wg0", 50));
+        assert_eq!(super::internet_link(&route, &sys).as_deref(), Some("usb0"));
+        assert_eq!(super::internet_link(&format!("{head}{}", line("wlan0", 600)), &sys).as_deref(), Some("wlan0"));
+        // a route that is down, or not a default route, does not count; nothing at all: None
+        let down = "usb0\t00000000\t010200C0\t0002\t0\t0\t100\t00000000\t0\t0\t0\n";
+        let subnet = "usb0\t0A1400AC\t00000000\t0001\t0\t0\t100\t F0FFFFFF\t0\t0\t0\n";
+        assert_eq!(super::internet_link(&format!("{head}{down}{subnet}{}", line("wlan0", 600)), &sys).as_deref(), Some("wlan0"));
+        assert_eq!(super::internet_link(head, &sys), None);
+        assert_eq!(super::link_kind(&sys, "wlan0"), super::Link::Wifi);
+        assert_eq!(super::link_kind(&sys, "usb0"), super::Link::Phone);
+        assert_eq!(super::link_kind(&sys, "eth0"), super::Link::Wired);
+        std::fs::remove_dir_all(&sys).unwrap();
+    }
+
     #[test]
     fn a_phone_on_usb_is_named_after_the_phone() {
         let root = std::env::temp_dir().join(format!("netjoin-phone-link-{}", std::process::id()));

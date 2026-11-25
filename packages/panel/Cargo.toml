@@ -42,6 +42,8 @@ accesskit_unix = "0.24"
 yggdrasil-conf = { path = "../yggdrasil-conf" }
 # the compositor (Hyprland or Yggdrasil's own): desktops, zones, the dock's minimize, the pointer
 yggdrasil-wm = { path = "../wm" }
+# which link carries the internet (the bar's network icon: a phone's USB link shows as the phone)
+yggdrasil-netjoin = { path = "../netjoin" }
 
 [profile.release]
 opt-level = 2

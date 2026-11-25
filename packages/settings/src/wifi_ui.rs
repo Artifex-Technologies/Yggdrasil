@@ -188,6 +188,18 @@ pub(crate) fn address_choice(ui: &mut egui::Ui, pal: &Palette, r: &mut Request, 
     }
 }
 
+/// With two or more connections up (YGG-107): the one the internet goes through and the others standing by, as the network
+/// list's first card says it: (title, subtitle). `links`: each connected link's interface and how the card names it.
+pub fn internet_line(through: Option<&str>, links: &[(String, String)]) -> Option<(String, String)> {
+    if links.len() < 2 {
+        return None;
+    }
+    let (_, main) = links.iter().find(|(d, _)| Some(d.as_str()) == through)?;
+    let others: Vec<&str> = links.iter().filter(|(d, _)| Some(d.as_str()) != through).map(|(_, t)| t.as_str()).collect();
+    let verb = if others.len() == 1 { "is" } else { "are" };
+    Some((format!("Internet through {main}"), format!("{} {verb} connected too, standing by", others.join(" and "))))
+}
+
 impl App {
     pub(crate) fn page_network(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(n) = self.data.network.clone() else { return loading(ui) };
@@ -229,6 +241,29 @@ impl App {
         // of its own, named after the phone ("Tether (Rover)")
         let plugged = n.devices.iter().filter(|d| d.kind == "ethernet" && sys::cable_in(&d.state));
         let (phones, wired): (Vec<_>, Vec<_>) = plugged.map(|d| (d, sys::phone_name(&d.device))).partition(|(_, p)| p.is_some());
+        // several connections at once: which one the internet goes through, the others standing by (YGG-107)
+        let wifi_dev = n.devices.iter().find(|d| d.kind == "wifi" && d.state.starts_with("connected"));
+        let mut links: Vec<(String, String)> = Vec::new();
+        for (d, phone) in phones.iter().chain(wired.iter()).filter(|(d, _)| d.state.starts_with("connected")) {
+            links.push((
+                d.device.clone(),
+                match phone {
+                    Some(name) => format!("Tether ({name}), over USB"),
+                    None => format!("Ethernet ({})", d.device),
+                },
+            ));
+        }
+        if let Some(w) = wifi_dev {
+            let ssid =
+                n.saved.iter().find(|p| p.wifi && p.name == w.connection).map(|p| p.ssid.clone()).unwrap_or_else(|| w.connection.clone());
+            links.push((w.device.clone(), format!("{ssid} (Wi-Fi)")));
+        }
+        if let Some((title, sub)) = internet_line(n.through.as_deref(), &links) {
+            ui::group(ui, pal, Some("Internet"), |ui| {
+                ui::row(ui, pal, true, &title, Some(&sub), |_| {});
+            });
+        }
+        let standing_by = |dev: &str| n.through.as_deref().is_some_and(|t| t != dev) && links.len() >= 2;
         for (group, list) in [("Phone", &phones), ("Wired", &wired)] {
             if list.is_empty() {
                 continue;
@@ -237,6 +272,7 @@ impl App {
                 for (i, (d, phone)) in list.iter().enumerate() {
                     let on = d.state.starts_with("connected");
                     let sub = match (on, phone.is_some()) {
+                        (true, _) if standing_by(&d.device) => "Connected, standing by".to_string(),
                         (true, true) => "Connected through the phone".to_string(),
                         (true, false) => "Connected".to_string(),
                         (false, true) => "Plugged in, not connected (is the phone sharing its connection?)".to_string(),
@@ -274,7 +310,8 @@ impl App {
                 }
             });
             if let Some(w) = parts.connected.filter(|_| listing) {
-                if ui::net_row(ui, pal, false, true, &w.ssid, None, w.secured, Some(w.signal)) != ui::NetClick::None {
+                let sub = wifi_dev.filter(|d| standing_by(&d.device)).map(|_| "Connected, standing by");
+                if ui::net_row(ui, pal, false, true, &w.ssid, sub, w.secured, Some(w.signal)) != ui::NetClick::None {
                     match saved_for(&w.ssid) {
                         Some(p) => open = Some(p.uuid.clone()),
                         None => air_open = Some(AirKey { ssid: w.ssid.clone(), bssid: None }),
@@ -1270,6 +1307,30 @@ mod tests {
             air: std::sync::Arc::new(scan::group(scan::parse_fixture(&f.scan))),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn which_connection_the_internet_goes_through() {
+        let links = vec![("usb0".to_string(), "Tether (Rover), over USB".to_string()), ("wlan0".to_string(), "Cafe (Wi-Fi)".to_string())];
+        assert_eq!(
+            super::internet_line(Some("usb0"), &links),
+            Some(("Internet through Tether (Rover), over USB".to_string(), "Cafe (Wi-Fi) is connected too, standing by".to_string()))
+        );
+        assert_eq!(
+            super::internet_line(Some("wlan0"), &links).unwrap().0,
+            "Internet through Cafe (Wi-Fi)",
+            "the Wi-Fi first when its route is"
+        );
+        let mut three = links.clone();
+        three.push(("eth0".to_string(), "Ethernet (eth0)".to_string()));
+        assert_eq!(
+            super::internet_line(Some("eth0"), &three).unwrap().1,
+            "Tether (Rover), over USB and Cafe (Wi-Fi) are connected too, standing by"
+        );
+        // one connection says enough by itself; a route through none of them (a VPN only) is not guessed
+        assert_eq!(super::internet_line(Some("usb0"), &links[..1]), None);
+        assert_eq!(super::internet_line(None, &links), None);
+        assert_eq!(super::internet_line(Some("wg0"), &links), None);
     }
 
     #[test]

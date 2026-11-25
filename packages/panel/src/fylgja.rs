@@ -1151,7 +1151,14 @@ fn paint_controls(
     let (wifi_on, wifi_sub) = match &snap.wifi {
         Some((true, name)) => (true, if name.is_empty() { "On".to_string() } else { name.clone() }),
         Some((false, _)) => (false, "Off".to_string()),
-        None => (false, if matches!(m.status.net, crate::status::Net::Wired) { "Wired".to_string() } else { "No adapter".to_string() }),
+        None => (
+            false,
+            match m.status.net {
+                crate::status::Net::Wired => "Wired".to_string(),
+                crate::status::Net::Phone => "Through the phone".to_string(),
+                _ => "No adapter".to_string(),
+            },
+        ),
     };
     let wifi_sub = if wait { "…".to_string() } else { wifi_sub };
     tile(
