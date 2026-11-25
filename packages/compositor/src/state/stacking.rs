@@ -18,8 +18,9 @@ use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::{se
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{FrameExtents, Logical, Point, Rectangle};
 use smithay::wayland::shell::wlr_layer::Layer;
+use smithay::xwayland::X11Surface;
 
-use super::{win_has, App};
+use super::{win_has, App, PtrFocus};
 use crate::deco::{self, Hit};
 
 /// How far out from its window an X11 program's surface takes clicks. A program that draws its own shadow (GTK, Chromium) keeps
@@ -29,11 +30,13 @@ use crate::deco::{self, Hit};
 const X11_BORDER: f64 = 10.0;
 
 /// What is under a point of the space, the frontmost thing there.
+// an X11 window is large (see KbFocus); this lives only while a point is looked up, so boxing it would only add an allocation
+#[allow(clippy::large_enum_variant)]
 pub enum Under {
     /// the lock's surface on that screen (while locked there is nothing else)
     Lock(WlSurface, Point<f64, Logical>),
-    /// an X11 menu or tooltip: its surface and where that surface's origin is
-    Overlay(WlSurface, Point<f64, Logical>),
+    /// an X11 menu or tooltip: its window, its surface and where that surface's origin is
+    Overlay(X11Surface, WlSurface, Point<f64, Logical>),
     /// a panel or background on a layer: the (sub)surface under the point and its origin
     Layer(LayerSurface, Layer, WlSurface, Point<f64, Logical>),
     /// a window: its surface, a subsurface or one of its menus (xdg popups) under the point, and that surface's origin
@@ -48,8 +51,24 @@ impl Under {
     /// The surface that gets pointer and touch events (none for the compositor's own controls and grips).
     pub fn surface(self) -> Option<(WlSurface, Point<f64, Logical>)> {
         match self {
-            Under::Lock(s, p) | Under::Overlay(s, p) | Under::Layer(_, _, s, p) | Under::Window(_, s, p) => Some((s, p)),
+            Under::Lock(s, p) | Under::Overlay(_, s, p) | Under::Layer(_, _, s, p) | Under::Window(_, s, p) => Some((s, p)),
             Under::Controls(..) | Under::Edge(..) => None,
+        }
+    }
+
+    /// What pointer and touch events go to, as the seat's focus: as `surface`, with an X11 window or menu as itself, so a drag
+    /// can speak XDND to it (its surface gets the events all the same).
+    pub fn target(self) -> Option<(PtrFocus, Point<f64, Logical>)> {
+        match self {
+            Under::Overlay(x, s, p) => Some((PtrFocus::X11(x, s), p)),
+            Under::Window(w, s, p) => Some((
+                match w.x11_surface() {
+                    Some(x) => PtrFocus::X11(x.clone(), s),
+                    None => PtrFocus::Wl(s),
+                },
+                p,
+            )),
+            u => u.surface().map(|(s, p)| (PtrFocus::Wl(s), p)),
         }
     }
 
@@ -76,8 +95,8 @@ impl App {
                 .find(|(o, _)| o == &output)
                 .map(|(_, l)| Under::Lock(l.wl_surface().clone(), origin.to_f64()));
         }
-        if let Some((s, p)) = self.overlay_under(pos) {
-            return Some(Under::Overlay(s, p));
+        if let Some((x, s, p)) = self.overlay_under(pos) {
+            return Some(Under::Overlay(x, s, p));
         }
         let full = self.fullscreen_in_front(&output);
         let on_layer = |layer: Layer| {

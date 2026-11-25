@@ -393,18 +393,38 @@ impl App {
         self.overlays.iter().any(|x| x.last_configure().to_f64().contains(pos))
     }
 
-    /// The surface of an X11 menu or tooltip under the point, and where that surface's origin is on screen (its X window's).
-    pub fn overlay_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+    /// The X11 menu or tooltip under the point: its window, its surface and where that surface's origin is on screen.
+    pub fn overlay_under(&self, pos: Point<f64, Logical>) -> Option<(X11Surface, WlSurface, Point<f64, Logical>)> {
+        use smithay::desktop::{utils::under_from_surface_tree, WindowSurfaceType};
+        if self.overlays.is_empty() {
+            return None;
+        }
+        // While an X11 program drags, the icon it moves under the pointer (a window like these) is passed over (Smithay's
+        // surface_under), so the window beneath it is where the drag goes. Only while a button or a finger is held: Smithay
+        // can think a drag still goes on after the program gave it up (XdndLeave), and then every menu would let the pointer
+        // through. (is_grabbed takes the grab's lock: no grab looks up what is under the pointer.)
+        let held = self.pointer.is_grabbed() || self.seat.get_touch().is_some_and(|t| t.is_grabbed());
         for x in self.overlays.iter().rev() {
-            let Some(s) = x.wl_surface() else { continue };
+            // the X window's place (its surface starts there, a shadow it draws included)
             let loc = x.last_configure().loc;
-            if let Some((s, p)) =
-                smithay::desktop::utils::under_from_surface_tree(&s, pos - loc.to_f64(), (0, 0), smithay::desktop::WindowSurfaceType::ALL)
-            {
-                return Some((s, (p + loc).to_f64()));
+            let at = pos - loc.to_f64();
+            let hit = if held {
+                x.surface_under(at, (0, 0), WindowSurfaceType::ALL)
+            } else {
+                x.wl_surface().and_then(|s| under_from_surface_tree(&s, at, (0, 0), WindowSurfaceType::ALL))
+            };
+            if let Some((s, p)) = hit {
+                return Some((x.clone(), s, (p + loc).to_f64()));
             }
         }
         None
+    }
+
+    /// Is this X11 window one of the XWayland that runs now? One can outlive its XWayland as a drag's target (XWayland crashed,
+    /// or was killed): Smithay's window manager code for it would then ask for a window manager that is gone (and panic), or
+    /// after a restart for the new one, where its window number means another window.
+    pub fn has_x11(&self, x: &X11Surface) -> bool {
+        self.xwm.as_ref().is_some_and(|wm| x.xwm_id() == Some(wm.id()))
     }
 
     /// Did the compositor give this window its place and size (tiled, maximized, full screen, snapped)? Then it keeps them.
@@ -728,6 +748,9 @@ impl XwmHandler for App {
             let s = state::surface_of(&w);
             self.window_gone(s.as_ref(), |x| *x == w);
         }
+        // what is under the pointer now has it: a drag over an X11 window leaves it (a drop there would wait for ever for
+        // the X11 program to finish it), and an X11 program's own drag ends
+        self.pointer_moved_to(self.pointer_location);
         // the old XWayland let go: its display's lock and socket files go with it, so the display can be bound again
         if let Some(t) = self.xwayland_source.take() {
             self.loop_handle.remove(t);

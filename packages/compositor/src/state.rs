@@ -22,10 +22,15 @@ use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
 use smithay::desktop::{layer_map_for_output, LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType};
-use smithay::input::dnd::{DnDGrab, DndGrabHandler, DndTarget, GrabType, Source};
+use smithay::input::dnd::{DnDGrab, DndFocus, DndGrabHandler, DndTarget, GrabType, OfferData, Source};
 use smithay::input::keyboard::{keysyms, FilterResult, KeyboardHandle};
 use smithay::input::pointer::Focus;
-use smithay::input::pointer::{ButtonEvent, CursorImageStatus, MotionEvent, PointerHandle};
+use smithay::input::pointer::{
+    AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
+    GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent, PointerHandle,
+    PointerTarget, RelativeMotionEvent,
+};
+use smithay::input::touch::{FrameMarker, TouchTarget};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::Output;
 use smithay::reexports::calloop::{LoopHandle, LoopSignal};
@@ -45,14 +50,16 @@ use smithay::wayland::compositor::{
 use smithay::wayland::idle_notify::{IdleNotifierHandler, IdleNotifierState};
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::seat::WaylandFocus;
-use smithay::wayland::selection::data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler};
+use smithay::wayland::selection::data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, WlOfferData};
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker};
 use smithay::wayland::shell::wlr_layer::{Layer, LayerSurface as WlrLayerSurface, WlrLayerShellHandler, WlrLayerShellState};
 use smithay::wayland::shell::xdg::decoration::{XdgDecorationHandler, XdgDecorationState};
 use smithay::wayland::shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState};
+use smithay::xwayland::xwm::XwmOfferData;
 use smithay::xwayland::X11Surface;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 mod stacking;
 use stacking::Under;
@@ -461,6 +468,118 @@ impl smithay::input::keyboard::KeyboardTarget<App> for KbFocus {
             KbFocus::Wl(s) => smithay::input::keyboard::KeyboardTarget::modifiers(s, seat, data, modifiers, serial),
             KbFocus::X11(x) => smithay::input::keyboard::KeyboardTarget::modifiers(x, seat, data, modifiers, serial),
         }
+    }
+}
+
+/// What the pointer or a finger is over: a Wayland surface, or an X11 window (a window, a menu) and its surface. The events go to
+/// the surface either way (XWayland reads an X11 window's on its surface); a drag needs the X11 window itself, to speak XDND to
+/// the program.
+// large for the same reason as KbFocus; it is made on every motion, and boxing it would add an allocation there
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum PtrFocus {
+    Wl(WlSurface),
+    /// The surface is part of what the focus is: an X11 window shown again gets a new surface from XWayland, which must be
+    /// entered (XWayland ignores motion on a surface it was not told the pointer is in).
+    X11(X11Surface, WlSurface),
+}
+
+impl PtrFocus {
+    /// The surface that receives the events (an X11 window's own surface).
+    pub fn surface(&self) -> &WlSurface {
+        match self {
+            PtrFocus::Wl(s) | PtrFocus::X11(_, s) => s,
+        }
+    }
+}
+
+impl IsAlive for PtrFocus {
+    fn alive(&self) -> bool {
+        match self {
+            PtrFocus::Wl(s) => s.alive(),
+            PtrFocus::X11(x, s) => x.alive() && s.alive(),
+        }
+    }
+}
+
+impl WaylandFocus for PtrFocus {
+    fn wl_surface(&self) -> Option<std::borrow::Cow<'_, WlSurface>> {
+        Some(std::borrow::Cow::Borrowed(self.surface()))
+    }
+}
+
+impl PointerTarget<App> for PtrFocus {
+    fn enter(&self, seat: &Seat<App>, data: &mut App, event: &MotionEvent) {
+        PointerTarget::enter(self.surface(), seat, data, event)
+    }
+    fn motion(&self, seat: &Seat<App>, data: &mut App, event: &MotionEvent) {
+        PointerTarget::motion(self.surface(), seat, data, event)
+    }
+    fn relative_motion(&self, seat: &Seat<App>, data: &mut App, event: &RelativeMotionEvent) {
+        PointerTarget::relative_motion(self.surface(), seat, data, event)
+    }
+    fn button(&self, seat: &Seat<App>, data: &mut App, event: &ButtonEvent) {
+        PointerTarget::button(self.surface(), seat, data, event)
+    }
+    fn axis(&self, seat: &Seat<App>, data: &mut App, frame: AxisFrame) {
+        PointerTarget::axis(self.surface(), seat, data, frame)
+    }
+    fn frame(&self, seat: &Seat<App>, data: &mut App) {
+        PointerTarget::frame(self.surface(), seat, data)
+    }
+    fn gesture_swipe_begin(&self, seat: &Seat<App>, data: &mut App, event: &GestureSwipeBeginEvent) {
+        PointerTarget::gesture_swipe_begin(self.surface(), seat, data, event)
+    }
+    fn gesture_swipe_update(&self, seat: &Seat<App>, data: &mut App, event: &GestureSwipeUpdateEvent) {
+        PointerTarget::gesture_swipe_update(self.surface(), seat, data, event)
+    }
+    fn gesture_swipe_end(&self, seat: &Seat<App>, data: &mut App, event: &GestureSwipeEndEvent) {
+        PointerTarget::gesture_swipe_end(self.surface(), seat, data, event)
+    }
+    fn gesture_pinch_begin(&self, seat: &Seat<App>, data: &mut App, event: &GesturePinchBeginEvent) {
+        PointerTarget::gesture_pinch_begin(self.surface(), seat, data, event)
+    }
+    fn gesture_pinch_update(&self, seat: &Seat<App>, data: &mut App, event: &GesturePinchUpdateEvent) {
+        PointerTarget::gesture_pinch_update(self.surface(), seat, data, event)
+    }
+    fn gesture_pinch_end(&self, seat: &Seat<App>, data: &mut App, event: &GesturePinchEndEvent) {
+        PointerTarget::gesture_pinch_end(self.surface(), seat, data, event)
+    }
+    fn gesture_hold_begin(&self, seat: &Seat<App>, data: &mut App, event: &GestureHoldBeginEvent) {
+        PointerTarget::gesture_hold_begin(self.surface(), seat, data, event)
+    }
+    fn gesture_hold_end(&self, seat: &Seat<App>, data: &mut App, event: &GestureHoldEndEvent) {
+        PointerTarget::gesture_hold_end(self.surface(), seat, data, event)
+    }
+    fn leave(&self, seat: &Seat<App>, data: &mut App, serial: Serial, time: InputTime) {
+        PointerTarget::leave(self.surface(), seat, data, serial, time)
+    }
+}
+
+impl TouchTarget<App> for PtrFocus {
+    fn down(&self, seat: &Seat<App>, data: &mut App, event: &smithay::input::touch::DownEvent) {
+        TouchTarget::down(self.surface(), seat, data, event)
+    }
+    fn up(&self, seat: &Seat<App>, data: &mut App, event: &smithay::input::touch::UpEvent) {
+        TouchTarget::up(self.surface(), seat, data, event)
+    }
+    fn motion(&self, seat: &Seat<App>, data: &mut App, event: &smithay::input::touch::MotionEvent) {
+        TouchTarget::motion(self.surface(), seat, data, event)
+    }
+    fn frame(&self, seat: &Seat<App>, data: &mut App, marker: FrameMarker) {
+        TouchTarget::frame(self.surface(), seat, data, marker)
+    }
+    fn cancel(&self, seat: &Seat<App>, data: &mut App, marker: FrameMarker) {
+        TouchTarget::cancel(self.surface(), seat, data, marker)
+    }
+    fn shape(&self, seat: &Seat<App>, data: &mut App, event: &smithay::input::touch::ShapeEvent) {
+        TouchTarget::shape(self.surface(), seat, data, event)
+    }
+    fn orientation(&self, seat: &Seat<App>, data: &mut App, event: &smithay::input::touch::OrientationEvent) {
+        TouchTarget::orientation(self.surface(), seat, data, event)
+    }
+    fn last_frame(&self, seat: &Seat<App>, data: &mut App) -> Option<FrameMarker> {
+        TouchTarget::last_frame(self.surface(), seat, data)
     }
 }
 
@@ -2722,6 +2841,12 @@ impl App {
         self.under(pos).and_then(Under::surface)
     }
 
+    /// What pointer and touch events at a point go to, and where its surface's origin is on screen: as `surface_under`, with an
+    /// X11 window as itself (a drag over it speaks XDND).
+    pub fn target_under(&self, pos: Point<f64, Logical>) -> Option<(PtrFocus, Point<f64, Logical>)> {
+        self.under(pos).and_then(Under::target)
+    }
+
     /// A click gives the keyboard to what is under the pointer (a window, raised, or a panel that asks for the keyboard).
     pub fn focus_under_pointer(&mut self, serial: Serial) {
         self.focus_at(self.pointer_location, serial);
@@ -2890,7 +3015,7 @@ impl App {
         if self.dragging && !pointer.is_grabbed() {
             self.end_drag();
         }
-        let under = self.surface_under(pos);
+        let under = self.target_under(pos);
         if under.is_none()
             && !self.dragging
             && !matches!(self.cursor.status, CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Default))
@@ -3229,9 +3354,8 @@ impl smithay::input::tablet::TabletSeatHandler for App {
 
 impl SeatHandler for App {
     type KeyboardFocus = KbFocus;
-    // the pointer needs no X11 variant: XWayland reads pointer events on the window's own surface
-    type PointerFocus = WlSurface;
-    type TouchFocus = WlSurface;
+    type PointerFocus = PtrFocus;
+    type TouchFocus = PtrFocus;
     fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.seat_state
     }
@@ -3330,6 +3454,104 @@ impl DndGrabHandler for App {
     /// The drag ended (dropped on a window, or let go where nothing takes it): the arrow until a window sets its own.
     fn dropped(&mut self, _target: Option<DndTarget<'_, Self>>, _validated: bool, _seat: Seat<Self>, _at: Point<f64, Logical>) {
         self.end_drag();
+    }
+}
+
+/// What a drag offers the program under the pointer: a Wayland program a wl_data_offer, an X11 program XDND's messages (sent by
+/// Smithay's window manager, which also stands in for Wayland windows when an X11 program drags).
+pub enum DragOffer<S: Source> {
+    Wl(WlOfferData<S>),
+    X11(XwmOfferData<S>),
+}
+
+impl<S: Source> DragOffer<S> {
+    // each target is only ever given back the offer it made
+    fn wl(&mut self) -> Option<&mut WlOfferData<S>> {
+        match self {
+            DragOffer::Wl(o) => Some(o),
+            DragOffer::X11(_) => None,
+        }
+    }
+
+    fn x11(&mut self) -> Option<&mut XwmOfferData<S>> {
+        match self {
+            DragOffer::X11(o) => Some(o),
+            DragOffer::Wl(_) => None,
+        }
+    }
+}
+
+impl<S: Source> OfferData for DragOffer<S> {
+    fn disable(&self) {
+        match self {
+            DragOffer::Wl(o) => o.disable(),
+            DragOffer::X11(o) => o.disable(),
+        }
+    }
+    fn drop(&self) {
+        match self {
+            DragOffer::Wl(o) => OfferData::drop(o),
+            DragOffer::X11(o) => OfferData::drop(o),
+        }
+    }
+    fn validated(&self) -> bool {
+        match self {
+            DragOffer::Wl(o) => o.validated(),
+            DragOffer::X11(o) => o.validated(),
+        }
+    }
+}
+
+/// A drag (a Wayland program's or an X11 program's) over a Wayland surface or an X11 window: Smithay's own handling of each. An
+/// X11 window whose XWayland went away (`App::has_x11`) takes nothing, and nothing is said to it.
+impl DndFocus<App> for PtrFocus {
+    type OfferData<S: Source> = DragOffer<S>;
+
+    fn enter<S: Source>(
+        &self,
+        data: &mut App,
+        dh: &DisplayHandle,
+        source: Arc<S>,
+        seat: &Seat<App>,
+        at: Point<f64, Logical>,
+        serial: &Serial,
+    ) -> Option<DragOffer<S>> {
+        match self {
+            PtrFocus::Wl(s) => DndFocus::enter(s, data, dh, source, seat, at, serial).map(DragOffer::Wl),
+            PtrFocus::X11(x, _) if data.has_x11(x) => DndFocus::enter(x, data, dh, source, seat, at, serial).map(DragOffer::X11),
+            PtrFocus::X11(..) => None,
+        }
+    }
+
+    fn motion<S: Source>(
+        &self,
+        data: &mut App,
+        offer: Option<&mut DragOffer<S>>,
+        seat: &Seat<App>,
+        at: Point<f64, Logical>,
+        time: InputTime,
+    ) {
+        match self {
+            PtrFocus::Wl(s) => DndFocus::motion(s, data, offer.and_then(DragOffer::wl), seat, at, time),
+            PtrFocus::X11(x, _) if data.has_x11(x) => DndFocus::motion(x, data, offer.and_then(DragOffer::x11), seat, at, time),
+            PtrFocus::X11(..) => {}
+        }
+    }
+
+    fn leave<S: Source>(&self, data: &mut App, offer: Option<&mut DragOffer<S>>, seat: &Seat<App>) {
+        match self {
+            PtrFocus::Wl(s) => DndFocus::leave(s, data, offer.and_then(DragOffer::wl), seat),
+            PtrFocus::X11(x, _) if data.has_x11(x) => DndFocus::leave(x, data, offer.and_then(DragOffer::x11), seat),
+            PtrFocus::X11(..) => {}
+        }
+    }
+
+    fn drop<S: Source>(&self, data: &mut App, offer: Option<&mut DragOffer<S>>, seat: &Seat<App>) {
+        match self {
+            PtrFocus::Wl(s) => DndFocus::drop(s, data, offer.and_then(DragOffer::wl), seat),
+            PtrFocus::X11(x, _) if data.has_x11(x) => DndFocus::drop(x, data, offer.and_then(DragOffer::x11), seat),
+            PtrFocus::X11(..) => {}
+        }
     }
 }
 

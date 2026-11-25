@@ -10,27 +10,9 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{AtomEnum, ConfigureWindowAux, ConnectionExt, CreateWindowAux, EventMask, PropMode, WindowClass};
 use x11rb::wrapper::ConnectionExt as _;
 
-fn xwayland_installed() -> bool {
-    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("Xwayland").is_file()))
-}
-
-/// The compositor with XWayland, and the X display it printed.
+/// The compositor with XWayland (tests/common), and the X display it printed.
 fn with_xwayland() -> (Compositor, String) {
     with_xwayland_on(&["--size", "640x480"], |_| {})
-}
-
-/// The same, on the screens of `args`, with `setup` run on the test's folder first.
-fn with_xwayland_on(args: &[&str], setup: impl FnOnce(&std::path::Path)) -> (Compositor, String) {
-    let comp = Compositor::start_env(args, &[("YGGDRASIL_COMPOSITOR_XWAYLAND", "1")], setup);
-    let start = Instant::now();
-    loop {
-        let found = comp.log.lock().unwrap().iter().find_map(|l| l.strip_prefix("DISPLAY=").map(str::to_string));
-        if let Some(d) = found {
-            return (comp, d);
-        }
-        assert!(start.elapsed() < Duration::from_secs(20), "XWayland did not start: {}", comp.log_tail(20));
-        std::thread::sleep(Duration::from_millis(50));
-    }
 }
 
 #[test]
@@ -284,20 +266,6 @@ fn an_x11_windows_picture_is_copied_for_the_docks_preview() {
         "opaque, as the panel draws it (alpha of the first pixels: {:?})",
         bytes.chunks(4).take(4).map(|p| p[3]).collect::<Vec<_>>()
     );
-}
-
-/// The compositor's Xwayland process, if one runs.
-fn xwayland_of(comp: &Compositor) -> Option<u32> {
-    let parent = comp.child.id().to_string();
-    std::fs::read_dir("/proc").ok()?.filter_map(Result::ok).find_map(|e| {
-        let stat = std::fs::read_to_string(e.path().join("stat")).ok()?;
-        // pid (comm) state ppid ...
-        let (head, rest) = stat.rsplit_once(')')?;
-        let comm = head.split_once('(')?.1;
-        let ppid = rest.split_whitespace().nth(1)?;
-        (comm == "Xwayland" && ppid == parent && !rest.trim_start().starts_with('Z'))
-            .then(|| e.file_name().to_string_lossy().parse().ok())?
-    })
 }
 
 #[test]
@@ -603,6 +571,65 @@ fn closing_asks_a_program_that_takes_part_and_ends_one_that_does_not() {
         assert!(start.elapsed() < Duration::from_secs(10), "the program that cannot be asked is still connected");
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// A program hides its window and shows it again while the pointer rests on it: XWayland gives the window a new surface, and
+/// the pointer is in that one from then on, so the program hears it move (a full screen game that does this would otherwise
+/// get no mouse at all, as the pointer cannot leave its window).
+#[test]
+fn an_x11_window_shown_again_under_the_resting_pointer_hears_it_move() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "the pointer in an X11 window shown again");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = conn.setup().roots[screen].root;
+    let win = conn.generate_id().unwrap();
+    let aux = CreateWindowAux::new().background_pixel(0x00ff00).event_mask(EventMask::POINTER_MOTION);
+    conn.create_window(0, win, root, 0, 0, 300, 200, 0, WindowClass::INPUT_OUTPUT, 0, &aux).unwrap();
+    conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"prog\0Prog\0").unwrap();
+    conn.map_window(win).unwrap();
+    conn.flush().unwrap();
+    comp.wait(10, "the window managed", |c| c.window("Prog").is_some());
+    comp.must(&format!("place {} 100 100 300 200", client_of(&comp, "Prog")));
+    // A window is listed as soon as the program shows it; the pointer can be in it only once XWayland has made its surface
+    // (then it is active) and drawn it (its green, away from where the pointer goes).
+    let shown = |c: &Compositor| {
+        c.window("Prog").is_some_and(|w| w.at == (100, 100) && w.states.iter().any(|s| s == "active"))
+            && c.screenshot("HEADLESS-1").count((110, 220, 100, 50), (0, 255, 0)) == 100 * 50
+    };
+    comp.wait(10, "the window drawn where it was placed", shown);
+    // the pointer to `at` on the screen: does the program hear it move there, in its window (within 2 s)?
+    let heard_at = |at: (i32, i32)| {
+        comp.must(&format!("pointer {} {}", at.0, at.1));
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(2) {
+            while let Some(e) = conn.poll_for_event().expect("the X11 connection") {
+                if let x11rb::protocol::Event::MotionNotify(m) = e {
+                    if m.event == win && (m.event_x as i32, m.event_y as i32) == (at.0 - 100, at.1 - 100) {
+                        return true;
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    };
+    assert!(heard_at((250, 200)), "the program hears the pointer in its window");
+    // hidden and shown again while the pointer rests on it, back where it was (gone from the screen in between)
+    conn.unmap_window(win).unwrap();
+    conn.flush().unwrap();
+    comp.wait(10, "the window hidden", |c| {
+        c.window("Prog").is_none() && c.screenshot("HEADLESS-1").count((110, 220, 100, 50), (0, 255, 0)) == 0
+    });
+    conn.map_window(win).unwrap();
+    conn.flush().unwrap();
+    comp.wait(10, "the window drawn again where it was", shown);
+    // the pointer moves within it: heard
+    comp.must("pointer 260 200");
+    assert!(heard_at((270, 210)), "the program hears the pointer in its window shown again");
 }
 
 #[test]

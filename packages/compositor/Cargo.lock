@@ -1512,7 +1512,7 @@ checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 [[package]]
 name = "smithay"
 version = "0.7.0"
-source = "git+https://github.com/Artifex-Technologies/smithay-yggdrasil?rev=0b9ef80cf750e6e98c73bd8efcedd111a8841cb1#0b9ef80cf750e6e98c73bd8efcedd111a8841cb1"
+source = "git+https://github.com/Artifex-Technologies/smithay-yggdrasil?rev=be625ae980ad27e799d1c822dcbb7856d5fadf00#be625ae980ad27e799d1c822dcbb7856d5fadf00"
 dependencies = [
  "appendlist",
  "bitflags 2.13.2",

@@ -379,16 +379,16 @@ scaled-down 1536x960 stretched, Xft.dpi 96); `tests/x11.rs` checks both. XWaylan
 (since 2026-11-24): the X11 display is bound when the compositor starts, so DISPLAY is known at once (`DISPLAY=:n` is printed
 and given to the programs it starts), and nothing of XWayland runs until a program connects to it; then XWayland starts on
 those sockets and accepts the program once its window manager is ready, so even a window mapped at once is managed
-(`tests/x11.rs`). This needs a change to Smithay 0.7 (`X11Sockets` and `XWayland::spawn_with_sockets`: the sockets bound apart
-from starting XWayland), carried in our fork (github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/lazy-xwayland, pinned
-by commit in packages/compositor/Cargo.toml) and offered to Smithay. An X11 program's own icon (`_NET_WM_ICON`) shows in the
+(`tests/x11.rs`). This needs a change to Smithay (`X11Sockets` and `XWayland::spawn_with_sockets`: the sockets bound apart
+from starting XWayland), carried in our fork (github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main: Smithay main and
+our few changes, pinned by commit in packages/compositor/Cargo.toml) and offered to Smithay. An X11 program's own icon (`_NET_WM_ICON`) shows in the
 dock when no desktop entry matches its window (a Windows program through Wine, say; since 2026-11-24): the compositor keeps the
 best size of it as a PNG for each window class in the runtime folder's `yggdrasil-window-icons` (read on a thread of its own
 when the window shows, and again when its title changes), and the panel looks there for an icon its theme does not have and
 watches the folder, so the icon shows a moment after the window (`tests/x11.rs`, `tests/apps.rs`). When XWayland goes away
 (it crashed or was killed), its windows go and the next X11 program starts a new one on the same display, so programs already
-told DISPLAY reach it (since 2026-11-24, `tests/x11.rs`). The compositor is the X11 display's XSETTINGS manager (since
-2026-11-24): GTK programs under X11 get their DPI (Xft/DPI, matching Xft.dpi), the pointer's theme and size, and GTK's theme,
+told DISPLAY reach it (since 2026-11-24, `tests/x11.rs`). The X11 display has XSETTINGS (since 2026-11-24; kept by Smithay's
+window manager, fed by the compositor): GTK programs under X11 get their DPI (Xft/DPI, matching Xft.dpi), the pointer's theme and size, and GTK's theme,
 icon theme, font and font settings from GTK's settings.ini, and follow a change at once (a new pointer theme, or settings.ini
 rewritten by ygg-theme or Settings, seen within the compositor's two-second look at its files; `tests/x11.rs`). An X11
 window that draws its own shadow inside its X window (GTK and Chromium do once the window manager says it reads
@@ -399,7 +399,16 @@ around it. Its surface takes clicks only 10 pixels out into the shadow, where GT
 10 pixels out, GTK 4 12); a click further out reaches what is behind, as the program's X input shape says, which XWayland
 does not pass on. When the compositor draws the window's controls, its own grips take the edge of the shadow. A shadow
 wider than 256 pixels on a side is not believed (a program may write any number there, up to i32::MAX): the window is then
-all of its X window (`tests/x11.rs`). Still missing for X11: drag and drop between X11 and Wayland programs.
+all of its X window (`tests/x11.rs`). Drag and drop
+works between X11 and Wayland programs, both ways (since 2026-11-24, with Smithay main's XDND): a Wayland program's drag over
+an X11 window is told to it in XDND by Smithay's window manager, which asks the Wayland program for the data when the X11 one
+does; while an X11 program drags, the window manager covers the screen with a window of its own that takes XDND and stands in
+for the Wayland windows, and steps aside over X11 windows, so two X11 programs still speak XDND to each other. An X11
+program's drag icon under the pointer is passed over while a button is held (only then can a drag go on, so X11 menus take
+the pointer again after a drag was given up), and XWayland going away in the middle of a drag ends only its own part: a
+Wayland program's drag goes on to the Wayland windows (`tests/dnd.rs`). Smithay main's drag and drop needed three fixes, carried in our
+fork: an X11 program can turn only a drag started on its own windows into its drag, a drop target that goes away ends the
+drag for good, and a drag the X11 program gave up ends with the button (`tests/dnd.rs`).
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton
@@ -412,7 +421,7 @@ when more are used (other programs see, switch and add them through `ext-workspa
 backend, hotplug has not been tried on real hardware; explicit sync for NVIDIA is built and checked nested on an RTX 2080 Ti
 but not yet on the hardware backend, and a machine with two GPUs picks the one with the screens (not tried on two cards);
 VRR (while a full screen window covers the screen) and direct scanout of full screen games are built but not yet seen with a
-game; there is no tearing control (Smithay 0.7 has no asynchronous page flips). Screen sharing through the portal (ScreenCast:
+game; there is no tearing control (Smithay has no asynchronous page flips yet). Screen sharing through the portal (ScreenCast:
 yggdrasil-portal, the share picker and yggdrasil-screencast, packages/screencast) is built and tested headless, whole screens in
 shared memory, but not yet tried with a browser or OBS; screenshots and picked colours through the portal (the same backend)
 are tested headless but not yet tried with a program by hand. It is developed in a virtual machine, never on the live session, and the
