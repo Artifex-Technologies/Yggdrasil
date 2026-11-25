@@ -396,6 +396,88 @@ fn a_full_screen_window_hides_only_its_own_screens_bar() {
     drop(one);
 }
 
+/// The commits of the full screen windows on a screen so far (the `frames` command's "game NAME N").
+fn game_commits(comp: &Compositor, output: &str) -> u64 {
+    let prefix = format!("game {output} ");
+    let lines = comp.must("frames");
+    lines.iter().find_map(|l| l.strip_prefix(&prefix)).unwrap_or_else(|| panic!("no {prefix}line in {lines:?}")).parse().unwrap()
+}
+
+/// Under variable refresh on the hardware backend only a full screen window's own frames start a refresh of its screen; every
+/// other change waits for its next frame (udev.rs, `vrr_flip`, which has the rule's own tests). Which commits are its frames
+/// is decided for every backend: its own, counted for its own screen. Never the pointer moving or changing its picture, the
+/// bar, a notification, a window drawn over it or a window on another screen; and none once it has left full screen.
+#[test]
+fn only_a_full_screen_windows_own_frames_count_for_its_screen() {
+    let _l = limit(90, "a full screen window's frames");
+    let comp = Compositor::start(&["--output", "1280x720", "--output", "1280x720"]);
+    let mut c = comp.connect();
+    let (_k, pointer) = c.input();
+    let (bar, _dock) = bar_and_dock(&mut c, 0);
+    let counts = |comp: &Compositor| (game_commits(comp, "HEADLESS-1"), game_commits(comp, "HEADLESS-2"));
+    comp.must("pointer 640 360");
+    let a = c.window("test.a", "Game");
+    c.draw(&a, (640, 480), BLUE);
+    c.draw(&a, (640, 480), BLUE);
+    assert_eq!(counts(&comp), (0, 0), "a window's frames before it is full screen");
+    a.toplevel.set_fullscreen(None);
+    c.roundtrip();
+    assert_eq!(settle(&comp, &mut c, &a, "test.a", BLUE).rect(), (0, 0, 1280, 720));
+    let (n, _) = counts(&comp);
+    assert!(n > 0, "its frames at full screen are counted");
+    assert_eq!(counts(&comp), (n, 0), "for its own screen only");
+
+    // a window over it, the bar behind it drawing again, a notification on the Overlay layer
+    let b = c.window("test.b", "Small");
+    c.draw(&b, (400, 300), YELLOW);
+    comp.wait(10, "B over A", |comp| comp.window("test.b").is_some_and(|i| i.at.0 < 1280));
+    c.draw(&b, (400, 300), CYAN);
+    c.draw_layer(&bar, MAGENTA);
+    let toast = c.layer_with(0, Layer::Overlay, "test-toast", Anchor::Top | Anchor::Right, (300, 80), 0, KeyboardInteractivity::None);
+    c.draw_layer(&toast, YELLOW);
+    assert_eq!(comp.screenshot("HEADLESS-1").at(1280 - 150, 40), RGB_YELLOW, "the notification is drawn over A");
+    // the pointer moving over A and the program giving it a picture of its own
+    comp.must("pointer 100 600");
+    comp.must("pointer-move 20 -10");
+    c.until("the pointer on A", |s| s.pointer_on == Some(a.surface.id()));
+    let cs = c.compositor.create_surface(&c.qh, ());
+    let pic = c.buffer(16, 16, MAGENTA);
+    cs.attach(Some(&pic), 0, 0);
+    cs.damage_buffer(0, 0, 16, 16);
+    pointer.set_cursor(c.state.pointer_serial, Some(&cs), 0, 0);
+    cs.commit();
+    c.roundtrip();
+    assert_eq!(comp.must("pointer-look"), ["surface\t16x16\t0,0"]);
+    // a window on the second screen
+    comp.must("pointer 1920 360");
+    let d = c.window("test.d", "Other");
+    c.draw(&d, (400, 300), GREEN);
+    comp.wait(10, "D on the second screen", |comp| comp.window("test.d").is_some_and(|i| i.at.0 >= 1280));
+    c.draw(&d, (400, 300), RED);
+    assert_eq!(counts(&comp), (n, 0), "none of these is A's frame");
+
+    // A's own frame counts, once, for its screen
+    c.draw(&a, (1280, 720), BLUE);
+    assert_eq!(counts(&comp), (n + 1, 0));
+    // D full screen on the second screen: its frames count there, A's still here
+    d.toplevel.set_fullscreen(None);
+    c.roundtrip();
+    assert_eq!(settle(&comp, &mut c, &d, "test.d", RED).rect(), (1280, 0, 1280, 720));
+    let (_, m) = counts(&comp);
+    assert!(m > 0, "D's frames at full screen are counted for the second screen");
+    c.draw(&d, (1280, 720), GREEN);
+    c.draw(&a, (1280, 720), BLUE);
+    assert_eq!(counts(&comp), (n + 2, m + 1));
+    // A out of full screen: its frames are a window's like any other again
+    a.toplevel.unset_fullscreen();
+    c.roundtrip();
+    settle(&comp, &mut c, &a, "test.a", BLUE);
+    assert!(!comp.window("test.a").unwrap().has("fullscreen"));
+    let (left, _) = counts(&comp);
+    c.draw(&a, (640, 480), CYAN);
+    assert_eq!(counts(&comp), (left, m + 1), "a window that left full screen paces nothing");
+}
+
 #[test]
 fn a_hidden_windows_resize_grips_take_no_clicks_from_the_full_screen_window() {
     let _l = limit(90, "grips behind a full screen window");

@@ -258,13 +258,15 @@ resize grip took clicks meant for the full screen window in front; the window un
 active, nor told it was again when the new one closed; a window closing behind the lock took the keyboard from it; a menu
 (xdg_popup) never got its first configure and so never showed. Opening, clicking, Alt + Tab and `activate` were already right.
 
-**Proof**: `packages/compositor/tests/fullscreen.rs` (9 tests, CI's `rust` job). Each check looks at four things at once: the
+**Proof**: `packages/compositor/tests/fullscreen.rs` (10 tests, CI's `rust` job). Each check looks at four things at once: the
 pixel at a probe point of the screen, the surface a click there reaches, the surface a key reaches, and which window the
 programs were told is active. Covered: a window opened over a full screen one; switching back and forth by Alt + Tab, by
 clicking and by the control socket's `activate`; minimize and restore; closing the window with the keyboard; leaving full
 screen and asking for it again, in front and behind; a menu that reaches past its window over the game, and a dialog with its
 parent; two screens; the dock growing; the screen getting smaller; a decorated window's hidden grips; the lock while windows
 open and close behind it; a finger tapping the small window, the game outside it, where it was and where the hidden bar is.
+The tenth test checks which commits are the full screen window's frames, the only ones that start a refresh under variable
+refresh on the hardware backend (packages/compositor/README.md, "Games on the hardware backend").
 
 Known limitations: a menu has no grab (a click outside it does not close it, and it does not take the keyboard); there is no
 "always on top" or layer of its own for dialogs (a dialog is a window like any other, in front because it opened last); the
@@ -513,7 +515,8 @@ machine, not yet Steam or a game. It has four workspaces, and up to nine
 when more are used (other programs see, switch and add them through `ext-workspace`; the panel follows them through yggdrasil-wm). On the hardware
 backend, hotplug has not been tried on real hardware; explicit sync for NVIDIA is built and checked nested on an RTX 2080 Ti
 but not yet on the hardware backend, and a machine with two GPUs picks the one with the screens (not tried on two cards);
-VRR (while a full screen window covers the screen) is built but not yet seen with a game; no window goes to a plane (direct
+VRR (while a full screen window covers the screen, paced by its frames and not by the pointer or the panels) is built but
+not yet seen with a game; no window goes to a plane (direct
 scanout): every window is drawn through an element of the compositor's own (rounded corners, animations, a full screen X11
 window drawn opaque), which offers Smithay's DRM compositor no buffer, so a full screen game is always composited
 (packages/compositor/README.md, "Games on the hardware backend"); there is no tearing control (Smithay has no asynchronous

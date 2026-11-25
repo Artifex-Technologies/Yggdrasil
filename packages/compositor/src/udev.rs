@@ -35,6 +35,8 @@
 //!   pointer on the cursor plane when it can.
 //! - **Frames**: drawn only when something changed (`App::wake`), then not again before that frame was shown (the page flip's
 //!   vblank event); a frame with no change is not even sent, and a run of frames with no change waits a refresh between them.
+//!   Under variable refresh with a full screen window (a game) only its frames start a refresh: the pointer, the panels and
+//!   the rest go out with its next frame, at most 1/30 s after its last one (`vrr_flip`).
 //!   Nothing is drawn and no timer runs while nothing changes.
 //! - **Input**: libinput (keyboards, mice, touchpads, TrackPoints, the touchscreen and pen, a virtual machine's tablet), named
 //!   as Hyprland names them; Settings > Peripherals' input.conf sets libinput's speed, profile, natural scrolling, left-handed
@@ -188,6 +190,8 @@ struct Screen {
     feedback: Option<Feedback>,
     /// the last frame's picture went to the screen as it is, a program's buffer on the primary plane (direct scanout)
     direct: bool,
+    /// how many commits of its full screen windows the last frame drawn on it had seen (`App::game_commits`, `vrr_flip`)
+    game_drawn: u64,
 }
 
 /// A screen's two dmabuf feedbacks: the renderer's (the default), and the one with the planes' scanout formats first.
@@ -252,6 +256,8 @@ pub struct Udev {
     /// a draw is already asked for (the wake-ups of one pass are folded into it), and the timer for screens that wait
     idle_pending: bool,
     timer_pending: bool,
+    /// the timer for screens whose frame waits for their full screen game's next one (`vrr_flip`): when it fires, and its source
+    vrr_timer: Option<(Instant, RegistrationToken)>,
     /// the pointer's last picture and its buffer (uploaded again only when the picture changes)
     pointer: Option<(Arc<crate::pointer::Picture>, MemoryRenderBuffer)>,
     start: Instant,
@@ -299,6 +305,7 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
         input_seen: None,
         idle_pending: false,
         timer_pending: false,
+        vrr_timer: None,
         pointer: None,
         start: Instant::now(),
     }));
@@ -571,6 +578,47 @@ fn vrr_wanted(policy: VrrPolicy, fullscreen: bool) -> bool {
         VrrPolicy::Never => false,
         VrrPolicy::Always => true,
         VrrPolicy::FullScreen => fullscreen,
+    }
+}
+
+/// How long a change that is not the game's own frame waits for that frame under variable refresh: 1/30 s, a fixed bound
+/// rather than one from the screen's lowest VRR rate. KMS tells only that a screen can vary its rate, not its range (that is
+/// in the EDID's range descriptor, which Smithay does not read), and the range is not what this bound is for: with no flip
+/// the screen shows its last frame again at its lowest rate by itself (some drivers double frames below it: low framerate
+/// compensation). The bound is how long the pointer and the panels may lag behind a game that slows or stops: a game at 30
+/// frames a second or more carries them with its own frames, a slower or paused one (a menu that does not redraw) lets them
+/// refresh the screen themselves. Valve's gamescope draws the line at 30 too (its adaptive_sync_cursor_min_fps), Hyprland's
+/// cursor:min_refresh_rate at 24. A bound from the lowest rate (48 Hz on many monitors) would let the pointer break the pace
+/// of every game running between 30 and 48 frames a second.
+const GAME_WAIT: Duration = Duration::from_nanos(1_000_000_000 / 30);
+
+/// Whether a screen's frame goes out now or waits for its game's next one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Flip {
+    Now,
+    /// until then at the latest: the screen's frame is drawn then if the game has not drawn one
+    Wait(Instant),
+}
+
+/// Under variable refresh a screen refreshes when a frame is flipped, so every flip that is not the game's starts a refresh
+/// early: the game's frames judder, and some monitors flicker in their brightness (what Hyprland's cursor:no_break_fs_vrr is
+/// for). So while it is `paced` (variable refresh is on and a full screen window, the game, covers the screen and shows) only
+/// the game's commits flip at once: the pointer moving or changing its picture, a notification, the panels, a window over the
+/// game and the compositor's own animations wait for the game's next frame and go out with it, and at the latest
+/// `GAME_WAIT` after the game's last commit (`game_last`). A game that has not committed for that long (paused, or under 30
+/// frames a second) paces nothing: every change flips at once, so the pointer moves at the screen's own rate over its menu.
+/// `game_committed`: the game committed since the screen was last drawn. Off this path (no variable refresh, nothing full
+/// screen, the lock on) every change flips at once, as it always has.
+/// Smithay's own flag for this (FrameFlags::SKIP_CURSOR_ONLY_UPDATES) is not used: it skips only a pointer moved on the
+/// cursor plane (not one drawn into the picture, nor a notification or a panel), the frame is still worked out first, and its
+/// empty frame would start the hold after a frame with no change (`not_before`), keeping the game's next frame back a refresh.
+fn vrr_flip(paced: bool, game_committed: bool, game_last: Option<Instant>, now: Instant) -> Flip {
+    if !paced || game_committed {
+        return Flip::Now;
+    }
+    match game_last.map(|t| t + GAME_WAIT) {
+        Some(at) if at > now => Flip::Wait(at),
+        _ => Flip::Now,
     }
 }
 
@@ -993,6 +1041,7 @@ fn scan(
                         vrr_capable,
                         feedback,
                         direct: false,
+                        game_drawn: 0,
                     },
                 );
                 added.push(output);
@@ -1374,14 +1423,20 @@ fn draw_all(udev: &Rc<RefCell<Udev>>, app: &mut App) {
             })
             .collect()
     };
-    let drew = !todo.is_empty();
+    // a screen whose frame waits for its game (`vrr_flip`) is not drawn: nothing follows a frame for it
+    let mut drew = false;
+    let mut waits: Option<Instant> = None;
     for (n, c) in todo {
-        draw(udev, app, n, c);
+        match draw(udev, app, n, c) {
+            Some(at) => waits = Some(waits.map_or(at, |w| w.min(at))),
+            None => drew = true,
+        }
     }
     serve_copies(udev, app);
     if drew {
         after_frame(udev, app);
     }
+    vrr_timer(udev, app, waits);
     if let Some(at) = later {
         let mut b = udev.borrow_mut();
         if !b.timer_pending {
@@ -1394,6 +1449,26 @@ fn draw_all(udev: &Rc<RefCell<Udev>>, app: &mut App) {
             });
         }
     }
+}
+
+/// The timer that draws the screens whose frames wait for their game (`vrr_flip`): set for the earliest of them (`at`), moved
+/// when that changes, and taken away when none waits. Nothing is armed off variable refresh.
+fn vrr_timer(udev: &Rc<RefCell<Udev>>, app: &App, at: Option<Instant>) {
+    let mut b = udev.borrow_mut();
+    if b.vrr_timer.map(|(t, _)| t) == at {
+        return;
+    }
+    if let Some((_, token)) = b.vrr_timer.take() {
+        app.loop_handle.remove(token);
+    }
+    let Some(at) = at else { return };
+    let u = udev.clone();
+    let armed = app.loop_handle.insert_source(Timer::from_deadline(at), move |_, _, app| {
+        u.borrow_mut().vrr_timer = None;
+        draw_all(&u, app);
+        TimeoutAction::Drop
+    });
+    b.vrr_timer = armed.ok().map(|token| (at, token));
 }
 
 /// What follows a frame: the programs are told their frame was shown (they draw the next), the window list and the menus are
@@ -1552,12 +1627,14 @@ fn serve_copies(udev: &Rc<RefCell<Udev>>, app: &mut App) {
     }
 }
 
-/// Draw one screen; one that is not lit has its CRTC switched off instead (once), and is lit again with a whole frame.
-fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Handle) {
+/// Draw one screen; one that is not lit has its CRTC switched off instead (once), and is lit again with a whole frame. Under
+/// variable refresh a frame may wait for the full screen game's next one instead (`vrr_flip`): then the screen stays to be
+/// drawn, and the time it waits until at the latest is given back.
+fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Handle) -> Option<Instant> {
     let mut guard = udev.borrow_mut();
     let b = &mut *guard;
     let lid_closed = b.switches.lid_closed();
-    let Some(dev) = b.devices.get_mut(&node) else { return };
+    let dev = b.devices.get_mut(&node)?;
     // the screen's tint (Night Light) into its CRTC's gamma table, when it changed
     let want = crate::ctm::channels(&app.ctm_of(&dev.screens.get(&crtc).map(|s| s.output.name()).unwrap_or_default()));
     if dev.screens.get(&crtc).is_some_and(|s| s.gamma != Some(want)) {
@@ -1577,7 +1654,7 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
             s.gamma = Some(want);
         }
     }
-    let Some(screen) = dev.screens.get_mut(&crtc) else { return };
+    let screen = dev.screens.get_mut(&crtc)?;
     screen.dirty = false;
     if dark(app, &screen.output, lid_closed && screen.internal) {
         if !screen.off {
@@ -1595,7 +1672,7 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
                 Err(_) => screen.dirty = true,
             }
         }
-        return;
+        return None;
     }
     if screen.off {
         // lit again: the next frame sets the mode again and is drawn whole
@@ -1607,7 +1684,8 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
         eprintln!("yggdrasil-compositor: {} switched on", screen.output.name());
     }
     // variable refresh: on while a full screen window covers the screen (or always, or never: YGGDRASIL_COMPOSITOR_VRR)
-    let want_vrr = screen.vrr_capable && vrr_wanted(vrr_policy(), app.fullscreen_on(&screen.output));
+    let fullscreen = app.fullscreen_on(&screen.output);
+    let want_vrr = screen.vrr_capable && vrr_wanted(vrr_policy(), fullscreen);
     let (now_vrr, set) = match &mut screen.drm {
         Out::Gles(o) => {
             o.with_compositor(|c| (c.vrr_enabled(), (c.vrr_enabled() != want_vrr).then(|| c.use_vrr(want_vrr).map_err(|e| e.to_string()))))
@@ -1631,6 +1709,24 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
         }
         None => {}
     }
+    // under variable refresh (on already, not just switched) the game's frames pace the screen: anything else waits for its
+    // next one (no hold either, so the game's frame is drawn the moment it comes)
+    let game = app.game_commits(&screen.output);
+    let paced = now_vrr && want_vrr && fullscreen && !app.locked;
+    if let Flip::Wait(at) = vrr_flip(paced, game.count != screen.game_drawn, game.last, Instant::now()) {
+        screen.dirty = true;
+        // told once for each wait, not at every mouse event during it
+        if b.vrr_timer.is_none_or(|(t, _)| t != at) && std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+            eprintln!(
+                "frame {} at {:?}: waits for the full screen window's next frame, until {:?} at the latest",
+                screen.output.name(),
+                b.start.elapsed(),
+                at.saturating_duration_since(b.start)
+            );
+        }
+        return Some(at);
+    }
+    screen.game_drawn = game.count;
     let result = match (&mut dev.gpu, &mut screen.drm) {
         (Gpu::Gles { renderer, .. }, Out::Gles(out)) => {
             follow_mode!(renderer, out, screen, Elem);
@@ -1642,8 +1738,8 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
         }
         _ => Err("the screen and its GPU do not match".into()),
     };
-    let Some(dev) = b.devices.get_mut(&node) else { return };
-    let Some(screen) = dev.screens.get_mut(&crtc) else { return };
+    let dev = b.devices.get_mut(&node)?;
+    let screen = dev.screens.get_mut(&crtc)?;
     if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
         eprintln!("frame {} at {:?}: {:?}", screen.output.name(), b.start.elapsed(), result.as_ref().map(|(q, _, d)| (q, d)));
     }
@@ -1686,6 +1782,7 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
             screen.not_before = Instant::now() + refresh_of(&screen.mode);
         }
     }
+    None
 }
 
 /// One refresh of a mode (16.7 ms at 60 Hz).
@@ -1726,6 +1823,106 @@ mod tests {
         assert_eq!(parse_vrr(Some(" ON ")), VrrPolicy::Always);
         assert!(vrr_wanted(VrrPolicy::FullScreen, true) && !vrr_wanted(VrrPolicy::FullScreen, false));
         assert!(vrr_wanted(VrrPolicy::Always, false) && !vrr_wanted(VrrPolicy::Never, true));
+    }
+
+    #[test]
+    fn under_variable_refresh_only_the_games_frames_flip_at_once() {
+        use super::{vrr_flip, Flip, GAME_WAIT};
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        // the game drew 5 ms ago and has not committed since: the pointer, a notification, a panel wait for its next frame,
+        // at most until 1/30 s after its last one
+        assert_eq!(vrr_flip(true, false, Some(ms(0)), ms(5)), Flip::Wait(t0 + GAME_WAIT));
+        // the game committed: its frame flips at once (and takes whatever waited along)
+        assert_eq!(vrr_flip(true, true, Some(ms(5)), ms(5)), Flip::Now);
+        // the bound is reached, or the game is paused or under 30 frames a second: the change flips by itself
+        assert_eq!(vrr_flip(true, false, Some(ms(0)), t0 + GAME_WAIT), Flip::Now);
+        assert_eq!(vrr_flip(true, false, Some(ms(0)), ms(40)), Flip::Now);
+        assert_eq!(vrr_flip(true, false, Some(ms(0)), ms(2000)), Flip::Now);
+        // no full screen window has committed on this screen yet: nothing to wait for
+        assert_eq!(vrr_flip(true, false, None, ms(5)), Flip::Now);
+        // not paced (variable refresh off or just being switched, nothing full screen, the lock on): every change at once, as
+        // before
+        assert_eq!(vrr_flip(false, false, Some(ms(0)), ms(5)), Flip::Now);
+        assert_eq!(vrr_flip(false, true, Some(ms(0)), ms(5)), Flip::Now);
+        assert_eq!(GAME_WAIT, Duration::from_nanos(33_333_333));
+    }
+
+    /// One screen as draw_all and draw see it under `vrr_flip`, for `flips`.
+    struct Sim {
+        paced: bool,
+        t0: std::time::Instant,
+        /// something changed since it was drawn; the game's commits so far, those its last frame had, the last one's time
+        dirty: bool,
+        count: u64,
+        drawn: u64,
+        last: Option<std::time::Instant>,
+        timer: Option<std::time::Instant>,
+        flips: Vec<(f64, bool)>,
+    }
+
+    impl Sim {
+        fn pass(&mut self, now: std::time::Instant) {
+            if !self.dirty {
+                return;
+            }
+            match super::vrr_flip(self.paced, self.count != self.drawn, self.last, now) {
+                super::Flip::Now => {
+                    self.flips.push(((now - self.t0).as_secs_f64() * 1000.0, self.count != self.drawn));
+                    (self.dirty, self.drawn, self.timer) = (false, self.count, None);
+                }
+                super::Flip::Wait(w) => self.timer = Some(w),
+            }
+        }
+    }
+
+    /// The flips one screen makes for a run of changes, as draw_all and draw decide them: a change (ms after the start; true:
+    /// the game's commit, false: anything else) marks the screen to be drawn, and it is drawn when `vrr_flip` says so, at once
+    /// or when the timer for its wait fires. Gives each flip's time (ms) and whether it carried a game frame.
+    fn flips(paced: bool, changes: &[(f64, bool)]) -> Vec<(f64, bool)> {
+        let t0 = std::time::Instant::now();
+        let at = |ms: f64| t0 + std::time::Duration::from_secs_f64(ms / 1000.0);
+        let mut s = Sim { paced, t0, dirty: false, count: 0, drawn: 0, last: None, timer: None, flips: vec![] };
+        for &(t, game) in changes {
+            if let Some(w) = s.timer.filter(|w| *w <= at(t)) {
+                s.pass(w);
+            }
+            if game {
+                (s.count, s.last) = (s.count + 1, Some(at(t)));
+            }
+            s.dirty = true;
+            s.pass(at(t));
+        }
+        if let Some(w) = s.timer {
+            s.pass(w);
+        }
+        s.flips
+    }
+
+    #[test]
+    fn a_game_paces_the_screen_and_the_pointer_goes_out_with_its_frames() {
+        let round = |v: Vec<(f64, bool)>| v.into_iter().map(|(t, g)| ((t * 10.0).round() / 10.0, g)).collect::<Vec<_>>();
+        // a game at 60 frames a second for 100 ms and the mouse moving all the while (1000 Hz): under variable refresh the
+        // screen flips with the game's frames only, every one carrying a game frame; without, at every mouse event
+        let game: Vec<f64> = (0..=6).map(|i| i as f64 * 1000.0 / 60.0).collect();
+        let mut changes: Vec<(f64, bool)> = game.iter().map(|t| (*t, true)).chain((0..100).map(|i| (i as f64 + 0.5, false))).collect();
+        changes.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let paced = flips(true, &changes);
+        assert_eq!(paced.len(), game.len(), "{paced:?}");
+        assert!(paced.iter().zip(&game).all(|((t, g), want)| *g && (t - want).abs() < 0.01), "{paced:?}");
+        assert_eq!(flips(false, &changes).len(), changes.len());
+        // a notification (or a panel) 10 ms after a frame of a game at 40 frames a second goes out with its next frame
+        assert_eq!(round(flips(true, &[(0.0, true), (10.0, false), (25.0, true)])), [(0.0, true), (25.0, true)]);
+        // the game stops right after the pointer moved: the pointer is shown 1/30 s after the game's last frame
+        assert_eq!(round(flips(true, &[(0.0, true), (5.0, false)])), [(0.0, true), (33.3, false)]);
+        // a paused game (its menu does not redraw): every move flips at once, the pointer at the screen's own rate
+        assert_eq!(round(flips(true, &[(0.0, true), (500.0, false), (501.0, false), (502.0, false)])).len(), 4);
+        // a game under 30 frames a second (20): the pointer waits for the bound, then moves by itself until the next frame
+        assert_eq!(
+            round(flips(true, &[(0.0, true), (10.0, false), (40.0, false), (50.0, true)])),
+            [(0.0, true), (33.3, false), (40.0, false), (50.0, true)]
+        );
     }
 
     #[test]
