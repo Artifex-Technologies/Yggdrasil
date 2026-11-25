@@ -160,6 +160,8 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
         ["pointer-timeout", secs] => match secs.parse::<f64>() {
             Ok(v) if v.is_finite() && (0.0..=86_400.0).contains(&v) => {
                 app.pointer_timeout = v;
+                // a pointer already resting past it hides with the timer's frame
+                app.arm_pointer_hide();
                 Ok(vec![])
             }
             _ => Err(format!("{secs}: seconds, 0 to 86400")),

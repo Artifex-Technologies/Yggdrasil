@@ -35,8 +35,9 @@
 //!   free                         one line per output: the room the panels leave free for windows (output, place, size)
 //!   focus                        what has the keyboard: window APP TITLE, layer NAMESPACE OUTPUT, lock OUTPUT, or none (also
 //!                                on the hardware backend; YGGDRASIL_COMPOSITOR_DEBUG logs each change as "keyboard: to ...")
-//!   workspace                    the workspace showing (1 to 4)
+//!   workspace                    the workspace showing (1 to 9)
 //!   lock                         "locked" or "unlocked", then one line per lock surface: output and size
+//!   main                         the main screen's name (control.rs)
 //!   switcher                     the window switcher's cards while it is open (control.rs)
 //!   frames                       how many frames were drawn since the start: "drawn N" (screens drawn with something changed
 //!                                on them) and "passes N" (times the screens were looked at); for tests that nothing is drawn
@@ -48,6 +49,8 @@
 //!   pointer X Y                  move the pointer to X,Y (logical, in the space of all outputs)
 //!   click [left|right|middle]    press and let go of a button of the virtual mouse where the pointer is (left-handed in
 //!                                input.conf: its left one is the right button)
+//!   press [left|right|middle], release [left|right|middle]
+//!                                hold a button of the virtual mouse down (for a drag or a move) until `release` lets it go
 //!   pointer-move DX DY           move the virtual mouse: the pointer goes as far as its speed in input.conf says (and a game
 //!                                hears it as relative motion; a pointer lock holds the pointer where it is)
 //!   scroll DY [DX]               turn its wheel (input.conf's scroll factor and natural scrolling applied)
@@ -58,10 +61,11 @@
 //!   power NAME on|off            switch an output on or off (as wlr-output-power does)
 //!   clock [stop|run|+MS]         the clock the animations run on: stop it, move a stopped one on, let it run again; without
 //!                                a word: "running" or "stopped" and its time (ms). For tests: a frame in an animation
+//!   watch                        the connection stays open and hears "desktops" whenever the desktops change (control.rs)
 //!   quit                         end the compositor
 //! and the desktop commands Yggdrasil's own tools use through yggdrasil-wm (wmctl.rs: clients, active, workspaces, workspace N,
-//! activate, close, minimize, maximize, send, place, cursor, screens, screens all, pointer-timeout, modifiers, layers, binds,
-//! reload, paste, cursor-theme, keyboard, exit).
+//! activate, close, minimize, maximize, send, place, cursor, screens, screens all, pointer-timeout, zoom, modifiers, layers,
+//! binds, reload, paste, cursor-theme, keyboard, devices, pointer-held, ctm, transform, exit).
 //! The answer is the lines, then "ok" or "error: ...".
 //!
 //! The input is made here, inside the compositor, for the tests: no input device is opened, and nothing reaches the running
@@ -261,8 +265,40 @@ pub struct Headless {
     passes: u64,
 }
 
-/// The commands, for an unknown one's answer.
-const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, switcher, frames, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, touch-down ID X Y, touch-move ID X Y, touch-up ID, touch-cancel, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
+/// The commands, for an unknown one's answer: this backend's own (`command`), the common ones (control.rs) and the tools'
+/// (wmctl.rs).
+const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, power NAME on|off, add-output WxH[@S] [NAME], remove-output NAME, \
+                     unplug NAME, replug NAME, main, screenshot NAME FILE [pointer], pointer-look, windows, free, focus, workspace, \
+                     lock, switcher, frames, key COMBO..., key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], \
+                     press [BUTTON], release [BUTTON], pointer-move DX DY, scroll DY [DX], input, touch-down ID X Y, \
+                     touch-move ID X Y, touch-up ID, touch-cancel, clock [stop|run|+MS], watch, quit; for the tools: clients, \
+                     active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, \
+                     place ID X Y W H, cursor, screens [all], layers, binds, reload, pointer-timeout [S], zoom [FACTOR], modifiers, \
+                     paste ctrl|ctrl+shift, cursor-theme [NAME SIZE], keyboard [LAYOUT [VARIANT]], devices, pointer-held, ctm, \
+                     transform [NAME N], exit";
+
+/// This backend's own commands (`own_command`; the touch ones are `touch_command`'s).
+const OWN: [&str; 19] = [
+    "resize",
+    "add-output",
+    "remove-output",
+    "unplug",
+    "replug",
+    "screenshot",
+    "key",
+    "key-down",
+    "key-up",
+    "type",
+    "pointer",
+    "click",
+    "press",
+    "release",
+    "pointer-move",
+    "scroll",
+    "input",
+    "clock",
+    "frames",
+];
 
 /// About 60 frames a second at most, however often programs commit.
 const FRAME: Duration = Duration::from_millis(16);
@@ -646,27 +682,6 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec
     if let Some(r) = touch_command(words, app) {
         return Some(r);
     }
-    const OWN: [&str; 19] = [
-        "resize",
-        "add-output",
-        "remove-output",
-        "unplug",
-        "replug",
-        "screenshot",
-        "key",
-        "key-down",
-        "key-up",
-        "type",
-        "pointer",
-        "click",
-        "press",
-        "release",
-        "pointer-move",
-        "scroll",
-        "input",
-        "clock",
-        "frames",
-    ];
     if !words.first().is_some_and(|w| OWN.contains(w)) {
         return None;
     }
@@ -1070,5 +1085,25 @@ mod tests {
         assert!(wanted(&v(&["--backend", "headless"])));
         assert!(wanted(&v(&["--backend=headless"])));
         assert!(!wanted(&v(&["--backend", "winit"])));
+    }
+
+    /// An unknown command is answered with every command: each word the control socket takes here is named in USAGE. This
+    /// backend's own are OWN and the touch ones, `watch` is served before any command, and the tools' (wmctl.rs) and the
+    /// common ones (control.rs) are the first words of the arms of their `command`, read from the source.
+    #[test]
+    fn the_usage_names_every_command() {
+        let named: Vec<&str> = USAGE.split([',', ';', ':']).filter_map(|c| c.split_whitespace().next()).collect();
+        // an arm as rustfmt writes it, on a line of its own: `["word", ...] =>`
+        let arms = |src: &'static str| -> Vec<&'static str> {
+            let body = src.split_once("fn command(").expect("a command function").1;
+            let body = body.split_once("\n}\n").expect("its end").0;
+            body.lines().filter_map(|l| l.trim_start().strip_prefix("[\"")?.split('"').next()).collect()
+        };
+        let (tools, common) = (arms(include_str!("wmctl.rs")), arms(include_str!("control.rs")));
+        assert!(tools.contains(&"clients") && common.contains(&"quit"), "the arms were read: {tools:?} {common:?}");
+        let own = OWN.iter().chain(&["touch-down", "touch-move", "touch-up", "touch-cancel", "watch"]);
+        for c in own.chain(&tools).chain(&common) {
+            assert!(named.contains(c), "{c} is not in USAGE");
+        }
     }
 }

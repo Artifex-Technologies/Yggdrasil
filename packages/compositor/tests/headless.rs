@@ -257,6 +257,27 @@ fn idle_for(comp: &Compositor, ms: u64) -> (u64, u64) {
     (passes(comp) - before, woken)
 }
 
+/// A resting pointer hides after `pointer-timeout` (yggdrasil-idle sets one while the screen is dimmed) with the next frame. The
+/// compositor sleeps until something changes, so a timer of its own makes that frame: one pass once the pointer has rested
+/// its time, then none; and no timer at all while the timeout is 0 (the screen bright).
+#[test]
+fn a_resting_pointer_hides_with_a_frame_of_its_own() {
+    let _l = limit(30, "the pointer's timeout");
+    let comp = Compositor::start(&["--size", "800x600"]);
+    comp.must("pointer 100 100");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(idle_for(&comp, 1200).0, 0, "no pass while the pointer rests with no timeout");
+    comp.must("pointer-timeout 0.6");
+    comp.must("pointer 200 200");
+    // the move's own pass has come and gone; the pointer hides 0.6 s after it moved
+    std::thread::sleep(Duration::from_millis(200));
+    let moved = passes(&comp);
+    std::thread::sleep(Duration::from_millis(800));
+    let hid = passes(&comp);
+    assert!(hid > moved, "a pass when the pointer hid ({moved} then {hid})");
+    assert_eq!(idle_for(&comp, 1200).0, 0, "none after it hid");
+}
+
 /// The config files are watched (configs.rs, YGG-118), no longer looked at every 2 s: an idle compositor sleeps, without one
 /// pass over the screens or one wake-up, until one of them changes, and the change is in force at once (2 s are allowed here,
 /// for a busy machine), however it is saved: written in place, a new file renamed over it (as Settings and most editors save),

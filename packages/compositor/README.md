@@ -45,8 +45,8 @@ standard window list, ext-foreign-toplevel-list, is offered nested too.
 
 | File | What it checks | Runs |
 | --- | --- | --- |
-| `src/*` unit tests (88) | options (the compositor's before the programs it starts; the backend chosen, headless or hardware), sizes and scales and the outputs on the command line, the hardware backend's (a screen's make and model from its EDID, a refresh's length, the pointer drawn at its own pixels on a scaled screen, Ctrl+Alt+Fn as virtual terminals, variable refresh while a window is full screen unless `YGGDRASIL_COMPOSITOR_VRR` says always or never, the GPU the screens are on drawing (else the boot GPU) unless `YGGDRASIL_COMPOSITOR_GPU` names one, a GPU known to have a screen when one of its connectors says connected, explicit sync unless switched off; the laptop's: eDP, LVDS and DSI known as its own screen, the default scale from a screen's size, the lid's rule, the switches, a resume told from a clock set, input devices named as Hyprland names them and known by kind, a touchpad's and a TrackPoint's settings with the session's defaults, the pen's buttons, a touch on a turned screen landing under the finger (every turn), a colour matrix made into a gamma table for each colour, the lid and tablet-mode switches known from the start, a touchpad scroll stopping only the axis that stopped, pixels read back from the GPU turned into XRGB8888 and a copy drawn with OpenGL ES upright (Mesa's software OpenGL ES; skipped without it)), the refused runtime folder and session bus, the config files' watch (a file written in place, renamed over, made, touched or removed seen, and not while it is still being written; another file in the same folder dropped; folders not there yet waited for, gone down into as they are made and waited for again once removed or renamed away; a link followed to the file it leads to, and to the new one when the link is replaced) and a file's stamp (a file read half written or replaced within the same moment told apart), shortcuts (key combinations and actions read, letters in either case, shortcuts.conf's changes and removals, no key bound twice, the table held to the session's `yggdrasil.lua`: every bind, its words, the taps on a modifier, release and repeat), tiling (workspaces.conf read, the session's gaps for one, two and three windows, none overlapping), placement (the same cases as `keep-clear.lua`, its `open()` too; a window pulled back inside a screen that changed), the programs it starts taking SIGTERM, SIGINT and SIGHUP although its own thread blocks them, the look (the session's values, Hyprland's curve, opening, moving and closing, the corners' pixels, edges rounded so that neighbours share them, a picture stretched to its rectangle), the window controls' buttons where they are drawn, the keyboard files (the installer's, localectl's, vconsole.conf), Settings' monitors.lua (its lines, the last rule naming a screen winning, a mode matched within half a hertz, `highrr` and `highres`, a turn), the window-places lines, the pointer (appearance.conf's `cursor`, XCURSOR_SIZE, painting it over a picture, the plain arrow), input.conf (a mouse's section over every mouse's, the defaults, buttons, scrolling, speed), the window switcher's grid (one centred row at the windows' shapes, rows that wrap and lower to fit, only the rows around the choice when too many, the arrows, a click's card, a picture fitted in its room) and a group card's title, the icons (a desktop entry's Icon and StartupWMClass, a Steam game's from its shortcut or the one Steam saved, the game's number from its window's class or its program's SteamAppId, an SVG drawn at the size asked), a window's title adding no line or field to the control socket's answers, X11 programs (their scale: the screens' largest, never below 1, `stretch`; Xft.dpi among the other X resources; GTK's settings.ini as XSETTINGS; a window too big fitted into the free room; games known by their class; opaque.conf; the best size of a program's own icon; WM_STATE's values), two taps within half a second on a dark screen | `cargo test`, CI `rust` |
-| `tests/headless.rs` (9) | outputs (size, scale, name, place), a bar and a window drawn where they belong, size and scale changes reaching programs, a bar drawn at buffer scale 2 on a scale 2 screen covering exactly its rows of the picture, `quit`, no runtime folder refused; SIGTERM, SIGINT and SIGHUP ending it with 0 and no socket left (each backend takes them through a signalfd since 2026-11-24; headless and nested left `wayland-N` behind before); ext-workspace: four workspaces in one group on both screens, the active one marked, an activate applied at the commit, a switch in the compositor told, a fifth made by the group's create and removed when left empty, 5 to 7 made by switching to 7 and kept while 7 holds a window, at most nine; the config files (`src/configs.rs`): an idle compositor makes no pass over the screens and is not woken once in 2.5 s (the build before: one of each, the 2-second look), a change in force within 2 s however it is saved (shortcuts.conf written in place, input.conf renamed over, the keyboard's file in folders made after the start, shortcuts.conf as a link into another folder and that file written, removed), each of the other files reload_config reads waking it to read them again, another file in the same folders drawing nothing, and asleep again after it all | `cargo test`, CI `rust` |
+| `src/*` unit tests (89) | options (the compositor's before the programs it starts; the backend chosen, headless or hardware), sizes and scales and the outputs on the command line, the hardware backend's (a screen's make and model from its EDID, a refresh's length, the pointer drawn at its own pixels on a scaled screen, Ctrl+Alt+Fn as virtual terminals, variable refresh while a window is full screen unless `YGGDRASIL_COMPOSITOR_VRR` says always or never, the GPU the screens are on drawing (else the boot GPU) unless `YGGDRASIL_COMPOSITOR_GPU` names one, a GPU known to have a screen when one of its connectors says connected, explicit sync unless switched off; the laptop's: eDP, LVDS and DSI known as its own screen, the default scale from a screen's size, the lid's rule, the switches, a resume told from a clock set, input devices named as Hyprland names them and known by kind, a touchpad's and a TrackPoint's settings with the session's defaults, the pen's buttons, a touch on a turned screen landing under the finger (every turn), a colour matrix made into a gamma table for each colour, the lid and tablet-mode switches known from the start, a touchpad scroll stopping only the axis that stopped, pixels read back from the GPU turned into XRGB8888 and a copy drawn with OpenGL ES upright (Mesa's software OpenGL ES; skipped without it)), the refused runtime folder and session bus, every command the headless control socket takes (its own, and the tools' and the common ones read from their source) named in its answer to an unknown one, the config files' watch (a file written in place, renamed over, made, touched or removed seen, and not while it is still being written; another file in the same folder dropped; folders not there yet waited for, gone down into as they are made and waited for again once removed or renamed away; a link followed to the file it leads to, and to the new one when the link is replaced) and a file's stamp (a file read half written or replaced within the same moment told apart), shortcuts (key combinations and actions read, letters in either case, shortcuts.conf's changes and removals, no key bound twice, the table held to the session's `yggdrasil.lua`: every bind, its words, the taps on a modifier, release and repeat), tiling (workspaces.conf read, the session's gaps for one, two and three windows, none overlapping), placement (the same cases as `keep-clear.lua`, its `open()` too; a window pulled back inside a screen that changed), the programs it starts taking SIGTERM, SIGINT and SIGHUP although its own thread blocks them, the look (the session's values, Hyprland's curve, opening, moving and closing, the corners' pixels, edges rounded so that neighbours share them, a picture stretched to its rectangle), the window controls' buttons where they are drawn, the keyboard files (the installer's, localectl's, vconsole.conf), Settings' monitors.lua (its lines, the last rule naming a screen winning, a mode matched within half a hertz, `highrr` and `highres`, a turn), the window-places lines, the pointer (appearance.conf's `cursor`, XCURSOR_SIZE, painting it over a picture, the plain arrow), input.conf (a mouse's section over every mouse's, the defaults, buttons, scrolling, speed), the window switcher's grid (one centred row at the windows' shapes, rows that wrap and lower to fit, only the rows around the choice when too many, the arrows, a click's card, a picture fitted in its room) and a group card's title, the icons (a desktop entry's Icon and StartupWMClass, a Steam game's from its shortcut or the one Steam saved, the game's number from its window's class or its program's SteamAppId, an SVG drawn at the size asked), a window's title adding no line or field to the control socket's answers, X11 programs (their scale: the screens' largest, never below 1, `stretch`; Xft.dpi among the other X resources; GTK's settings.ini as XSETTINGS; a window too big fitted into the free room; games known by their class; opaque.conf; the best size of a program's own icon; WM_STATE's values), two taps within half a second on a dark screen | `cargo test`, CI `rust` |
+| `tests/headless.rs` (10) | outputs (size, scale, name, place), a bar and a window drawn where they belong, size and scale changes reaching programs, a bar drawn at buffer scale 2 on a scale 2 screen covering exactly its rows of the picture, `quit`, no runtime folder refused; SIGTERM, SIGINT and SIGHUP ending it with 0 and no socket left (each backend takes them through a signalfd since 2026-11-24; headless and nested left `wayland-N` behind before); ext-workspace: four workspaces in one group on both screens, the active one marked, an activate applied at the commit, a switch in the compositor told, a fifth made by the group's create and removed when left empty, 5 to 7 made by switching to 7 and kept while 7 holds a window, at most nine; the config files (`src/configs.rs`): an idle compositor makes no pass over the screens and is not woken once in 2.5 s (the build before: one of each, the 2-second look), a change in force within 2 s however it is saved (shortcuts.conf written in place, input.conf renamed over, the keyboard's file in folders made after the start, shortcuts.conf as a link into another folder and that file written, removed), each of the other files reload_config reads waking it to read them again, another file in the same folders drawing nothing, and asleep again after it all; a resting pointer hidden at its `pointer-timeout` by a frame of the compositor's own timer (one pass, then none; no timer while the timeout is 0) | `cargo test`, CI `rust` |
 | `tests/dnd.rs` (22) | drag and drop between two programs (wl_data_device): text dragged out of one window and let go over another is offered to the second (the type, with an accept and the copy action), dropped there, read through the pipe byte for byte, and the dragging program is told the drop finished, not cancelled; a program cannot drag with another program's press, even when told its serial, nor with the compositor's own Super+drag (every serial around it tried): it is told its drag is cancelled, the pointer stays as it was, nothing is offered to the window under the pointer, and the press and the move go on; the same with another program's finger (cancelled, the pointer as it was, nothing offered under the finger, and the touched program told the finger lifted); a drag started again with the same press replaces the first (told cancelled) and keeps the closed hand until the button is let go; a drag whose program goes away with the button still held ends with its closed hand once the pointer moves; a finger's drag the touchscreen cancels (`touch-cancel`) ends, its program told cancelled and the closed hand gone; a finger's drag keeps its closed hand while the mouse moves, goes on to the window under the finger, and its drop ends the closed hand; with X11 programs through a real XWayland (XDND; skipped where it is not installed): a file's URI dragged from a Wayland program onto an X11 window that takes XDND (XdndEnter with the type, XdndPosition where the pointer is on the X screen, its XdndStatus told to the dragging program as the action, XdndDrop, the URI read through XdndSelection, XdndFinished told as the drop finished), from an X11 program onto a Wayland window (the window manager's stand-in found under the pointer, the X11 program's drag icon under the pointer passed over, the Wayland program offered the URI, its acceptance answered in XdndStatus as a copy, the URI read through the pipe, XdndFinished), and between two X11 programs (the stand-in steps aside over an X11 window, so they speak XDND to each other); XWayland killed in the middle of a drag: a Wayland program's drag over an X11 window goes on to a Wayland window, where the URI arrives, and an X11 program's drag over another X11 window ends with it, the pointer going on to a Wayland window; a drag let go where an X11 window that had taken it was, after XWayland went away, is cancelled (not left waiting for its finish); after an X11 program gave its drag up (XdndLeave with the button held) and the button was let go, an X11 menu under the pointer gets the pointer (not passed over as a drag's icon). With the fixes carried in our Smithay fork: an X11 program's next drag after it gave one up is a drag again; an X11 drop target that ends without XdndFinished (after the drop, or with the drag still over it) has the dragging program told cancelled and does not stop the next X11 program's drag; an X11 program that takes XdndSelection during a Wayland program's drag does not take it over; XWayland killed in the middle of a transfer: a paste into an X11 program and a drop on one while the Wayland program still holds the pipe (its later write fails: the pipe was closed; the dragging program is told the drop was cancelled), a paste from an X11 program while the Wayland program's pipe is full (it reads what was in it, then the end), and a paste the X11 program asked for twice while the compositor was busy (held with half a control command), so the window manager reaches the second request only after XWayland went away (the Wayland program asked once); each time the compositor goes on and the next X11 program starts a new XWayland (the fork's fix that ends the transfers and a drop when XWayland's connection closes) | `cargo test`, CI `rust` |
 | `tests/grabs.rs` (2) | moving and resizing a window with the pointer only with a press on that program's own window (`src/grabs.rs`): a Wayland window follows the pointer with its own press until the button is let go, and is asked to take the size the pointer gives it; another program asking with that press, though told its serial, moves and resizes nothing, and the press stays the pressed program's; an X11 window (through a real XWayland; skipped where it is not installed) moves only with a press on itself: `_NET_WM_MOVERESIZE`, to move and then to resize, while the button is held on a Wayland window is ignored, and with the button held on the X11 window the window follows the pointer | `cargo test`, CI `rust` |
 | `tests/hostile.rs` (1) | programs that send what the protocols forbid, each after showing an ordinary window: regions with a negative or huge size, negative size hints and a minimum above the maximum, window geometry of no size, negative or far outside, damage outside the buffer, buffer scales of 0, -1 and 2^20, a menu positioner of no or negative size, panels asking for absurd sizes, margins and reserved zones (arranged again around a second panel and a maximized window); the compositor stays up and keeps serving another program's window (a debug build, so Smithay's debug checks count) | `cargo test`, CI `rust` |
@@ -151,12 +151,14 @@ The session's behaviour is set in `packages/session/hyprland/yggdrasil.lua` (wit
 - The system's keyboard layout, Settings > Displays' `monitors.lua` (modes, scales, places, screens off), screens that come and
   go, remembered window places and the screens set to tile, Steam's maximize request ignored (items 3 and 5, 2026-11-12, below).
 
-**Built but only tried nested (not in the headless tests):** games drawn opaque (OpenGL ES only), WM_STATE when a window is
-minimized and restored (Wine's), Super+T, the buttons of the window controls for server-side decoration, Super+drag's resize
-(the right button), xdg-activation, idle inhibit, the clipboard and primary selection between Wayland programs (between X11 and Wayland programs: `tests/dnd.rs`).
-XWayland (`tests/x11.rs`, `tests/dnd.rs`, `tests/apps.rs`), tiling workspaces (`tests/look.rs`, `tests/tools.rs`), the
-window controls' grips (`tests/fullscreen.rs`, `tests/x11.rs`), a program's own move and resize requests (`tests/grabs.rs`)
-and Super+drag's move (`tests/dnd.rs`) are in the headless tests.
+**Built but only tried nested (not in the headless tests):** WM_STATE when a window is minimized and restored (Wine's),
+Super+T, the buttons of the window controls for server-side decoration, Super+drag's resize (the right button),
+xdg-activation, idle inhibit, the clipboard and primary selection between Wayland programs (between X11 and Wayland programs:
+`tests/dnd.rs`). Games drawn opaque (OpenGL ES only; the headless backend draws with pixman) are not in the headless tests
+either: they were tried nested and on the hardware backend in the test machine (glxgears full screen through XWayland,
+2026-11-24: "Games on the hardware backend" below). XWayland (`tests/x11.rs`, `tests/dnd.rs`, `tests/apps.rs`), tiling
+workspaces (`tests/look.rs`, `tests/tools.rs`), the window controls' grips (`tests/fullscreen.rs`, `tests/x11.rs`), a
+program's own move and resize requests (`tests/grabs.rs`) and Super+drag's move (`tests/dnd.rs`) are in the headless tests.
 
 **X11 programs at the screen's resolution** (2026-11-22): XWayland's client scale is the largest scale of the screens that are
 on, so XWayland is told each screen's size in pixels: on a 1920x1200 screen at 125% a game is offered 1920x1200 and drawn sharp,
@@ -167,14 +169,18 @@ so GTK, Qt and Chromium-based programs (Steam's window) keep the desktop's size;
 RESOURCE_MANAGER` shows Xft.dpi 120, and a GTK window under X11 drew at its place and size.
 
 **The gap to Hyprland, item by item** (what each item has, and what it still lacks):
-1. **What is left of "our tools call hyprctl"** (every tool moved to yggdrasil-wm on 2026-11-12, above). Hyprland's own on purpose:
-   hyprsunset's night light (its own socket; this compositor has no gamma control yet, item 11), the Hyprland plugin builder
-   (`yggdrasil-hypr-plugin`), the config-error toast's event socket and
-   xmove (both do nothing elsewhere), and Settings' own Hyprland file and night light. Settings > Displays lists and changes this
-   compositor's screens (it writes `monitors.lua` and reloads through yggdrasil-wm, as on Hyprland; the compositor takes the file
-   on reload, item 3). Other programs see its workspaces through ext-workspace (one group on every screen, workspaces 1 to 4 and
-   those made past them, each can be activated, and a new one can be asked for; since 2026-11-24) and its windows through ext-foreign-toplevel-list (item 6). Missing: the control
-   socket on the real session (today only headless).
+1. ~~What is left of "our tools call hyprctl"~~, closed 2026-11-24 with ext-workspace (every tool moved to yggdrasil-wm on
+   2026-11-12, above). The control socket yggdrasil-wm finds is there headless and, since 2026-11-15, on the hardware backend
+   (the own session's); only the nested window has none. Hyprland's own on purpose: the Hyprland plugin builder
+   (`yggdrasil-hypr-plugin`), the config-error toast's event socket and xmove (both do nothing elsewhere), and Settings' own
+   Hyprland file. Night Light stays hyprsunset (spoken to on its own socket), whose hyprland-ctm-control-v1 this compositor
+   speaks since 2026-11-21 (`src/ctm.rs`; hyprsunset tried headless, where a screen's matrix is only kept, and the protocol in
+   `tests/outputs.rs`): the hardware backend puts the matrix into the screen's CRTC gamma table (its numbers in a unit test,
+   not yet seen on a screen: "Night Light" below). Settings > Displays lists and changes this compositor's screens (it writes
+   `monitors.lua` and reloads through yggdrasil-wm, as on Hyprland; the compositor takes the file on reload; what the page
+   offers here: item 3). Other programs see its workspaces through ext-workspace (one group on every screen, workspaces 1 to 4
+   and those made past them, each can be activated, and a new one can be asked for) and its windows through
+   ext-foreign-toplevel-list (item 6).
 2. ~~The shortcut table~~, closed 2026-11-12: the built-in table is the session's (`src/shortcuts.rs`; a unit test reads
    `yggdrasil.lua` and fails on any bind missing on either side), with its words and the same command lines (Super+N, Super+S
    and Ctrl+Alt+S, Super+Shift+Z, Super+/ and the Ctrl taps through `yggdrasil-panelctl`; Print and Super+Shift+S, Super+Shift+C,
@@ -201,22 +207,33 @@ RESOURCE_MANAGER` shows Xft.dpi 120, and a GTK window under X11 drew at its plac
      again when either file changes; a layout set from outside (the installer's try-out) stays until then. A layout xkb cannot
      load falls back to xkb's default, with a line in the log.
    - **Settings > Displays** (`src/outputs.rs`): the same `~/.config/yggdrasil/monitors.lua` Hyprland loads, its
-     `hl.monitor({ output, mode, position, scale })` and `disabled = true` lines (the last naming a screen wins, `output = ""` is
-     for every screen); a screen it does not name keeps its own mode and scale (headless: the command line's) and goes to the
-     right of the others. Read at start, on `reload`, as soon as it changes (the config files are watched: `src/configs.rs`) and
-     for a screen that appears. The control socket's `screens all` gives yggdrasil-wm's `screens_all` every screen with its rate
-     and modes (Hyprland's `2560x1440@59.95Hz` form) and the ones that are off.
-   - **wlr-output-management** version 4 (`src/outputmgmt.rs`): heads with their modes, current mode, place and scale; a
-     configuration's modes (custom ones too, headless), scales, places and screens off are applied, tested, refused (every screen
-     off; a turn or variable refresh) or cancelled (made for an older state), and every holder is told the change.
+     `hl.monitor({ output, mode, position, scale, transform })` and `disabled = true` lines (a mode may also be `highrr` or
+     `highres`; the last naming a screen wins, `output = ""` is for every screen); a screen it does not name keeps its own mode
+     and scale (headless: the command line's) and goes to the right of the others. Read at start, on `reload`, as soon as it
+     changes (the config files are watched: `src/configs.rs`) and for a screen that appears. The control socket's `screens all` gives yggdrasil-wm's `screens_all`
+     every screen with its rate and modes (Hyprland's `2560x1440@59.95Hz` form) and the ones that are off.
+   - **wlr-output-management** version 4 (`src/outputmgmt.rs`): heads with their modes, current mode, place, scale and turn; a
+     configuration's modes (custom ones too, headless), scales, places, turns and screens off are applied, tested, refused
+     (every screen off; variable refresh) or cancelled (made for an older state), and every holder is told the change.
    - **Screens that come and go** (headless `add-output`, `remove-output`; a screen switched off is the same): its wl_output goes,
      its panels are told `closed`, its lock surface is dropped (a screen plugged in while locked shows black until the locker
      covers it); windows on it move to the first screen at their place on it (maximized, full screen and snapped ones fitted to it
-     again, floating ones kept clear of its bar), and windows on a screen that moves go with it.
+     again, floating ones kept clear of its bar), and windows on a screen that moves go with it. A screen whose link goes (its
+     connector unplugged; headless `unplug`) is kept 2 s with its windows and panels, and goes only if it has not come back.
+   - **Turning a screen** (since 2026-11-21): monitors.lua's `transform` (Settings > Displays' Orientation on Hyprland, or
+     written by hand), a wlr-output-management configuration and the control socket's `transform NAME N` (the tablet
+     watcher's) turn its picture; its panels, maximized windows and where a touch lands turn with it (`tests/outputs.rs`; the
+     touch in a unit test).
    - Along the way: new windows open on the screen the pointer is on (Hyprland's focused monitor), and maximize, full screen,
      Super+Left/Right and tiling work on the window's own screen (they were all on the first screen).
-   Left: turning (transform) and variable refresh are not offered; on the
-   hardware backend the modes will be the connectors' own (no custom modes).
+   Left: no mirroring: a screen monitors.lua mirrors (`mirror = "NAME"`, Settings > Displays' Duplicate on Hyprland) is a
+   screen of its own, which Settings' `position = "auto"` puts to the right of the others. monitors.lua's per-screen `vrr` is
+   not read, and variable refresh is not offered to programs (wlr-output-management refuses it); the hardware backend
+   switches it by itself, as `YGGDRASIL_COMPOSITOR_VRR` says ("Games on the hardware backend" below). On the hardware backend
+   only a connector's own modes are set (no custom modes). Settings > Displays offers Orientation, Duplicate and variable
+   refresh only on Hyprland (`packages/settings/src/sys.rs`, `caps`), and yggdrasil-wm reads every screen here as upright and
+   mirroring none (`packages/wm/src/own.rs`), so saving the page here writes monitors.lua without a `transform` or `mirror`
+   it held.
 4. ~~The window look~~, closed 2026-11-12 (`src/look.rs`), with the session's values: the 1-pixel border in the accent colour at
    80 % (Yggdrasil's purple when none is chosen) and a faint one behind (white 8 % dark, black 9 % light), corners rounded at 10,
    the shadow (18, power 3, black 27 %), gaps 8 around maximized and tiled windows and 4 + 4 between tiled ones (Hyprland's
@@ -230,7 +247,8 @@ RESOURCE_MANAGER` shows Xft.dpi 120, and a GTK window under X11 drew at its plac
    0.005 % of a core (350 and 550 µs in 10 s), 25.6 and 26.3 MB resident (22.4 and 23.2 MB proportional), an 800x600 window
    drawn anew 0.76-0.87 and 0.86-0.98 ms a frame; a window opening costs 90-100 ms of CPU over its 800 ms, closing 40-47 ms,
    and nothing is drawn after. Not done: the workspace slide, the border's colour fading, layers' animations, dimming behind
-   the minimized windows on show; nested (GPU) there is no closing animation and games are neither rounded nor stretched.
+   the minimized windows on show; nested and on the hardware backend there is no closing animation, and on the GPU (OpenGL ES)
+   a game drawn opaque is neither rounded nor stretched.
 5. ~~Remembered places and the tiling screens~~, closed 2026-11-12:
    - **Window places** (`src/places.rs`): when a program's last window closes as a plain floating window (not tiled, maximized,
      full screen or minimized) of at least 120 x 80, its place and size go into the session's own
@@ -244,33 +262,32 @@ RESOURCE_MANAGER` shows Xft.dpi 120, and a GTK window under X11 drew at its plac
    - **Steam's own maximize request** (Wayland or X11, and `_NET_WM_STATE` asked before its window shows) is ignored, as the
      session's `steam-no-self-maximize`; Super+Up still maximizes it.
    Measured for items 3 and 5 together on release builds (the same `tests/look.rs idle_cost` set: 1920x1080, a bar, a dock,
-   three 800x600 windows), two runs each, before and after: idle 0.005-0.006 % and 0.006 % of a core (540-611 and 612-613 µs in
-   10 s; the 2-second look now also checks four more files' times), 26.2-26.3 and 26.4-26.5 MB resident (22.8 and 22.9-23.0 MB
-   proportional), an 800x600 window drawn anew 808-810 and 789-849 µs a frame.
-   Measured for items 3 and 5 together, as for item 4 (release build, `tests/look.rs idle_cost`, two runs each, the build before
-   and after side by side): idle 530-611 and 580-622 µs of CPU in 10 s (0.005-0.006 % and 0.006 % of a core), 26.3 and
-   26.4-26.5 MB resident (22.7-22.8 and 22.9-23.0 MB proportional); an 800x600 window drawn anew 0.77-0.86 and 0.86-1.02 ms a
-   frame (within the runs' spread). The 2-second look reads four more file times (the keyboard's two, the tiling file,
-   monitors.lua); nothing is read or drawn while nothing changes.
+   three 800x600 windows; the builds before and after side by side, two runs each, measured twice): idle 530-611 and 580-622 µs
+   of CPU in 10 s (0.005-0.006 % and 0.006 % of a core), 26.2-26.3 and 26.4-26.5 MB resident (22.7-22.8 and 22.9-23.0 MB
+   proportional); an 800x600 window drawn anew 0.77-0.86 and 0.79-1.02 ms a frame (within the runs' spread). The 2-second look
+   reads four more file times (the keyboard's two, the tiling file, monitors.lua); nothing is read or drawn while nothing
+   changes.
 6. ~~The panel's window previews~~, closed 2026-11-12 (`src/capture.rs`, `src/toplevels.rs`). The panel takes its previews through
    the standard protocols on Hyprland and here alike (`packages/panel/src/capture.rs`, unchanged), so the protocols were added
    here, and nothing in the panel or yggdrasil-wm changed:
    - **ext-foreign-toplevel-list** (Smithay's): every window, shown, minimized or on another desktop, with its title and app id,
      followed after every commit and frame, and closed when it closes. Nested too.
    - **ext-image-capture-source**: a window by its list handle, or a screen by its wl_output.
-   - **ext-image-copy-capture** (headless): a session tells the size in the screen's pixels (a window's size at its screen's
-     scale) and ARGB8888 and XRGB8888 in shared memory; the first copy of a session is made at once, a later one when the window
-     (any commit in its surfaces) or the screen (drawn with damage, or the pointer moved for `paint_cursors`) changed; a source
-     that changed size fails the copy with `buffer_constraints` and tells the new size; a window that closes or a screen that
-     goes stops its sessions. A window is drawn on its own, covered or not, on another desktop or minimized (its last picture),
-     without the border and shadow, transparent where it draws nothing; nothing of a window is copied while the session is
-     locked (a screen's copy then shows the lock, as wlr-screencopy's). `paint_cursors` paints the pointer into a screen's copy.
+   - **ext-image-copy-capture** (headless, and since 2026-11-19 on the hardware backend, drawn again with the screen's
+     renderer, OpenGL ES or pixman: `src/readback.rs`): a session tells the size in the screen's pixels (a window's size at
+     its screen's scale) and ARGB8888 and XRGB8888 in shared memory (on the hardware backend with OpenGL ES, GPU buffers too:
+     dmabuf, without the pointer); the first copy of a session is made at once, a later one when the window (any commit in its
+     surfaces) or the screen (drawn with damage, or the pointer moved for `paint_cursors`) changed; a source that changed size
+     fails the copy with `buffer_constraints` and tells the new size; a window that closes or a screen that goes stops its
+     sessions. A window is drawn on its own, covered or not, on another desktop or minimized (its last picture), without the
+     border and shadow, transparent where it draws nothing; nothing of a window is copied while the session is locked (a
+     screen's copy then shows the lock, as wlr-screencopy's). `paint_cursors` paints the pointer into a screen's copy.
    Proof: `tests/capture.rs` with the tests' own client, and the panel itself in `tests/apps.rs` (its card shows the window).
    Measured (release build, the `idle_cost` set): an 800x600 window's picture costs 1.1-1.2 ms of the compositor's CPU (the
    panel asks about once a second per window while its card is open); afterwards it is about 4 MB larger (34.3 from 30.3-30.5 MB
    resident; it stays at about 36 MB after 50 and after 200 pictures: the allocator keeps the freed picture for the next one).
-   Left: GPU buffers (dmabuf) with the hardware backend, and the nested window (no read-back from its GPU yet); a session for the
-   pointer's own picture (create_pointer_cursor_session) stops at once.
+   Left: the nested window offers no copies (no read-back from its GPU); a session for the pointer's own picture
+   (create_pointer_cursor_session) stops at once.
 7. ~~The pointer~~, closed 2026-11-12 (`src/pointer.rs`):
    - **The theme** as `ygg-theme cursor` stores it: set on the running compositor (`cursor-theme NAME SIZE` through yggdrasil-wm,
      taken at once), else appearance.conf's `cursor` when that theme is installed (read again when the file changes), else
@@ -287,29 +304,30 @@ RESOURCE_MANAGER` shows Xft.dpi 120, and a GTK window under X11 drew at its plac
    - **Drawn** headless over a screen's picture as a hardware cursor plane would be: `screenshot NAME FILE pointer`, grim -c
      (wlr-screencopy's overlay_cursor) and `paint_cursors` copies show it; every other copy is the screen without it, as before.
    Proof: `tests/pointer.rs` (snapshots of the test's themes, a program's pointer, the pointer after its screen went, and
-   Yggdrasil's own arrow as ygg-cursors draws it). Left: nested, the host window still draws the pointer (a program's own
-   picture shows as the default arrow there); the hardware backend puts it on the cursor plane and wakes a frame when it hides.
+   Yggdrasil's own arrow as ygg-cursors draws it). On the hardware backend the pointer is an element of its own, which Smithay's
+   DrmCompositor puts on the cursor plane when the GPU has one; a resting pointer is hidden with the next frame drawn after its
+   timeout (a timer of its own draws that frame, armed only after a motion while a timeout is set). Left: nested, the host window
+   still draws the pointer (a program's own picture shows as the default arrow there).
    Measured for items 6 and 7 (release build, `tests/look.rs idle_cost`, the builds before and after side by side, five runs
    in all): idle 547-572 and 560-621 µs of CPU in 10 s (0.005-0.006 % and 0.006 % of a core; one run after at 733 µs on a busy
    machine), 26.6-26.7 and 26.5-26.8 MB resident (23.3-23.5 and 23.3-23.6 MB proportional), an 800x600 window drawn anew
    688-828 and 693-821 µs a frame. Nothing is drawn for the pointer while it rests: it is painted only into what asks for it.
-8. ~~Settings > Peripherals' mouse and keyboard settings~~, closed 2026-11-12 for the headless backend (`src/input.rs`): Settings
-   writes `~/.config/yggdrasil/input.conf` (its form and parser are yggdrasil-wm's `input.rs`, the file the Hyprland session
-   reads); the compositor reads it with that parser at start, on `reload` and as soon as it changes, and yggdrasil-wm's
-   `apply_input` asks for a reload here after Settings saved it (it said "not yet" before). Key repeat goes to
-   every program at once (wl_keyboard.repeat_info) and to the compositor's own held shortcuts. The mouse settings (speed,
-   acceleration profile, scroll factor, natural scrolling, left-handed), every mouse's and per mouse in `[name]` sections, apply
-   to the headless virtual mouse `yggdrasil-headless-mouse` (`pointer-move`, `scroll`, `click`): its speed as libinput's flat
-   profile works it out (times 1 + sensitivity), the scroll factor and natural scrolling as Hyprland applies them, left and right
-   buttons swapped when left-handed. The control socket's `devices` lists the mice and keyboards, which yggdrasil-wm's
-   `input_devices` reads for Settings' "Each mouse". Proof: `tests/input.rs` (the file at start, the client told the repeat,
-   half speed, swapped buttons, natural scrolling at twice the distance, the pointer kept on the screens; Settings' change
-   applied through yggdrasil-wm, the defaults when the file goes) and a unit test. Measured on the `idle_cost` set: idle 592-654
-   µs in 10 s (633 for the build before, run between them on a busy machine), 26.5-26.7 MB resident; one more file time in the
-   2-second look. Left: the adaptive profile's curve is libinput's own (headless an adaptive mouse moves as a flat one; on the
-   hardware backend libinput is told the speed and profile per device, item 11); Settings still shows its old "not yet" note
-   on this compositor and hides "Each mouse" there (`packages/settings/src/peripherals.rs`, `input::NOT_YET`), for Settings to
-   drop.
+8. ~~Settings > Peripherals' mouse and keyboard settings~~, closed 2026-11-12 headless and 2026-11-15 on the hardware backend
+   (`src/input.rs`): Settings writes `~/.config/yggdrasil/input.conf` (its form and parser are yggdrasil-wm's `input.rs`, the
+   file the Hyprland session reads); the compositor reads it with that parser at start, on `reload` and as soon as it changes, and yggdrasil-wm's `apply_input` asks for a reload here after Settings saved it (it said "not yet" before).
+   Key repeat goes to every program at once (wl_keyboard.repeat_info) and to the compositor's own held shortcuts. The mouse
+   settings (speed, acceleration profile, scroll factor, natural scrolling, left-handed), every mouse's and per mouse in `[name]`
+   sections, apply to the headless virtual mouse `yggdrasil-headless-mouse` (`pointer-move`, `scroll`, `click`, `press`,
+   `release`): its speed as libinput's flat profile works it out (times 1 + sensitivity), the scroll factor and natural
+   scrolling as Hyprland applies them, left and right buttons swapped when left-handed. On the hardware backend they are set
+   on each device through libinput (the scroll factor applied here), a touchpad's and a TrackPoint's own too ("Touchpad and
+   TrackPoint" below). The control socket's `devices` lists the mice and keyboards, which yggdrasil-wm's `input_devices` reads
+   for Settings' "Each mouse". Proof: `tests/input.rs` (the file at start, the client told the repeat, half speed, swapped
+   buttons, natural scrolling at twice the distance, the pointer kept on the screens; Settings' change applied through
+   yggdrasil-wm, the defaults when the file goes) and a unit test. Measured on the `idle_cost` set: idle 592-654 µs in 10 s
+   (633 for the build before, run between them on a busy machine), 26.5-26.7 MB resident; one more file read when it changes. Left: headless an adaptive mouse moves as a flat one (the adaptive curve is libinput's own); Settings still shows its
+   old "not yet" note on this compositor and hides "Each mouse" there (`packages/settings/src/peripherals.rs`,
+   `input::NOT_YET`), although the compositor takes both.
 9. ~~No floating window opens bigger than its screen~~, closed 2026-11-13, as the Hyprland session since d058852
    (`src/placement.rs`'s `open`, the same function and cases as `keep-clear.lua`'s `open()`, with `packages/session/tests/
    keep-clear.lua` and `window-open.lua` on the Lua side): a window (dialogs and pop-ups too) that opens bigger than the room
@@ -329,12 +347,18 @@ RESOURCE_MANAGER` shows Xft.dpi 120, and a GTK window under X11 drew at its plac
    (`yggdrasil-compositor-session` in `packages/session`, src/own_session.rs; the autostart is its `--autostart` mode, run by
    this compositor as its first program, with no Hyprland Lua): the same environment, autostart, Restart and Shut down after the
    compositor, and the way back to the Hyprland session after a failed start as the shell script in `session/`, checked call for
-   call against it with the same stand-ins, and `packages/session/tests/own_session.rs`. The login entry still runs the shell
-   script, and the full session has not yet run in the test machine without Hyprland installed.
-11. **The hardware backend** (DRM/KMS), developed in a virtual machine, never on the live session. Milestone 1 done 2026-11-15
-   (above, `src/udev.rs`): libseat (logind and seatd), udev GPUs and connectors, GBM/EGL with OpenGL ES or pixman on dumb
-   buffers, a DrmCompositor per screen paced by the page flip, libinput, virtual terminals, a clean exit; the panel, Settings and
-   foot drawn and used in the VM.
+   call against it with the same stand-ins, and `packages/session/tests/own_session.rs`. Its log is the user journal
+   (`journalctl --user -t yggdrasil-compositor-session -t yggdrasil-compositor`), kept across a crash; a compositor that ends
+   badly after its first 15 seconds is not started again (the session ends). The login entry still runs the shell script, and
+   the full session has not yet run in the test machine without Hyprland installed.
+11. **The hardware backend** (DRM/KMS, `src/udev.rs`; its sections below), developed in a virtual machine and tried by hand on
+   the laptop's text console, never on the live session. Milestone 1, 2026-11-15: libseat (logind and seatd), udev GPUs and
+   connectors, GBM/EGL with OpenGL ES or pixman on dumb buffers, a DrmCompositor per screen paced by the page flip, libinput,
+   virtual terminals, the control socket, a clean exit; the panel, Settings and foot drawn and used in the VM. Milestone 2, the
+   laptop, built and first run 2026-11-19: its own screen and the lid, hotplug, the default scale, suspend and resume, screens
+   off, the touchpad, TrackPoint, touchscreen and pen, screen copies from the GPU; Night Light and turning a screen followed
+   (2026-11-21), then NVIDIA's explicit sync, the GPU choice and variable refresh for games (2026-11-23). What it lacks is in
+   its known limitations, below the laptop's table.
 12. **The bake-off** (`tools/bakeoff`; docs/COMPOSITOR.md, "The bake-off"): the same games and a CAD model measured on this
    compositor and on Hyprland decide between them. Its login entry for this compositor is built (2026-11-23); this compositor has
    not been through it yet.

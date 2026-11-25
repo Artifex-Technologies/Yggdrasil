@@ -37,7 +37,7 @@ impl App {
         let to = self.nearest_on_screens(to).unwrap_or(to);
         match self.hold(&pointer, under.as_ref()) {
             Hold::Locked => {
-                self.cursor.last_motion = std::time::Instant::now();
+                self.pointer_motion_seen();
                 pointer.frame(self);
                 return;
             }

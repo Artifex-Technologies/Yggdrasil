@@ -320,6 +320,8 @@ pub struct App {
     /// while the screen is dimmed; Hyprland's `cursor:inactive_timeout`). Headless the pointer is then left out of the screen's
     /// picture (pointer.rs); nested, the host window draws the pointer and nothing is hidden.
     pub pointer_timeout: f64,
+    /// A timer waits for the moment the resting pointer hides (`arm_pointer_hide`).
+    pointer_hide_armed: bool,
     /// The magnifier: the screen under the pointer drawn this many times larger about the pointer (1: off; up to 8).
     pub zoom: f64,
     /// The pointer's theme and size as Yggdrasil's tools set it on the running compositor (ygg-theme); None: the files' (pointer.rs).
@@ -850,6 +852,7 @@ impl App {
             loop_handle,
             opaque_shader: None,
             pointer_timeout: 0.0,
+            pointer_hide_armed: false,
             zoom: 1.0,
             cursor_theme: None,
             cursor: Default::default(),
@@ -3021,8 +3024,37 @@ impl App {
     /// The pointer moved to `pos` (in the space's coordinates): input, so it shows again if it was resting.
     pub fn pointer_to(&mut self, pos: Point<f64, Logical>, time: InputTime) {
         self.input_seen();
-        self.cursor.last_motion = std::time::Instant::now();
+        self.pointer_motion_seen();
         self.motion(pos, time);
+    }
+
+    /// The pointer moved: its rest starts again (`pointer_resting`).
+    pub fn pointer_motion_seen(&mut self) {
+        self.cursor.last_motion = std::time::Instant::now();
+        self.arm_pointer_hide();
+    }
+
+    /// While a timeout hides a resting pointer (yggdrasil-idle sets one while the screen is dimmed), a timer draws the frame
+    /// that hides it: nothing else would, as the compositor sleeps until something changes. None while the timeout is 0, as it
+    /// is unless the screen is dimmed; one at a time, waiting on when the pointer moved again.
+    pub fn arm_pointer_hide(&mut self) {
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+        if self.pointer_timeout <= 0.0 || self.pointer_hide_armed {
+            return;
+        }
+        let wait = std::time::Duration::from_secs_f64(self.pointer_timeout);
+        let armed = self.loop_handle.insert_source(Timer::from_duration(wait), |_, _, app| {
+            let rested = app.cursor.last_motion.elapsed().as_secs_f64();
+            if app.pointer_timeout > 0.0 && rested < app.pointer_timeout {
+                return TimeoutAction::ToDuration(std::time::Duration::from_secs_f64(app.pointer_timeout - rested));
+            }
+            app.pointer_hide_armed = false;
+            if app.pointer_timeout > 0.0 {
+                app.wake();
+            }
+            TimeoutAction::Drop
+        });
+        self.pointer_hide_armed = armed.is_ok();
     }
 
     /// The pointer put somewhere by the compositor (its screen went): not input, the idle time and a resting pointer stay.
