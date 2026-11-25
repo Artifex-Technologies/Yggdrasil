@@ -443,7 +443,6 @@ impl XWaylandShellHandler for App {
         self.mark_active(&w);
     }
 }
-smithay::delegate_xwayland_shell!(App);
 
 impl XwmHandler for App {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
@@ -817,9 +816,10 @@ impl RenderElement<GlesRenderer> for OpaqueElement {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), GlesError> {
         frame.override_default_tex_program(self.program.clone(), vec![]);
-        let r = RenderElement::<GlesRenderer>::draw(&self.inner, frame, src, dst, damage, opaque_regions);
+        let r = RenderElement::<GlesRenderer>::draw(&self.inner, frame, src, dst, damage, opaque_regions, cache);
         frame.clear_tex_program_override();
         r
     }

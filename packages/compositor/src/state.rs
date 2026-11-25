@@ -20,7 +20,6 @@ use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
-use smithay::delegate_xdg_decoration;
 use smithay::desktop::{layer_map_for_output, LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType};
 use smithay::input::keyboard::{keysyms, FilterResult, KeyboardHandle};
 use smithay::input::pointer::Focus;
@@ -44,7 +43,8 @@ use smithay::wayland::compositor::{
 use smithay::wayland::idle_notify::{IdleNotifierHandler, IdleNotifierState};
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::seat::WaylandFocus;
-use smithay::wayland::selection::data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler};
+use smithay::input::dnd::{DnDGrab, DndGrabHandler, DndTarget, GrabType, Source};
+use smithay::wayland::selection::data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler};
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker};
 use smithay::wayland::shell::wlr_layer::{Layer, LayerSurface as WlrLayerSurface, WlrLayerShellHandler, WlrLayerShellState};
@@ -146,10 +146,9 @@ use smithay::backend::input::KeyState;
 use smithay::input::keyboard::ModifiersState;
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::viewporter::ViewporterState;
-use smithay::{
-    delegate_compositor, delegate_data_device, delegate_idle_notify, delegate_layer_shell, delegate_output, delegate_seat,
-    delegate_session_lock, delegate_shm, delegate_viewporter, delegate_xdg_shell,
-};
+
+// every Smithay protocol state dispatches through its user data (Dispatch2)
+smithay::delegate_dispatch2!(App);
 
 /// How the renderer takes in a program's GPU picture (true when it could).
 pub type DmabufImport = Box<dyn FnMut(&smithay::backend::allocator::dmabuf::Dmabuf) -> bool>;
@@ -3087,7 +3086,6 @@ impl CompositorHandler for App {
         }
     }
 }
-delegate_compositor!(App);
 
 impl BufferHandler for App {
     fn buffer_destroyed(&mut self, _: &wl_buffer::WlBuffer) {}
@@ -3097,7 +3095,6 @@ impl ShmHandler for App {
         &self.shm_state
     }
 }
-delegate_shm!(App);
 
 // GPU pictures (linux-dmabuf): a program renders with the GPU (Vulkan, OpenGL) into a buffer and hands it over without a copy.
 // The import is checked against the renderer at once, so a buffer the GPU cannot read is refused when it is made, not when drawn.
@@ -3119,7 +3116,6 @@ impl smithay::wayland::dmabuf::DmabufHandler for App {
         }
     }
 }
-smithay::delegate_dmabuf!(App);
 
 // Keeping the screen awake (idle-inhibit): a video player or game asks while its surface shows; the idle timer stops while any asks.
 impl smithay::wayland::idle_inhibit::IdleInhibitHandler for App {
@@ -3135,15 +3131,13 @@ impl smithay::wayland::idle_inhibit::IdleInhibitHandler for App {
         self.idle_state.set_is_inhibited(!self.inhibitors.is_empty());
     }
 }
-smithay::delegate_idle_inhibit!(App);
 
 // Middle-click paste (primary selection), beside the ordinary clipboard.
 impl smithay::wayland::selection::primary_selection::PrimarySelectionHandler for App {
-    fn primary_selection_state(&self) -> &smithay::wayland::selection::primary_selection::PrimarySelectionState {
-        &self.primary_selection_state
+    fn primary_selection_state(&mut self) -> &mut smithay::wayland::selection::primary_selection::PrimarySelectionState {
+        &mut self.primary_selection_state
     }
 }
-smithay::delegate_primary_selection!(App);
 
 // Fractional scaling: programs are told the output's scale so they draw sharp at 125 % or 150 % (the nested window is always 1.0; headless outputs have the scale
 // they were given). Changes later are sent by apply_scale().
@@ -3155,7 +3149,6 @@ impl smithay::wayland::fractional_scale::FractionalScaleHandler for App {
         });
     }
 }
-smithay::delegate_fractional_scale!(App);
 
 // Focus requests between programs (xdg-activation): a program may bring a window forward only with a token made in answer to
 // the person's own input in the last 10 seconds (a click on a link, a launcher), so nothing can steal the keyboard on its own.
@@ -3176,12 +3169,11 @@ impl smithay::wayland::xdg_activation::XdgActivationHandler for App {
         self.activation_state.remove_token(&token);
     }
 }
-smithay::delegate_xdg_activation!(App);
 
 // Cursor shapes by name (cursor-shape-v1; it needs the tablet protocol's seat part, which costs nothing without a tablet).
-impl smithay::wayland::tablet_manager::TabletSeatHandler for App {}
-smithay::delegate_cursor_shape!(App);
-smithay::delegate_tablet_manager!(App);
+impl smithay::input::tablet::TabletSeatHandler for App {
+    type ToolFocus = WlSurface;
+}
 
 impl SeatHandler for App {
     type KeyboardFocus = KbFocus;
@@ -3213,7 +3205,6 @@ impl SeatHandler for App {
         }
     }
 }
-delegate_seat!(App);
 
 impl SelectionHandler for App {
     type SelectionUserData = ();
@@ -3250,18 +3241,14 @@ impl SelectionHandler for App {
     }
 }
 impl DataDeviceHandler for App {
-    fn data_device_state(&self) -> &DataDeviceState {
-        &self.data_device_state
+    fn data_device_state(&mut self) -> &mut DataDeviceState {
+        &mut self.data_device_state
     }
 }
-impl ClientDndGrabHandler for App {
-    /// A program started dragging (with the left button held): a closed hand, and its icon under the pointer.
-    fn started(
-        &mut self,
-        _source: Option<smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource>,
-        icon: Option<WlSurface>,
-        _seat: Seat<Self>,
-    ) {
+impl WaylandDndGrabHandler for App {
+    /// A program started dragging (with the left button held, or a finger down): a closed hand, its icon under the pointer,
+    /// and the drag grab that routes the offer to the window under it.
+    fn dnd_requested<S: Source>(&mut self, source: S, icon: Option<WlSurface>, seat: Seat<Self>, serial: Serial, type_: GrabType) {
         self.dragging = true;
         // the offset the icon's first picture was committed with (before the drag began)
         self.dnd_offset = icon
@@ -3270,10 +3257,27 @@ impl ClientDndGrabHandler for App {
             .unwrap_or_default();
         self.dnd_icon = icon;
         self.cursor.status = CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Grabbing);
+        match type_ {
+            GrabType::Pointer => {
+                let pointer = seat.get_pointer().unwrap();
+                let Some(start) = pointer.grab_start_data() else { return self.end_drag() };
+                let grab = DnDGrab::new_pointer(&self.display_handle, start, source, seat);
+                pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Keep);
+            }
+            GrabType::Touch => {
+                let Some(touch) = seat.get_touch() else { return self.end_drag() };
+                let Some(start) = touch.grab_start_data() else { return self.end_drag() };
+                let grab = DnDGrab::new_touch(&self.display_handle, start, source, seat);
+                touch.set_grab(self, grab, serial);
+            }
+        }
         self.wake();
     }
+}
+
+impl DndGrabHandler for App {
     /// The drag ended (dropped on a window, or let go where nothing takes it): the arrow until a window sets its own.
-    fn dropped(&mut self, _target: Option<WlSurface>, _validated: bool, _seat: Seat<Self>) {
+    fn dropped(&mut self, _target: Option<DndTarget<'_, Self>>, _validated: bool, _seat: Seat<Self>, _at: Point<f64, Logical>) {
         self.end_drag();
     }
 }
@@ -3286,12 +3290,8 @@ impl App {
         self.wake();
     }
 }
-impl ServerDndGrabHandler for App {}
-delegate_data_device!(App);
 
 impl OutputHandler for App {}
-delegate_output!(App);
-delegate_viewporter!(App);
 
 impl XdgShellHandler for App {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -3385,7 +3385,6 @@ impl XdgShellHandler for App {
         surface.send_repositioned(token);
     }
 }
-delegate_xdg_shell!(App);
 
 impl WlrLayerShellHandler for App {
     fn shell_state(&mut self) -> &mut WlrLayerShellState {
@@ -3413,7 +3412,6 @@ impl WlrLayerShellHandler for App {
         self.keep_clear();
     }
 }
-delegate_layer_shell!(App);
 
 impl SessionLockHandler for App {
     fn lock_state(&mut self) -> &mut SessionLockManagerState {
@@ -3466,14 +3464,12 @@ impl SessionLockHandler for App {
         self.lock_surfaces.push((output, surface));
     }
 }
-delegate_session_lock!(App);
 
 impl IdleNotifierHandler for App {
     fn idle_notifier_state(&mut self) -> &mut IdleNotifierState<Self> {
         &mut self.idle_state
     }
 }
-delegate_idle_notify!(App);
 
 impl XdgDecorationHandler for App {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
@@ -3492,7 +3488,6 @@ impl XdgDecorationHandler for App {
         self.use_server_side(&toplevel);
     }
 }
-delegate_xdg_decoration!(App);
 
 impl App {
     fn use_client_side(&mut self, t: &ToplevelSurface) {

@@ -242,4 +242,3 @@ impl ForeignToplevelListHandler for App {
         &mut self.toplevel_list
     }
 }
-smithay::delegate_foreign_toplevel_list!(App);

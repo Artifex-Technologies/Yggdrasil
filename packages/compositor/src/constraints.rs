@@ -123,5 +123,3 @@ impl PointerConstraintsHandler for App {
     }
 }
 
-smithay::delegate_pointer_constraints!(App);
-smithay::delegate_relative_pointer!(App);

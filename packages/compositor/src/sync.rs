@@ -61,7 +61,6 @@ impl DrmSyncobjHandler for App {
         self.syncobj_state.as_mut()
     }
 }
-smithay::delegate_drm_syncobj!(App);
 
 /// Makes every commit of `surface` that brings a new GPU buffer wait until the buffer is drawn: its acquire point (explicit)
 /// or its fences (implicit). Called for each new surface.
