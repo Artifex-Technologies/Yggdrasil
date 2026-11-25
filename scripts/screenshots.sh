@@ -221,7 +221,7 @@ inside() {
     work=$(mktemp -d /tmp/ygg-shots.XXXXXX)
     export HOME=/home/alex USER=alex LOGNAME=alex LANG=en_US.UTF-8 TZ=${TZ:-America/Denver}
     if [ "${CI:-}" = true ]; then HOME=$work/home; fi
-    mkdir -p "$HOME" "$work/run" "$work/bin"
+    mkdir -p "$HOME" "$work/run" "$work/bin" "$work/input"
     chmod 0700 "$work/run"
     cp -r "$data/home/." "$HOME/"
     # extra fonts for the Font pages (YGG_SHOT_FONTS outside)
@@ -264,7 +264,8 @@ EOF
     for sock in "$work"/run/wayland-*; do [[ $sock =~ /wayland-[0-9]+$ ]] && export WAYLAND_DISPLAY=${sock##*/}; done
     # the idle pointer is never in the picture: screenshots without `pointer` leave it out
 
-    "$target/debug/yggdrasil-panel" > "$work/panel.log" 2>&1 &
+    # an empty folder in place of /dev/input (YGGDRASIL_PANEL_INPUT): the panel never reads the computer's mice
+    YGGDRASIL_PANEL_INPUT=$work/input "$target/debug/yggdrasil-panel" > "$work/panel.log" 2>&1 &
     pids+=($!)
     for i in $(seq 300); do ctl layers | grep -q yggdrasil-dock && break; pause 0.1; done
     ctl layers | grep -q yggdrasil-dock || { echo "the panel did not start:"; tail -20 "$work/panel.log"; exit 1; }
