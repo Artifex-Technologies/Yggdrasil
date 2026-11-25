@@ -553,6 +553,22 @@ between the steps, the backup removed after): each save sets the screens once, a
 the file's screen reaches, and tells programs the key repeat once, the file's, and the compositor is asleep again after (the
 build before: the screens set twice a save and the pointer pulled to 1599,599; the default key repeat told first). Idle it
 still costs nothing (`tests/look.rs idle_cost`, debug builds, two runs: 0 µs of CPU in 10 s).
+The panel's window zones and the mouse's left button (2026-11-25, `packages/panel/src/zones.rs`, docs/ZONES.md), measured
+headless at 1600x900 on this PC, debug builds of the panel before and after, alternating, three runs each: wake-ups of the
+panel's main thread (its voluntary context switches) and its time on the CPU, with a FIFO in its input folder standing in for
+the mouse (the build before took only real devices, so a measurement-only `LD_PRELOAD` shim, loaded into both, answered their
+device questions for the FIFO and counted them). With window zones off and the button held, 148 wake-ups in 3 s in each run
+before (its 60 ms look for a drag, asking the compositor each time; 6.3-7.0 ms of CPU) and 0-1 after, no more than idle: the
+mouse is not even open while zones are off. With zones on and the button held without a drag, 148 in 3 s both (the look for a
+drag, unchanged). With the drag's sheet open and the pointer still, 536-641 wake-ups and 18.2-20.1 ms of CPU in 4 s before, and
+271-329 and 12.0-12.9 ms after: the sheet's 30 ms look asks the compositor for the pointer alone (before, for the window too, to
+see whether it still followed the pointer), and before the sheet also opened the mouse a second time and asked it 131-132 times
+in those 4 s (`EVIOCGKEY`, 33 a second); after, it holds the mouse once and asks it nothing. With the pointer moving within one
+zone (2 px every 20 ms), 3.18-3.37 s of CPU in 4 s before and 14.6-15.0 ms after: the sheet, the bar and the dock were drawn
+again on each look after the pointer moved, and now only when it goes to another zone (wake-ups 221-230 before and 278-291
+after: the drawing had slowed the looks to about one every 60 ms). The drop was seen 9-27 ms after the release before (at the
+next 30 ms look) and at once after (0 ms, the release's own event). Idle, 0-1 wake-ups in 3 s both. `tests/apps.rs` holds the
+drag, the drop, the pointer moving within a zone and a held button with zones off to this.
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
 their own, plus about 26 MB while libnvidia-ml is initialised (the NVIDIA driver's own cost, the same in any language), and tune
 reads /dev/kmsg instead of keeping a journalctl child (about 46 MB). The Python versions were about 40 MB each with swap counted.

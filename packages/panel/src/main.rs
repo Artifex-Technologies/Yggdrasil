@@ -134,9 +134,7 @@ enum BusMsg {
     /// Ctrl tapped on its own (Find my mouse), and Win + / (the shortcuts card).
     CursorTap,
     ToggleShortcuts,
-    /// Window zones: a dragged window reached the notch, the drag ended, or Super+Shift+Z (zones.rs).
-    ZonesDrag,
-    ZonesDrop,
+    /// Window zones for the window in front: Super+Shift+Z (zones.rs; a drag the panel notices itself).
     ZonesPick,
     /// Settings > Displays > Identify: each screen (connector) and the number to show on it.
     Identify(Vec<(String, u32)>),
@@ -200,16 +198,6 @@ impl PanelBus {
     /// Show the keyboard shortcuts card, or close it.
     fn toggle_shortcuts(&self) {
         let _ = self.0.send(BusMsg::ToggleShortcuts);
-    }
-
-    /// Window zones: a window being dragged reached the notch (the session's Lua calls this); the sheet opens under it.
-    fn zones_drag(&self) {
-        let _ = self.0.send(BusMsg::ZonesDrag);
-    }
-
-    /// The drag ended: the window goes to the zone under the pointer, if any, and the sheet closes.
-    fn zones_drop(&self) {
-        let _ = self.0.send(BusMsg::ZonesDrop);
     }
 
     /// Open the zones sheet for the window in front, or close it (Super+Shift+Z).
@@ -446,12 +434,10 @@ struct State {
     fy_hits: Vec<fylgja::FHit>,
     /// The zones sheet's zones on its surface.
     zone_hits: Vec<(zones::Rect4, (usize, usize))>,
-    /// While a window is dragged to a zone: the mouse's left button as the kernel sees it (the drop is its release), and whether
-    /// it has been seen held.
-    zone_buttons: Option<(zones::Buttons, bool)>,
     /// Snap Assist waiting to open after a drop (the dragged app first gets the pointer back, so it hears its drag ended).
     assist_after: Option<(zones::Session, (usize, usize), Instant)>,
-    /// Notices a window dragged to the notch (no binding on the mouse button: see zones::Spotter).
+    /// Notices a window dragged to the notch, and the drop (the mouse's left button, watched while window zones are on: see
+    /// zones::Spotter).
     zone_spotter: zones::Spotter,
     /// The short timers that run only while what they are for goes on (`Tick`): each is armed when that starts and dropped when it
     /// ends (`arm_timers`, after every pass of the event loop). Nothing ticks while the desktop is idle.
@@ -2049,6 +2035,14 @@ impl State {
             }
             // Settings > Displays: the screens that tile
             "tiling" => self.layout_stale = true,
+            // Settings > Displays > Window zones: the mice are watched only while zones are on, and a sheet goes with them
+            "zones.conf" => {
+                let on = zones::on();
+                self.zone_spotter.set_on(on);
+                if !on && matches!(self.popup, Some(Popup { kind: PopupKind::Zones(_), .. })) {
+                    self.close_popup();
+                }
+            }
             _ => {}
         }
     }
@@ -2629,7 +2623,6 @@ impl State {
     fn close_popup(&mut self) {
         self.thumbs.clear(); // pictures of windows are not kept
         previews::end_round();
-        self.zone_buttons = None;
         self.fy_anim = None;
         if matches!(self.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
             self.cancel_voice();
@@ -2957,10 +2950,6 @@ impl State {
             return;
         };
         zones::note(&format!("sheet open ({mode:?}) for {} on {}", sess.address, sess.monitor.name));
-        self.zone_buttons = (mode == zones::Mode::Drag).then(|| (zones::Buttons::open(), false));
-        if let Some((b, _)) = &self.zone_buttons {
-            zones::note(&format!("left button readable: {:?}", b.left_down()));
-        }
         if self.popup.is_some() {
             self.close_popup();
         }
@@ -2969,33 +2958,16 @@ impl State {
         self.dirty = true;
     }
 
-    /// While a window is dragged: light the zone under the pointer, and see whether the window still follows it (once it does
-    /// not, the button was let go: the drop).
+    /// While a window is dragged: light the zone under the pointer (one question to the compositor a tick; the drop is the
+    /// button's release, `zones_button_seen`). The sheet shows that zone, not the pointer, so it is drawn again only when the
+    /// pointer goes to another zone (it was drawn, with the bar and the dock, on every tick the pointer moved).
     fn zones_follow(&mut self) {
         let Some(Popup { kind: PopupKind::Zones(z), .. }) = &mut self.popup else { return };
         let Some(g) = zones::cursor() else { return };
         let p = zones::to_surface(z, g);
         let hover = zones::hit_at(&self.zone_hits, p);
-        // the surest sign: the kernel says the left button came up
-        if let Some((b, seen)) = &mut self.zone_buttons {
-            match b.left_down() {
-                Some(true) => *seen = true,
-                Some(false) if *seen => {
-                    zones::note(&format!("drop seen by the panel: the left button came up over {hover:?}"));
-                    self.zone_buttons = None;
-                    self.zones_dropped(hover);
-                    return;
-                }
-                _ => {}
-            }
-        }
-        let at = zones::front_window().filter(|(a, _)| *a == z.address).map(|(_, at)| at);
-        if let Some(drop) = z.watch.follow(g, at, hover) {
-            zones::note(&format!("drop seen by the panel: the window stopped following (pointer {g:?}, window at {at:?})"));
-            self.zones_dropped(drop);
-            return;
-        }
         if z.pointer != Some(p) {
+            z.pointer = Some(p);
             z.moved = Instant::now();
         } else if z.moved.elapsed() > zones::STALE {
             // no drop came (the release went unseen): put the sheet away rather than follow the pointer for ever
@@ -3003,42 +2975,30 @@ impl State {
             self.close_popup();
             return;
         }
-        if hover != z.hover || z.pointer != Some(p) {
+        if hover != z.hover {
             z.hover = hover;
-            z.pointer = Some(p);
             self.dirty = true;
         }
     }
 
-    /// The session says the drag ended (its Lua saw the window stop following the pointer, or the button come up).
-    fn zones_drop(&mut self) {
-        zones::note(&format!(
-            "the session says dropped (sheet open: {})",
-            matches!(self.popup, Some(Popup { kind: PopupKind::Zones(_), .. }))
-        ));
-        if let Some(Popup { kind: PopupKind::Zones(z), .. }) = &mut self.popup {
-            if z.mode == zones::Mode::Drag {
-                if let Some(drop) = z.watch.told() {
-                    self.zones_dropped(drop);
-                }
-            }
+    /// The mouse's devices said something (a press or a release), or were opened again: once the left button is up while a window
+    /// is dragged on the sheet, that is the drop, over the zone under the pointer. The release wakes the panel; nothing asks the
+    /// button in between.
+    fn zones_button_seen(&mut self) {
+        if self.zone_spotter.held() {
+            return;
         }
+        let Some(Popup { kind: PopupKind::Zones(z), .. }) = &self.popup else { return };
+        if z.mode != zones::Mode::Drag {
+            return;
+        }
+        // where the pointer is as the button comes up (the last 30 ms tick may have seen it a zone away)
+        let hover = zones::cursor().map(|g| zones::hit_at(&self.zone_hits, zones::to_surface(z, g))).unwrap_or(z.hover);
+        zones::note(&format!("drop seen by the panel: the left button came up over {hover:?}"));
+        self.zones_dropped(hover);
     }
 
-    /// The pointer came back to the zones sheet (an enter after it settled, or a click) while a window was being dragged: the drop.
-    fn zones_pointer_back(&mut self, clicked: bool) {
-        let at = zones::hit_at(&self.zone_hits, self.pointer_pos);
-        if let Some(Popup { kind: PopupKind::Zones(z), .. }) = &mut self.popup {
-            if z.mode == zones::Mode::Drag {
-                if let Some(drop) = z.watch.pointer_back(clicked, at) {
-                    zones::note(&format!("drop seen by the panel: the pointer came back (clicked {clicked})"));
-                    self.zones_dropped(drop);
-                }
-            }
-        }
-    }
-
-    /// The drag ended (once, however it was seen): the window goes to the zone it was let go over, if any, then Snap Assist.
+    /// The drag ended (the button came up): the window goes to the zone it was let go over, if any, then Snap Assist.
     fn zones_dropped(&mut self, hit: Option<(usize, usize)>) {
         zones::note(&format!("dropped on {hit:?}"));
         let Some(Popup { kind: PopupKind::Zones(z), .. }) = &self.popup else { return };
@@ -3606,7 +3566,8 @@ impl State {
                         self.zone_hits = hits;
                         // during a drag the sheet takes no pointer input: when the button comes up the pointer must land on the
                         // dragged app itself, or an app that drags itself (VS Code and other Electron apps) never hears the drag
-                        // ended and picks the window up again on the next move. The panel follows the pointer through Hyprland.
+                        // ended and picks the window up again on the next move. The panel asks the compositor where the pointer
+                        // is (zones_follow).
                         let region = self.compositor.create_region(&self.qh, ());
                         if z.mode != zones::Mode::Drag {
                             region.add(0, 0, i32::MAX / 2, i32::MAX / 2);
@@ -4369,10 +4330,6 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                 state.pointer_surface = state.surf_index(&surface);
                 state.pointer_pos = (surface_x as f32, surface_y as f32);
                 state.set_cursor(serial);
-                // the pointer is back on the zones sheet while a window was dragged: the compositor let go of it
-                if state.pointer_surface.and_then(|i| state.surfs.get(i)).map(|s| s.kind == Kind::Popup).unwrap_or(false) {
-                    state.zones_pointer_back(false);
-                }
                 if state.fylgja_pointer_moved() || state.preview_pointer_moved() {
                     return;
                 }
@@ -4419,10 +4376,6 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                 }
                 if matches!(state.popup, Some(Popup { kind: PopupKind::Assist(_), .. })) {
                     state.dirty = true; // the tile under the pointer lights up
-                }
-                // motion on the zones sheet while a window was dragged: the compositor no longer holds the pointer
-                if state.pointer_surface.and_then(|i| state.surfs.get(i)).map(|s| s.kind == Kind::Popup).unwrap_or(false) {
-                    state.zones_pointer_back(false);
                 }
                 state.hover_at(surface_x as f32, surface_y as f32)
             }
@@ -4536,11 +4489,9 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                                 state.tray_row(a);
                             }
                         } else if let Some(Popup { kind: PopupKind::Zones(z), .. }) = &state.popup {
-                            if z.mode == zones::Mode::Drag {
-                                // a click on the sheet while dragging: the button is up, so the drag ended
-                                state.zones_pointer_back(true);
-                            } else if let Some(hit) = zones::hit_at(&state.zone_hits, (px, py)) {
-                                // picked from the keyboard (Super+Shift+Z): a click on a zone puts the window there
+                            // picked from the keyboard (Super+Shift+Z): a click on a zone puts the window there (a drag's sheet
+                            // takes no pointer input: its drop is the button's release)
+                            if let Some(hit) = zones::hit_at(&state.zone_hits, (px, py)) {
                                 let z = z.clone();
                                 state.close_popup();
                                 state.zones_placed(z, hit, Duration::ZERO);
@@ -4913,9 +4864,8 @@ fn main() {
         start_max: 0,
         fy_hits: vec![],
         zone_hits: vec![],
-        zone_buttons: None,
         assist_after: None,
-        zone_spotter: zones::Spotter::default(),
+        zone_spotter: zones::Spotter::new(zones::input_dir(), zones::on()),
         ticks: [None; 3],
         deadline: None,
         clock: None,
@@ -5046,8 +4996,6 @@ fn main() {
                     BusMsg::CursorTap => st.cursor_tap(),
                     BusMsg::Identify(list) => st.show_identify(&list),
                     BusMsg::ToggleShortcuts => st.toggle_shortcuts(),
-                    BusMsg::ZonesDrag => st.zones_open(zones::Mode::Drag),
-                    BusMsg::ZonesDrop => st.zones_drop(),
                     BusMsg::ZonesPick => st.zones_open(zones::Mode::Pick),
                 }
             }
@@ -5312,7 +5260,8 @@ fn main() {
         }
         Err(e) => eprintln!("yggdrasil-panel: the trash cannot be watched ({e}); the dock's trash shows what it held at the start"),
     }
-    // the mouse's left button (a window dragged to the notch): its presses and releases, and mice plugged in or out
+    // the mouse's left button (a window dragged to the notch, and its drop): its presses and releases while window zones are on,
+    // and mice plugged in or out
     event_loop
         .handle()
         .insert_source(
@@ -5323,6 +5272,7 @@ fn main() {
             ),
             |_, _, st| {
                 st.zone_spotter.read();
+                st.zones_button_seen();
                 Ok(calloop::PostAction::Continue)
             },
         )
@@ -5333,7 +5283,9 @@ fn main() {
                 .handle()
                 .insert_source(calloop::generic::Generic::new(fd, calloop::Interest::READ, calloop::Mode::Level), |_, fd, st| {
                     if changed_files(&fd).iter().any(|n| n.starts_with("event")) {
-                        st.zone_spotter.events.reopen();
+                        // the mouse that held the button may be the one that went
+                        st.zone_spotter.devices_changed();
+                        st.zones_button_seen();
                     }
                     Ok(calloop::PostAction::Continue)
                 })
@@ -5341,8 +5293,8 @@ fn main() {
         }
         Err(e) => eprintln!("yggdrasil-panel: /dev/input cannot be watched ({e}); a mouse plugged in later is not seen at the notch"),
     }
-    // Settings writes ~/.config/yggdrasil (panel.conf, appearance.conf, display.conf, tiling) and Agora pins apps in its dock
-    // file: the folder is watched, and a change is taken up as it is written. Screens are Wayland events (layout_stale).
+    // Settings writes ~/.config/yggdrasil (panel.conf, appearance.conf, display.conf, tiling, zones.conf) and Agora pins apps in
+    // its dock file: the folder is watched, and a change is taken up as it is written. Screens are Wayland events (layout_stale).
     match config_watch() {
         Ok(fd) => {
             event_loop
@@ -5404,7 +5356,7 @@ fn main() {
 enum Tick {
     /// A window dragged over the zones sheet: the sheet follows the pointer.
     Follow,
-    /// The left button is held: is a window being dragged to the notch?
+    /// The left button is held (window zones are on: with them off no mouse is open): is a window being dragged to the notch?
     Spot,
     /// A full-screen window is in front of the dock's screen: is the pointer pushed against the dock's edge?
     Peek,

@@ -67,7 +67,7 @@ fn panelctl_commands_are_panel_methods() {
         ("fylgja", "ShowFylgja u 0"),
         ("shortcuts", "ToggleShortcuts"),
         ("cursor-tap", "CursorTap"),
-        ("zones-drop", "ZonesDrop"),
+        ("zones", "ZonesPick"),
     ] {
         let w = World::new("method");
         w.stub("busctl", "");
