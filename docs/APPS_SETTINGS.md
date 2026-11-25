@@ -556,6 +556,8 @@ About only when switched on, have no picture.
     last address cannot be removed (No network closes it instead). Choosing Listed addresses asks for the first address and
     sends it with the mode.
   - **Windows licenses:** add (name, and the key on stdin, never a command line) and remove, through pkexec.
+  - **Save a report…**: `pkexec limbo report --since 7d`, with `--plain` (the timeline in plain words, one sentence an event)
+    when this Limbo's `limbo report -h` lists it; kept as Markdown in Documents and opened.
   - Quarantine decisions are not here: they are Heimdall's (Security > the monitor's page).
   - A Limbo from before this protocol is named as such ("older than this page"); one that does not run, or a person not in
     `limbo-users`, gets a plain line saying what to do. Read every 5 s only while the page is open.

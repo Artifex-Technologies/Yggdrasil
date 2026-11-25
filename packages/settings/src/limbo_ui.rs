@@ -361,11 +361,18 @@ pub fn report_path(home: &std::path::Path, date: &str, exists: &dyn Fn(&std::pat
 /// `limbo report` for the last seven days, through pkexec (the audit log and the quarantine records are root's), kept as
 /// Markdown in the person's Documents and opened with their Markdown app.
 fn save_report() -> Result<std::path::PathBuf, String> {
-    let o = Command::new("pkexec")
-        .args([LIMBO, "report", "--since", "7d"])
+    // the timeline in plain words (Limbo's --plain), when this Limbo has it: its help says so, asked without root first, so
+    // the password is asked once
+    let plain = Command::new(LIMBO)
+        .args(["report", "-h"])
         .stdin(Stdio::null())
         .output()
-        .map_err(|_| "pkexec is not available".to_string())?;
+        .is_ok_and(|h| String::from_utf8_lossy(&h.stderr).contains("-plain"));
+    let mut args = vec![LIMBO, "report", "--since", "7d"];
+    if plain {
+        args.push("--plain");
+    }
+    let o = Command::new("pkexec").args(&args).stdin(Stdio::null()).output().map_err(|_| "pkexec is not available".to_string())?;
     if !o.status.success() {
         if matches!(o.status.code(), Some(126) | Some(127)) {
             return Err("No report: the password was not given.".into());
