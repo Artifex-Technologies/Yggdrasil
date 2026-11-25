@@ -538,13 +538,28 @@ pub fn window_size(w: &Window) -> smithay::utils::Size<i32, Logical> {
     }
 }
 
+/// The widest client-side shadow believed, on any side: GTK's are about 25 pixels. A program may write anything there (Smithay
+/// takes each side as 0 to i32::MAX): a window's place plus such a side overflowed (a debug build ended), and its X window was
+/// made that much bigger than the window.
+const MAX_SHADOW: i32 = 256;
+
+/// An X11 window's client-side shadow: `_GTK_FRAME_EXTENTS`, which GTK and Chromium draw inside their X window once the window
+/// manager says it reads it, as Smithay's does. None when a side is wider than any real shadow (`MAX_SHADOW`).
+pub fn shadow(x: &X11Surface) -> FrameExtents<i32, Logical> {
+    let s = x.frame_extents();
+    if [s.left, s.right, s.top, s.bottom].iter().all(|v| (0..=MAX_SHADOW).contains(v)) {
+        s
+    } else {
+        FrameExtents::default()
+    }
+}
+
 /// The shadow `x11_place` last placed an X11 window's X window around.
 struct PlacedShadow(std::cell::Cell<FrameExtents<i32, Logical>>);
 
-/// The client-side shadow an X11 window was last placed with (its present one before it was placed): `_GTK_FRAME_EXTENTS`,
-/// which GTK and Chromium draw inside their X window once the window manager says it reads it, as Smithay's does.
+/// The client-side shadow an X11 window was last placed with (its present one before it was placed).
 pub fn placed_shadow(x: &X11Surface) -> FrameExtents<i32, Logical> {
-    x.user_data().get::<PlacedShadow>().map(|s| s.0.get()).unwrap_or_else(|| x.frame_extents())
+    x.user_data().get::<PlacedShadow>().map(|s| s.0.get()).unwrap_or_else(|| shadow(x))
 }
 
 /// An X11 window's place and size as the compositor keeps them: its X window less the shadow it was placed with, as a Wayland
@@ -558,9 +573,9 @@ pub fn x11_rect(x: &X11Surface) -> Rectangle<i32, Logical> {
 /// shadow is kept: `placed_shadow`).
 pub fn x11_place(w: &Window, loc: Point<i32, Logical>, size: smithay::utils::Size<i32, Logical>) {
     if let Some(x) = w.x11_surface() {
-        let shadow = x.frame_extents();
-        x.user_data().get_or_insert(|| PlacedShadow(std::cell::Cell::new(shadow))).0.set(shadow);
-        let _ = x.configure(Rectangle::new(loc, size) + shadow);
+        let s = shadow(x);
+        x.user_data().get_or_insert(|| PlacedShadow(std::cell::Cell::new(s))).0.set(s);
+        let _ = x.configure(Rectangle::new(loc, size) + s);
     }
 }
 

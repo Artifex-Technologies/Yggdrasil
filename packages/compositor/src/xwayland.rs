@@ -496,7 +496,7 @@ impl XwmHandler for App {
         let w = Window::new_x11_window(window.clone());
         // The X window goes where any would, its client-side shadow (_GTK_FRAME_EXTENTS) inside; the compositor keeps the window
         // less that shadow, as a Wayland window's geometry. Or back where the program's last window closed (places.rs).
-        let shadow = window.frame_extents();
+        let shadow = state::shadow(&window);
         let place = if game_full {
             Rectangle::new(start, geo.size) - shadow
         } else {
@@ -610,7 +610,7 @@ impl XwmHandler for App {
         // its client-side shadow changed (GTK and Chromium drop it when maximized, draw it again when restored): the window keeps
         // its place and size, the X window is placed around it anew, so the picture stays where the X server has it. Only on a
         // change: GTK sets the same shadow again each time it lays its window out.
-        if property == WmWindowProperty::FrameExtents && state::placed_shadow(&window) != window.frame_extents() {
+        if property == WmWindowProperty::FrameExtents && state::placed_shadow(&window) != state::shadow(&window) {
             if let Some(w) = self.x11_window(&window) {
                 let r = state::x11_rect(&window);
                 state::x11_place(&w, r.loc, r.size);

@@ -394,7 +394,11 @@ window that draws its own shadow inside its X window (GTK and Chromium do once t
 `_GTK_FRAME_EXTENTS`, as Smithay's does on its main branch) is placed as any X11 window, and the compositor keeps the part
 inside the shadow as the window, as a Wayland window's geometry: it is listed, drawn, clicked and maximized as that part,
 and when the shadow goes or comes back (maximized, restored) the window keeps its place and size and its X window is placed
-around it (`tests/x11.rs`). Still missing for X11: drag and drop between X11 and Wayland programs.
+around it. Its surface takes clicks only 10 pixels out into the shadow, where GTK keeps its resize border (GTK 3 takes clicks
+10 pixels out, GTK 4 12); a click further out reaches what is behind, as the program's X input shape says, which XWayland
+does not pass on. When the compositor draws the window's controls, its own grips take the edge of the shadow. A shadow
+wider than 256 pixels on a side is not believed (a program may write any number there, up to i32::MAX): the window is then
+all of its X window (`tests/x11.rs`). Still missing for X11: drag and drop between X11 and Wayland programs.
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton
