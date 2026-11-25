@@ -741,6 +741,9 @@ impl XwmHandler for App {
             let s = state::surface_of(&w);
             self.window_gone(s.as_ref(), |x| *x == w);
         }
+        // what is under the pointer now has it: a drag over an X11 window leaves it (a drop there would wait for ever for
+        // the X11 program to finish it), and an X11 program's own drag ends
+        self.pointer_moved_to(self.pointer_location);
         // the old XWayland let go: its display's lock and socket files go with it, so the display can be bound again
         if let Some(t) = self.xwayland_source.take() {
             self.loop_handle.remove(t);

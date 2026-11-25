@@ -719,6 +719,49 @@ fn an_x11_drag_ends_when_xwayland_goes_away() {
     t.until("the pointer on the Wayland window", |st| st.pointer_on == Some(tw.surface.id()));
 }
 
+/// XWayland goes away while a Wayland program's drag is over an X11 window that said it takes it, and the button is let go
+/// there without the pointer moving: nothing is there any more to take the drop, so the dragging program is told the drag is
+/// cancelled (it does not wait for a finish that cannot come).
+#[test]
+fn a_drag_let_go_where_an_x11_window_was_is_cancelled() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a drop where an X11 window was");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the X11 program that takes XDND, on the right
+    let x = X11::connect(&display);
+    let win = x.window(b"x11target\0X11target\0", EventMask::NO_EVENT);
+    x.conn.change_property32(PropMode::REPLACE, win, x.aware, AtomEnum::ATOM, &[XDND]).unwrap();
+    x.conn.flush().unwrap();
+    comp.wait(10, "the X11 window managed", |c| c.window("X11target").is_some());
+    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11target")));
+    // the Wayland program dragging, on the left
+    let mut s = comp.connect();
+    let (_sk, _sp) = s.input();
+    let sw = s.window("test.source", "Source");
+    s.draw(&sw, (300, 200), 0xff0000ff);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.source")));
+    s.roundtrip();
+    let (si, xi) = (comp.window("test.source").unwrap(), comp.window("X11target").unwrap());
+    drag_from(&comp, &mut s, &sw, si.at, URI_MIME);
+    // over the X11 window, which takes it
+    comp.must(&format!("pointer {} {}", xi.at.0 + 150, xi.at.1 + 100));
+    let source = x.message(&mut [&mut s], x.enter, "XdndEnter")[0];
+    x.message(&mut [&mut s], x.position, "XdndPosition");
+    x.send(source, x.status, [win, 1, 0, 0, x.copy]);
+    until(&mut [&mut s], "the dragging program told the X11 program's choice", |l| l.action == Some(DndAction::Copy));
+
+    // XWayland goes away, and the X11 window with it; the button is let go where it was
+    let xwayland = xwayland_of(&comp).expect("an Xwayland");
+    unsafe { libc::kill(xwayland as i32, libc::SIGKILL) };
+    comp.wait(10, "the X11 window gone", |c| c.window("X11target").is_none());
+    comp.must("release");
+    until(&mut [&mut s], "the dragging program told the drag is cancelled", |l| l.cancelled);
+    assert!(!log(|l| l.finished), "not finished: nothing took the drop");
+}
+
 /// An X11 program (`win`, its window at `from`) drags over the Wayland program `t`'s window (at `over`), which is offered the
 /// drag and takes it; then the X11 program gives the drag up while the button is still held (on Escape it leaves the window it
 /// spoke to: XdndLeave), and the button is let go over the Wayland window.
