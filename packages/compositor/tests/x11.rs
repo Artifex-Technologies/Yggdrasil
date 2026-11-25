@@ -84,6 +84,89 @@ fn a_window_that_waits_to_be_told_it_has_the_focus_is_made_active_and_given_it()
     assert!(has_focus, "the window has the X input focus");
 }
 
+/// What an X11 window asks for before it is shown, which the window manager reads when it is mapped (EWMH, ICCCM): full screen
+/// or maximized (`_NET_WM_STATE`: games, programs that restore a maximized window) from its first frame, and back to the place
+/// it would have had when that ends; Steam's maximize is ignored, as its requests are, and it may still size itself; a window
+/// that asks to start minimized (WM_HINTS) is shown, and told so.
+#[test]
+fn an_x11_window_opens_as_it_asked_before_it_was_shown() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    use x11rb::protocol::xproto::{ClientMessageEvent, ConfigureWindowAux};
+    let _l = limit(60, "what an X11 window asked for before it was shown");
+    let (comp, display) = with_xwayland_on(&["--size", "800x600"], |_| {});
+    let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = conn.setup().roots[screen].root;
+    let atom = |n: &[u8]| conn.intern_atom(false, n).unwrap().reply().unwrap().atom;
+    let (net_state, full, vert, horz, hidden, wm_state) = (
+        atom(b"_NET_WM_STATE"),
+        atom(b"_NET_WM_STATE_FULLSCREEN"),
+        atom(b"_NET_WM_STATE_MAXIMIZED_VERT"),
+        atom(b"_NET_WM_STATE_MAXIMIZED_HORZ"),
+        atom(b"_NET_WM_STATE_HIDDEN"),
+        atom(b"WM_STATE"),
+    );
+    // a 300x200 window of this class with these states set before it is mapped, and WM_HINTS' initial state Iconic if asked
+    let open = |class: &[u8], states: &[u32], iconic: bool| {
+        let win = conn.generate_id().unwrap();
+        conn.create_window(0, win, root, 0, 0, 300, 200, 0, WindowClass::INPUT_OUTPUT, 0, &CreateWindowAux::new()).unwrap();
+        conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, class).unwrap();
+        conn.change_property32(PropMode::REPLACE, win, net_state, AtomEnum::ATOM, states).unwrap();
+        if iconic {
+            // flags StateHint, initial_state IconicState
+            conn.change_property32(PropMode::REPLACE, win, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, &[2, 0, 3, 0, 0, 0, 0, 0, 0]).unwrap();
+        }
+        conn.map_window(win).unwrap();
+        conn.flush().unwrap();
+        win
+    };
+    // what the program is told: its _NET_WM_STATE, and its WM_STATE
+    let told = |win: u32| {
+        let s = conn.get_property(false, win, net_state, AtomEnum::ATOM, 0, 32).unwrap().reply().unwrap();
+        let w = conn.get_property(false, win, wm_state, wm_state, 0, 2).unwrap().reply().unwrap();
+        (s.value32().map(|v| v.collect::<Vec<u32>>()).unwrap_or_default(), w.value32().and_then(|mut v| v.next()))
+    };
+    // the program ends a state as programs do: a _NET_WM_STATE remove message to the root
+    let end = |win: u32, a: u32, b: u32| {
+        let ev = ClientMessageEvent::new(32, win, net_state, [0, a, b, 1, 0]);
+        conn.send_event(false, root, EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY, ev).unwrap();
+        conn.flush().unwrap();
+    };
+
+    let f = open(b"full\0Full\0", &[full], false);
+    comp.wait(10, "the window full screen", |c| c.window("Full").is_some_and(|w| w.has("fullscreen") && w.rect() == (0, 0, 800, 600)));
+    end(f, full, 0);
+    comp.wait(10, "the window back at its own size", |c| c.window("Full").is_some_and(|w| !w.has("fullscreen") && w.size == (300, 200)));
+
+    // (a little short of the screen: the session's gaps)
+    let m = open(b"max\0Max\0", &[vert, horz], false);
+    comp.wait(10, "the window maximized", |c| c.window("Max").is_some_and(|w| w.has("maximized") && w.size.0 > 700 && w.size.1 > 500));
+    end(m, vert, horz);
+    comp.wait(10, "the window back at its own size", |c| c.window("Max").is_some_and(|w| !w.has("maximized") && w.size == (300, 200)));
+
+    let s = open(b"steam\0steam\0", &[vert, horz], false);
+    comp.wait(10, "Steam's window", |c| c.window("steam").is_some_and(|w| !w.has("maximized")));
+    let (states, _) = told(s);
+    assert!(!states.contains(&vert) && !states.contains(&horz), "Steam is told it is not maximized: {states:?}");
+    conn.configure_window(s, &ConfigureWindowAux::new().width(400).height(300)).unwrap();
+    conn.flush().unwrap();
+    comp.wait(10, "Steam's window at the size it asked for", |c| c.window("steam").is_some_and(|w| w.size == (400, 300)));
+
+    let i = open(b"iconic\0Iconic\0", &[], true);
+    comp.wait(10, "the window shown", |c| c.window("Iconic").is_some_and(|w| !w.has("minimized")));
+    let start = Instant::now();
+    loop {
+        let (states, wm) = told(i);
+        if !states.contains(&hidden) && wm == Some(1) {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "told it is shown: _NET_WM_STATE {states:?}, WM_STATE {wm:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// X11 programs show the desktop's pointer (YGG-10): the compositor sets Xcursor.theme and Xcursor.size in XWayland's X
 /// resources (libXcursor reads them), with Xft.dpi beside them, and sets them again when the pointer's theme changes.
 #[test]

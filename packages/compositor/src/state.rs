@@ -292,7 +292,8 @@ pub struct App {
     pub xsettings_serial: std::sync::atomic::AtomicU32,
     /// When GTK's settings.ini last changed: XSETTINGS are published again when it does (reload_config).
     gtk_ini_time: Option<std::time::SystemTime>,
-    /// Reads what an X11 window asked for before it was shown (x11asked.rs).
+    /// The second connection to XWayland, on a thread of its own: the active X11 window, programs' own icons, XSETTINGS and
+    /// WM_STATE (x11asked.rs).
     pub x11_reader: Option<crate::x11asked::Reader>,
     /// the X11 window last marked active (_NET_ACTIVE_WINDOW), while one has the keyboard
     pub x11_active: Option<u32>,
@@ -1139,6 +1140,13 @@ impl App {
     pub fn adopt(&mut self, window: &Window, surface: &WlSurface, decorate: bool) {
         if decorate {
             self.decorated.push(surface.clone());
+        }
+        // an X11 window made full screen or maximized as it was shown goes back to where it would have gone (places are kept by
+        // surface, which it has only now)
+        if let Some(p) = window.user_data().get::<crate::xwayland::PlaceBefore>() {
+            if !self.saved.iter().any(|(s, _)| s == surface) {
+                self.saved.push((surface.clone(), p.0));
+            }
         }
         // opened on a screen set to tile: it tiles (the session's tile-on-SCREEN rule, decided when a window opens)
         if self.tiling_screens.contains(&self.window_output(window).name()) && !self.screen_tiled.contains(surface) {

@@ -309,11 +309,12 @@ shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
   manager, are drawn where they ask, on top, never get the keyboard and are not listed; a click on one goes to it.
 - A window the compositor placed (tiled, maximized, full screen, snapped) keeps its place when it asks for another; others may change
   their size but not move themselves.
-- **What a window asked for before it was shown** (2026-11-05, `src/x11asked.rs`): a game that wants to start full screen, or a
-  program that wants to start maximized, sets `_NET_WM_STATE` before its window is shown. Smithay's window manager does not read
-  it, so a thread of its own reads it over its own connection to XWayland (the compositor never waits for the X server) and the
-  window goes full screen or maximized a moment after it shows. A game (below) as big as the screen that said nothing is still
-  taken as going full screen; other programs no longer are.
+- **What a window asked for before it was shown** (2026-11-05): a game that wants to start full screen, or a program that wants
+  to start maximized, sets `_NET_WM_STATE` before its window is shown. Smithay's window manager reads it when the window is
+  mapped (on Smithay main), and the window is full screen or maximized from its first frame (`src/xwayland.rs`,
+  map_window_request); when that ends, it goes back to the place it would have had. Steam's is ignored, as its maximize requests
+  are (below). A window that asks to start minimized (WM_HINTS' initial state) is shown, and told so. A game (below) as big as
+  the screen that said nothing is still taken as going full screen; other programs no longer are (`tests/x11.rs`).
 - Clipboard and middle-click selection both ways between X11 and Wayland programs; an X11 program can read them only while one of
   its windows has the keyboard. The program with the keyboard is now the one offered the clipboard (this was missing for Wayland
   programs too: Smithay offers it only to the focused program).

@@ -148,9 +148,9 @@ The session's behaviour is set in `packages/session/hyprland/yggdrasil.lua` (wit
 - The system's keyboard layout, Settings > Displays' `monitors.lua` (modes, scales, places, screens off), screens that come and
   go, remembered window places and the screens set to tile, Steam's maximize request ignored (items 3 and 5, 2026-11-12, below).
 
-**Built but only tried nested (not in the headless tests):** XWayland and games (opaque games, `_NET_WM_STATE` before mapping,
-Wine's WM_STATE), Super+T and tiling workspaces, window controls for server-side decoration, move and resize
-by the program's own title bar, Super+drag, xdg-activation, idle inhibit, clipboard and primary selection.
+**Built but only tried nested (not in the headless tests):** XWayland and games (opaque games, Wine's WM_STATE), Super+T and
+tiling workspaces, window controls for server-side decoration, move and resize by the program's own title bar, Super+drag,
+xdg-activation, idle inhibit, clipboard and primary selection.
 
 **X11 programs at the screen's resolution** (2026-11-22): XWayland's client scale is the largest scale of the screens that are
 on, so XWayland is told each screen's size in pixels: on a 1920x1200 screen at 125% a game is offered 1920x1200 and drawn sharp,
