@@ -656,16 +656,20 @@ pub fn window_size(w: &Window) -> smithay::utils::Size<i32, Logical> {
     }
 }
 
-/// The widest client-side shadow believed, on any side: GTK's are about 25 pixels. A program may write anything there (Smithay
-/// takes each side as 0 to i32::MAX): a window's place plus such a side overflowed (a debug build ended), and its X window was
-/// made that much bigger than the window.
+/// The widest client-side shadow believed, on any side: GTK's are about 25 pixels. A program may write anything there (our
+/// Smithay fork takes each side as 0 to 65535), and its X window was made that much bigger than the window (before the fork
+/// did, a window's place plus such a side overflowed: a debug build ended).
 const MAX_SHADOW: i32 = 256;
 
 /// An X11 window's client-side shadow: `_GTK_FRAME_EXTENTS`, which GTK and Chromium draw inside their X window once the window
-/// manager says it reads it, as Smithay's does. None when a side is wider than any real shadow (`MAX_SHADOW`).
+/// manager says it reads it, as Smithay's does. None when a side is wider than any real shadow (`MAX_SHADOW`), or when it
+/// leaves nothing of the X window as it is now (a 100x100 one that says 60 on each side): no program draws either, and the
+/// window is then all of its X window. Taken when the window is placed and when the program sizes its X window itself.
 pub fn shadow(x: &X11Surface) -> FrameExtents<i32, Logical> {
     let s = x.frame_extents();
-    if [s.left, s.right, s.top, s.bottom].iter().all(|v| (0..=MAX_SHADOW).contains(v)) {
+    let size = x.last_configure().size;
+    let sides = [s.left, s.right, s.top, s.bottom].iter().all(|v| (0..=MAX_SHADOW).contains(v));
+    if sides && s.left + s.right < size.w && s.top + s.bottom < size.h {
         s
     } else {
         FrameExtents::default()
@@ -673,13 +677,14 @@ pub fn shadow(x: &X11Surface) -> FrameExtents<i32, Logical> {
 }
 
 /// A window's geometry: the part of its surface that is the window, without a client-side shadow, from the surface's origin.
-/// Drawing, hit tests, previews and copies take it from here. For an X11 window it is the surface less the shadow the
-/// compositor believes (`shadow`), the one its X window is placed and listed with. Smithay's own geometry takes any
-/// _GTK_FRAME_EXTENTS: a window whose shadow was not believed was listed as all of its X window, but drawn and clicked as
-/// nothing of it or a strip. Smithay's `Space` still uses its own to work out which outputs a window is on.
+/// Drawing, hit tests, previews and copies take it from here. For an X11 window it is the surface less the shadow its X window
+/// was placed with (`placed_shadow`), as it is listed (`x11_rect`): whether a shadow is believed depends on the X window's
+/// size, so both take the one decided when it was placed. Smithay's own geometry takes any _GTK_FRAME_EXTENTS: a window whose
+/// shadow was not believed was listed as all of its X window, but drawn and clicked as nothing of it or a strip. Smithay's
+/// `Space` still uses its own to work out which outputs a window is on.
 pub fn window_geometry(w: &Window) -> Rectangle<i32, Logical> {
     match w.x11_surface() {
-        Some(x) => x.bbox() - shadow(x),
+        Some(x) => x.bbox() - placed_shadow(x),
         None => w.geometry(),
     }
 }

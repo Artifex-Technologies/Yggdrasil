@@ -1082,3 +1082,97 @@ fn absurd_x11_shadows_do_not_bring_the_compositor_down() {
     std::thread::sleep(Duration::from_millis(300));
     ask("windows", "all of it");
 }
+
+/// A shadow that leaves nothing of its X window is no shadow a program draws either, however narrow its sides: a 100x100 X
+/// window that says it has 60 pixels of shadow on each side is listed, drawn and clicked as all of its X window, which is not
+/// made bigger (before, the window was of no size: listed and given the keyboard, but neither drawn nor clickable, and its X
+/// window was grown to 120x120 around it). When the program sizes its X window itself, its shadow is taken again for the new
+/// size and the window keeps its place: made 220x220, the shadow fits and the window is the 100x100 inside it; made 100x100
+/// again, it is all of its X window again (before, a window of no size). Maximized, it is all of the room, as it was placed,
+/// though the shadow would fit there.
+#[test]
+fn an_x11_shadow_that_leaves_no_window_is_not_believed() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "an X11 shadow that leaves no window");
+    let (comp, display) = with_xwayland_on(&["--size", "800x600"], |_| {});
+    let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = conn.setup().roots[screen].root;
+    let atom = |n: &str| conn.intern_atom(false, n.as_bytes()).unwrap().reply().unwrap().atom;
+    let (extents, motif) = (atom("_GTK_FRAME_EXTENTS"), atom("_MOTIF_WM_HINTS"));
+    // red all over, with its own title bar (Motif: no decorations): the compositor's controls would cover a window this small
+    let win = conn.generate_id().unwrap();
+    let aux = CreateWindowAux::new().background_pixel(0xff0000).event_mask(EventMask::BUTTON_PRESS);
+    conn.create_window(0, win, root, 0, 0, 100, 100, 0, WindowClass::INPUT_OUTPUT, 0, &aux).unwrap();
+    conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"x11wide\0X11wide\0").unwrap();
+    conn.change_property32(PropMode::REPLACE, win, motif, motif, &[2, 0, 0, 0, 0]).unwrap();
+    conn.change_property32(PropMode::REPLACE, win, extents, AtomEnum::CARDINAL, &[60; 4]).unwrap();
+    // the program sizes its X window itself
+    let resize = |px: u32| {
+        conn.configure_window(win, &ConfigureWindowAux::new().width(px).height(px)).unwrap();
+        conn.flush().unwrap();
+    };
+    let x_window = || {
+        let at = conn.translate_coordinates(win, root, 0, 0).unwrap().reply().unwrap();
+        let size = conn.get_geometry(win).unwrap().reply().unwrap();
+        (at.dst_x as i32, at.dst_y as i32, size.width as i32, size.height as i32)
+    };
+    // soon listed at `window` with its X window at `x`, all of the window drawn; and a click at its middle lands there in X
+    let settled = |window: (i32, i32, i32, i32), x: (i32, i32, i32, i32), after: &str| {
+        let start = Instant::now();
+        loop {
+            let (listed, now) = (comp.window("X11wide").map(|w| w.rect()), x_window());
+            let red = comp.screenshot("HEADLESS-1").fills(window, (255, 0, 0), 10);
+            if listed == Some(window) && now == x && red {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "after {after}: listed at {listed:?} (wanted {window:?}), the X window at {now:?} (wanted {x:?}), the window \
+                 all red: {red}\n{}",
+                comp.log_tail(20)
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let middle = (window.0 + window.2 / 2, window.1 + window.3 / 2);
+        while conn.poll_for_event().unwrap().is_some() {}
+        comp.must(&format!("pointer {} {}", middle.0, middle.1));
+        comp.must("click");
+        let start = Instant::now();
+        loop {
+            match conn.poll_for_event().unwrap() {
+                Some(x11rb::protocol::Event::ButtonPress(e)) => {
+                    let into = ((middle.0 - x.0) as i16, (middle.1 - x.1) as i16);
+                    assert_eq!((e.event, e.event_x, e.event_y), (win, into.0, into.1), "after {after}: where the click landed");
+                    return;
+                }
+                Some(_) => {}
+                None => {
+                    assert!(start.elapsed() < Duration::from_secs(5), "after {after}: the click reached the window\n{}", comp.log_tail(20));
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        }
+    };
+
+    conn.map_window(win).unwrap();
+    conn.flush().unwrap();
+    // the first window's place, 60,60 in from the screen's corner: all of its X window, as the program made it
+    let window = (60, 60, 100, 100);
+    settled(window, window, "a 100x100 X window shown with 60 pixels of shadow on each side");
+    // the program makes its X window big enough for the shadow: it is believed, the window keeps its place and its X window
+    // goes around it
+    resize(220);
+    settled(window, (0, 0, 220, 220), "the X window made 220x220");
+    // and smaller than the shadow again: the window, where it is, is all of its X window
+    resize(100);
+    settled(window, window, "the X window made 100x100 again");
+    // maximized: all of the room is the window and its X window
+    let id = client_of(&comp, "X11wide");
+    comp.must(&format!("maximize {id} on"));
+    comp.wait(10, "the window maximized", |c| c.window("X11wide").is_some_and(|w| w.has("maximized")));
+    let room = maximized_in((0, 0, 800, 600));
+    settled(room, room, "the window maximized");
+}
