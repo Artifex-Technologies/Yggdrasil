@@ -1,8 +1,8 @@
-//! The compositor's second connection to XWayland, for what an X11 window manager does and Smithay's does not. It runs on a
-//! thread of its own, so the compositor never waits for the X server (XWayland is also a client of the compositor: a blocking
-//! read here could wait on a server that waits on us); the compositor hands it jobs and waits for no answer. (What a window
-//! asks for before it is shown, `_NET_WM_STATE`, which gave this file its name, Smithay's window manager reads itself:
-//! xwayland.rs, map_window_request.)
+//! The compositor's second connection to XWayland, for what an X11 window manager does and Smithay's does not, or not at
+//! once. It runs on a thread of its own, so the compositor never waits for the X server (XWayland is also a client of the
+//! compositor: a blocking read here could wait on a server that waits on us); the compositor hands it jobs and waits for no
+//! answer. (What a window asks for before it is shown, `_NET_WM_STATE`, which gave this file its name, Smithay's window
+//! manager reads itself: xwayland.rs, map_window_request.)
 //!
 //! It says which X11 window is active, as EWMH window managers do: `_NET_ACTIVE_WINDOW` on the root, and the X input
 //! focus on the window. Smithay sets the property only when the focus has moved, and for a "globally active" window (input
@@ -16,10 +16,12 @@
 //! icon its theme does not have. The first window of a class gives it; it is read when the window is shown and again when its
 //! title changes (a program that sets its icon after its window shows).
 //!
-//! It also keeps ICCCM's WM_STATE in step with minimizing: Iconic when a window is minimized, Normal when it is shown again.
-//! Smithay only writes it when a window is mapped or unmapped. Wine watches it: a game that minimized itself (old DirectX 9
-//! games do when they lose the focus) is restored only when WM_STATE goes back to Normal. Without that Wine kept the game at
-//! its minimized size, and on the dock's restore only a strip of the picture showed (Dead Space 2, found 2026-11-05).
+//! It also keeps ICCCM's WM_STATE in step with minimizing: Iconic when a window is minimized, Normal when it is shown again,
+//! sent at once. Wine watches it: a game that minimized itself (old DirectX 9 games do when they lose the focus) is restored
+//! only when WM_STATE goes back to Normal. Smithay 0.7 wrote it only when a window was mapped or unmapped, so Wine kept the
+//! game at its minimized size, and on the dock's restore only a strip of the picture showed (Dead Space 2, found 2026-11-05).
+//! Smithay main's set_hidden, called beside this, writes the same value on the window manager's connection, sent with its
+//! next flush; the write here is the one that was tried with Wine.
 
 use std::sync::mpsc::{channel, Sender};
 
@@ -86,7 +88,7 @@ pub fn wm_state(iconic: bool) -> [u32; 2] {
     [if iconic { ICONIC_STATE } else { NORMAL_STATE }, 0]
 }
 
-/// The thread that reads the property; dropped with the compositor.
+/// The thread on the second connection, which does the jobs; dropped with the compositor.
 pub struct Reader {
     tx: Sender<Job>,
     /// a byte written here wakes the thread for the job just sent

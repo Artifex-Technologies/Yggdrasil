@@ -9,10 +9,10 @@ nested in a window (below) or headless, with no screen at all, for tests (2026-1
 screen of a virtual machine (the hardware backend's first milestone). KDE, and with it KWin, is gone
 (2026-10-24).
 
-**The plan (2026-11-10):** Hyprland stays the daily compositor while the rest of Yggdrasil is ported to Rust; once that is done,
-this compositor replaces it. The headless mode is the first step: our own desktop pieces are tested on our own compositor in CI,
-long before it drives a real screen. **Changed 2026-11-14:** Hyprland's display crashes made the hardware backend the next big
-project; its first milestone (2026-11-15, next section) drives a virtual GPU and screen in a virtual machine.
+Hyprland stays my daily compositor until this one passes the checks in packages/compositor/README.md ("Before it replaces
+Hyprland") on my own PC. Our own desktop pieces are tested on it in CI, headless (since 2026-11-10). Hyprland's display crashes
+(2026-11-14) brought the hardware backend forward: its first milestone (2026-11-15, next section) drives a virtual GPU and screen
+in a virtual machine.
 
 ## The hardware backend: milestone 1 (2026-11-15)
 
@@ -44,7 +44,7 @@ screen switched to a smaller mode left Settings partly off it (floating windows 
 their screen when its mode or scale changes or it goes, on the headless and hardware backends alike: `placement::inside`,
 `tests/behaviour.rs`).
 
-## The hardware backend: the laptop (built 2026-11-19, not yet tried on the laptop)
+## The hardware backend: the laptop (built and first run on the laptop 2026-11-19)
 
 What a laptop needs, for my ThinkPad X1 Yoga (Intel Iris Xe): the internal screen known by its connector (eDP, LVDS, DSI) and
 given a CRTC first; the lid (closed with a monitor on: the panel leaves its CRTC as if unplugged; alone: dark, for logind to
@@ -54,7 +54,7 @@ screen's size (1.25 for the laptop's 14-inch 1920x1200 panel, as I set it on Hyp
 TrackPoint's settings from input.conf; the touchscreen as wl_touch and the pen as a pointer; and screen copies drawn again on the
 GPU (grim, the panel's previews). The rules have unit tests and the touchscreen a headless test; the rest is tried by hand on
 the laptop's text console with `packages/compositor/tests/laptop-tty.sh`. What each part does and whether it has been checked:
-[packages/compositor/README.md](../packages/compositor/README.md#the-laptop-milestone-2-built-2026-11-19).
+[packages/compositor/README.md](../packages/compositor/README.md#the-laptop-milestone-2-built-and-first-run-2026-11-19).
 
 ## Headless: the hidden test mode (built 2026-11-10)
 
@@ -297,9 +297,9 @@ What works (each checked by hand in the nested window):
 
 **X11 programs (XWayland), built 2026-11-04, tried by hand 2026-11-05** (xterm, glxgears, the panel inside the compositor; see
 "Tried by hand" below) (`src/xwayland.rs`; for Steam's client, games through Proton
-or Wine, and older programs). XWayland starts with the compositor and its display is printed as `DISPLAY=:n`; programs given with
-`--run` wait the fraction of a second until it has answered, then get that DISPLAY (never the host's), and so do programs started by
-shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
+or Wine, and older programs). The X11 display is bound when the compositor starts and printed as `DISPLAY=:n`; programs given with
+`--run` and programs started by shortcuts get that DISPLAY (never the host's), and XWayland itself starts when the first X11 program
+connects (since 2026-11-24, below). `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
 - An X11 window is placed, tiled, listed for the panel (dock, top bar), shown in Alt+Tab and given the keyboard like a Wayland
   window; the keyboard also sets the X input focus, without which XWayland passes keys to none of its windows. It gets the window
   controls unless it says it draws its own (Motif hints: Steam and most games do). Activate, minimize, maximize, full screen,
@@ -338,14 +338,11 @@ shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
 - Close on glxgears, which does not take part in WM_DELETE_WINDOW: Smithay destroyed its window and left it running with no
   window. **Fixed:** a program that takes part is asked politely and one that does not has its connection ended (XKillClient,
   as KWin and Hyprland do); glxgears then ended with "fatal IO error", as under KWin. Since 2026-11-24 this is fixed in our
-  Smithay fork itself (X11Surface::close), with two more of its X11 bugs: every X11 event was dropped after the window manager
-  set the primary screen until it made another request (it ignored that request's sequence number, which every following
-  event carries), and a new window's first place and size were converted with 1.25 taken as 1. The compositor's workarounds
-  for all three are gone (`tests/x11.rs` fails without the fixes and passes with them). The fork also has a session lock
-security fix (a program refused as a second locker could unlock the session, or put up its own lock screen in place of the
-real one and get the password; docs/LOCKSCREEN.md) and Smithay master's checks of what programs send (a region of negative
-size ended a debug build; negative size hints and window geometry of no size are protocol errors), with `tests/hostile.rs`:
-programs sending what the protocols forbid, which the compositor must survive.
+  Smithay fork itself (X11Surface::close; the fork is described below), with another of Smithay's X11 bugs: every X11 event was
+  dropped after the window manager set the primary screen until it made another request (it ignored that request's sequence
+  number, which every following event carries). A third, a new window's first place and size converted with 1.25 taken as 1,
+  is fixed in Smithay's main branch itself. The compositor's workarounds for all three are gone (`tests/x11.rs` fails without
+  the fixes and passes with them).
 - Minimize: the window went away and showed `_NET_WM_STATE_HIDDEN`, but kept `_NET_WM_STATE_FOCUSED`. **Fixed:** a minimized
   window is marked inactive and the window now on top becomes the active one.
 - The panel inside the compositor: the minimized xterm was in the dock; a click brought it back with the keyboard, and the top
@@ -361,13 +358,16 @@ programs sending what the protocols forbid, which the compositor must survive.
     dock showed it with the game's own icon and brought it back full screen with the keyboard. It then drew only a thin strip
     at the top left. The same run in a nested Hyprland at the same size drew the whole picture (Hyprland ignores a program's
     own minimize, so the game never minimized there). The strip was the game's picture cut to a minimized window's size: Wine
-    learns a window was restored from ICCCM's WM_STATE going from Iconic back to Normal, and Smithay writes WM_STATE only on
-    map and unmap. **Fixed:** minimizing sets WM_STATE to Iconic and restoring sets it to Normal (`x11asked.rs`); the game now
-    comes back whole, and keys reach it.
+    learns a window was restored from ICCCM's WM_STATE going from Iconic back to Normal, and Smithay 0.7 wrote WM_STATE only
+    on map and unmap. **Fixed:** minimizing sets WM_STATE to Iconic and restoring sets it to Normal (`x11asked.rs`); the game
+    now comes back whole, and keys reach it. Smithay main's `set_hidden`, which minimizing and restoring call too, writes the
+    same WM_STATE itself; the compositor's own write is kept, sent at once, as the one tried with the game (Smithay main's has
+    not been tried with Wine).
   - Two small gaps, closed 2026-11-24: Proton's own dialogs (class `steam_proton`) go with Steam in the dock, with Steam's icon
     (`packages/panel`, apps.rs); and the dock's window list, with the pointer on it, goes when a game goes full screen
     (`tests/apps.rs`, with an X11 window asking through `_NET_WM_STATE` as games do).
-- Not yet: drag and drop, resize from the edges.
+- Not tried by hand: drag and drop (built 2026-11-24 and tested headless: `tests/dnd.rs`, below) and resizing an X11 window
+  from its edges (`tests/x11.rs` drags the compositor's grip).
 - Small gaps seen: the dock shows a plain icon for xterm (its desktop entry names an XPM picture the panel does not load). The
   dock's hover preview of an X11 window, once empty, shows it (tests/x11.rs and tests/apps.rs, 2026-11-24).
 
@@ -380,8 +380,7 @@ scaled-down 1536x960 stretched, Xft.dpi 96); `tests/x11.rs` checks both. XWaylan
 and given to the programs it starts), and nothing of XWayland runs until a program connects to it; then XWayland starts on
 those sockets and accepts the program once its window manager is ready, so even a window mapped at once is managed
 (`tests/x11.rs`). This needs a change to Smithay (`X11Sockets` and `XWayland::spawn_with_sockets`: the sockets bound apart
-from starting XWayland), carried in our fork (github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main: Smithay main and
-our few changes, pinned by commit in packages/compositor/Cargo.toml) and offered to Smithay. An X11 program's own icon (`_NET_WM_ICON`) shows in the
+from starting XWayland), carried in our Smithay fork (below). An X11 program's own icon (`_NET_WM_ICON`) shows in the
 dock when no desktop entry matches its window (a Windows program through Wine, say; since 2026-11-24): the compositor keeps the
 best size of it as a PNG for each window class in the runtime folder's `yggdrasil-window-icons` (read on a thread of its own
 when the window shows, and again when its title changes), and the panel looks there for an icon its theme does not have and
@@ -407,16 +406,33 @@ for the Wayland windows, and steps aside over X11 windows, so two X11 programs s
 program's drag icon under the pointer is passed over while a button is held (only then can a drag go on, so X11 menus take
 the pointer again after a drag was given up), and XWayland going away in the middle of a drag ends only its own part: a
 Wayland program's drag goes on to the Wayland windows (`tests/dnd.rs`). Smithay main's drag and drop needed three fixes, carried in our
-fork: an X11 program can turn only a drag started on its own windows into its drag, a drop target that goes away ends the
-drag for good, and a drag the X11 program gave up ends with the button (`tests/dnd.rs`).
+fork: only a drag started on XWayland's surfaces can become an X11 program's drag (so an X11 program can no longer take over
+a press on a Wayland window, or the compositor's own move or resize; X11 programs are not told apart there, so one can still
+take over a press on another's window), a drop target that goes away ends the drag for good, and a drag the X11 program gave
+up ends with the button (`tests/dnd.rs`).
+
+**Our Smithay fork** (github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit in
+packages/compositor/Cargo.toml): since 2026-11-24, Smithay's main branch with five commits of ours, each for something the
+compositor's own code cannot fix well. They bind the X11 sockets apart from starting XWayland (XWayland on the first X11
+program, above); fix two X11 window manager bugs (close, and the events dropped after setting the primary screen: "Tried by
+hand", above); clamp a layer surface's size at i32::MAX and `_GTK_FRAME_EXTENTS` at what an X window can hold (a program's
+huge values ended a debug build: a negative size, an overflow in `X11Surface::geometry`; `tests/hostile.rs`, `tests/x11.rs`);
+and fix the three drag and drop bugs above. The rest of what our fork of Smithay 0.7 carried is Smithay main's own: a new X11
+window's first place and size at fractional scales; the session lock's checks (a program refused as a second locker can
+neither unlock the session nor show its lock screen in place of the real one, which would get the password; the compositor
+keeps its own check of which lock's surfaces it shows: docs/LOCKSCREEN.md); and the checks of what programs send (a region of
+negative size ended a debug build; negative size hints and window geometry of no size are protocol errors), with
+`tests/hostile.rs`: programs sending what the protocols forbid, which the compositor must survive.
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton
 game full screen (no see-through patches, keys and mouse reach it). `YGGDRASIL_COMPOSITOR_DEBUG=1` also shows XWayland's own messages.
 
 Known limitations (2026-11-19): it does not run the real session; Hyprland does. Resize, maximize, full screen and minimize,
-X11 programs (xterm, Steam, a Proton game), a full screen window covering the top bar and dock, GPU clients (linux-dmabuf), idle
-inhibit, primary selection, cursor shapes and xdg-activation are built but not yet tried by hand. It has four workspaces, and up to nine
+a full screen window covering the top bar and dock, GPU clients (linux-dmabuf), idle inhibit, primary selection, cursor
+shapes and xdg-activation are built but not yet tried by hand. X11 programs were tried by hand on Smithay 0.7 (xterm,
+glxgears, Steam and two games, 2026-11-05, above); on Smithay main (2026-11-24) only xterm and glxgears have been, in the test
+machine, not yet Steam or a game. It has four workspaces, and up to nine
 when more are used (other programs see, switch and add them through `ext-workspace`; the panel follows them through yggdrasil-wm). On the hardware
 backend, hotplug has not been tried on real hardware; explicit sync for NVIDIA is built and checked nested on an RTX 2080 Ti
 but not yet on the hardware backend, and a machine with two GPUs picks the one with the screens (not tried on two cards);
@@ -454,6 +470,14 @@ the compositor drew nothing and used no CPU in 30 s idle, at 53 MB resident; dra
 about 1 ms of CPU a frame (300 ms for 302 frames in 6.8 s). The egui apps themselves draw nothing while idle since YGG-17:
 0 frames in 60 s for Minos and the Calculator (before: Minos about 28 a second, the Calculator 6). The window switcher (2026-11-19): nothing while closed; open, one frame
 and then only what changes (numbers in "Window switching" above).
+Smithay main against Smithay 0.7 (2026-11-24, the builds side by side): in the test machine (release builds, 1920x1080 at 75 Hz,
+the own session's environment, every thread of the compositor) idle and a full screen program cost the same within the runs'
+spread: 60 s with the panel took 6.26 against 5.47 ms of CPU with OpenGL ES (0.010 and 0.009 % of a core, 33 wake-ups each,
+62.5 and 62.1 MB resident) and 4.29 against 3.52 ms in software without 3D (48.9 and 47.8 MB); a full screen glxgears at 75
+frames a second, 2.45-2.56 against 2.33-2.62 % of a core. A window drawing 75 frames a second (a 300x300 eglgears, alternating
+runs of 20 s) costs a little more: 11.29 against 10.71 % of a core (11.11-11.48 and 10.55-10.87), about 5 % more a frame.
+Headless (debug builds, `tests/look.rs idle_cost`, two runs each): idle 3243-3279 against 3229-3352 µs in 10 s, an 800x600
+window drawn anew 1.93-1.95 against 1.84 ms, 44.6 against 42.6-43.1 MB resident (about 2 MB more).
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
 their own, plus about 26 MB while libnvidia-ml is initialised (the NVIDIA driver's own cost, the same in any language), and tune
 reads /dev/kmsg instead of keeping a journalctl child (about 46 MB). The Python versions were about 40 MB each with swap counted.
