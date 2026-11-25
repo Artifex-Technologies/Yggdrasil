@@ -418,17 +418,19 @@ launcher inside the world so only the program is measured; the world is made aga
 | verify (a normal start while armed: nothing to do) | wall (median; p10–p90) | 52.8 ms (51.8 ms–53.7 ms) | 0.48 ms (0.46 ms–0.50 ms) | −99 %, 52.3 ms faster |
 | | CPU time | 52.4 ms | 0.40 ms | −99 %, 52.0 ms less |
 | | peak RSS | 23.4 MB | 2.5 MB | −89 %, 20.9 MB less |
-| 41_gpu_unlock, nothing armed (every grub-mkconfig) | wall (median; p10–p90) | 0.89 ms (0.86 ms–0.96 ms) | 1.44 ms (1.38 ms–1.60 ms) | **+62 %, 0.55 ms slower** |
-| | CPU time | 0.81 ms | 1.33 ms | +64 %, 0.52 ms more |
+| 41_gpu_unlock, nothing armed (every grub-mkconfig; measured again 2026-11-25, after the fragment's own test) | wall (median; p10–p90) | 0.83 ms (0.80 ms–0.88 ms) | 0.84 ms (0.80 ms–0.89 ms) | +1 %, the same (sh alone in both) |
+| | CPU time | 0.76 ms | 0.76 ms | the same |
 | | peak RSS | 3.9 MB | 3.9 MB | the same (sh) |
 | 41_gpu_unlock, armed (the entry checked and printed) | wall (median; p10–p90) | 6.41 ms (6.24 ms–6.56 ms) | 1.49 ms (1.42 ms–1.58 ms) | −77 %, 4.92 ms faster |
 | | CPU time | 7.15 ms | 1.38 ms | −81 %, 5.78 ms less |
 | | peak RSS | 3.9 MB | 3.9 MB | the same (sh) |
-| on disk | | gpuunlock 37.4 KB, 41_gpu_unlock 1.6 KB (scripts; Python is 75 MB) | gpuunlock 693 KB, the fragment 0.9 KB | |
+| on disk | | gpuunlock 37.4 KB, 41_gpu_unlock 1.6 KB (scripts; Python is 75 MB) | gpuunlock 693 KB, the fragment 1.4 KB | |
 
 - Most of the script's 53 ms was Python starting and importing what it uses (urllib, http.client, hashlib, json, re,
   subprocess): 42.8 ms for those imports alone, against 9.7 ms for `python3 -c pass`. The Rust helper is done in half a
   millisecond where it runs no program; otherwise the stand-in modinfo is most of its 1.7 ms.
-- Where Rust is worse: with nothing armed, the old fragment ended at its first test, and the new one starts the program to
-  find there is no file: half a millisecond per kernel update.
+- With nothing armed the new fragment first started the program to find there was no file: 1.44 ms against 0.89 (+62 %,
+  half a millisecond per kernel update). Since 2026-11-25 it tests for the file with the shell's own test first, as the old
+  one did, and starts the program only when something is there (the program alone judges it): both are sh alone now, 0.83
+  and 0.84 ms. Parity: 489 of 489 cases the same with the new fragment.
 - yggdrasil-settings no longer depends on Python: gpuunlock was the last Python it installed.

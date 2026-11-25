@@ -11,6 +11,10 @@
 # kernel update from writing the boot menu. Whatever happens to the program (missing, refused, stopped), this exits 0, and the
 # program writes its output in one piece only once it has checked it.
 helper=/usr/lib/yggdrasil/gpuunlock
+# Nothing armed (almost always): no entry file, so nothing to print; the shell's own test costs no program start. Anything
+# there, even a dangling link, goes to the program, which alone judges it.
+entry=/var/lib/yggdrasil/gpu-unlock/entry.cfg
+[ -e "$entry" ] || [ -L "$entry" ] || exit 0
 [ -x "$helper" ] || exit 0
 "$helper" grub-entry || true
 exit 0
