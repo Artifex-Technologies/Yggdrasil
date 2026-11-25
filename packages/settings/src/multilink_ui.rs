@@ -39,6 +39,8 @@ pub struct Link {
     pub period: String,
     pub used_bytes: u64,
     pub over_cap: bool,
+    /// A Wi-Fi link's network as Heimdall trusts it (YGG-74; looked up from its active profile); None for other links.
+    pub trust: Option<crate::wifitrust::Level>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -48,6 +50,9 @@ pub struct Status {
     pub reason: String,
     pub combined_rate: u64,
     pub links: Vec<Link>,
+    /// The health checks' servers, IPv4 and IPv6 ("IP:port"); empty from a Heimdall before they were shown.
+    pub probe4: Vec<String>,
+    pub probe6: Vec<String>,
 }
 
 /// The service's status file, or `heimdall-multilink status --json` (the same shape, `state` "off").
@@ -74,9 +79,34 @@ pub fn parse(json: &str) -> Option<Status> {
             period: s(l, "period"),
             used_bytes: l["used_bytes"].as_u64().unwrap_or(0),
             over_cap: l["over_cap"].as_bool().unwrap_or(false),
+            trust: None,
         })
         .collect();
-    Some(Status { state: s(&v, "state"), reason: s(&v, "reason"), combined_rate: v["combined_rate"].as_u64().unwrap_or(0), links })
+    let list = |k: &str| -> Vec<String> {
+        v[k].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default()
+    };
+    Some(Status {
+        state: s(&v, "state"),
+        reason: s(&v, "reason"),
+        combined_rate: v["combined_rate"].as_u64().unwrap_or(0),
+        links,
+        probe4: list("probe4"),
+        probe6: list("probe6"),
+    })
+}
+
+/// YGG-74: each Wi-Fi link's trust, from the profiles connected now (`nmcli -t -f UUID,DEVICE connection show --active`)
+/// and Heimdall's trusted file (`wifitrust::level_in_file`: a profile not in it is untrusted). Links that are not Wi-Fi, or
+/// with no connected profile, or no readable file, get none.
+pub fn with_trust(mut st: Status, active: &str, trusted: Option<&str>) -> Status {
+    let profiles = crate::sys::active_profiles(active);
+    for l in st.links.iter_mut().filter(|l| kind(&l.name) == "Wi-Fi") {
+        l.trust = profiles
+            .iter()
+            .find(|(_, dev)| *dev == l.name)
+            .and_then(|(uuid, _)| trusted.and_then(|t| crate::wifitrust::level_in_file(t, uuid)));
+    }
+    st
 }
 
 /// What kind of connection an interface is, from the name the system gave it.
@@ -110,6 +140,12 @@ pub fn mbit(bytes_per_s: u64) -> String {
 /// One link's line under its name.
 pub fn describe(l: &Link, state: &str) -> String {
     let mut parts: Vec<String> = vec![kind(&l.name).to_string()];
+    match l.trust {
+        Some(crate::wifitrust::Level::Untrusted) => parts.push("untrusted network: every protection on".into()),
+        Some(crate::wifitrust::Level::Trusted) => parts.push("trusted network".into()),
+        Some(crate::wifitrust::Level::Home) => parts.push("home network".into()),
+        None => {}
+    }
     if !l.up {
         parts.push("not connected".into());
     } else if state == "active" && l.role != "off" {
@@ -151,14 +187,23 @@ pub struct Panel {
     /// the link whose limits are open, and the cap being typed
     open: Option<String>,
     cap_text: String,
+    /// The health checks' servers being changed (4 or 6), and what is typed (YGG-74)
+    probes_open: Option<u8>,
+    probes_text: String,
 }
 
 fn read() -> Option<Status> {
-    if let Some(s) = std::fs::read_to_string(STATUS).ok().and_then(|t| parse(&t)) {
-        return Some(s);
-    }
-    let o = Command::new(BIN).args(["status", "--json"]).stdin(std::process::Stdio::null()).output().ok()?;
-    parse(&String::from_utf8_lossy(&o.stdout))
+    let st = match std::fs::read_to_string(STATUS).ok().and_then(|t| parse(&t)) {
+        Some(s) => s,
+        None => {
+            let o = Command::new(BIN).args(["status", "--json"]).stdin(std::process::Stdio::null()).output().ok()?;
+            parse(&String::from_utf8_lossy(&o.stdout))?
+        }
+    };
+    // a made-up system has no trust levels (wifitrust.rs)
+    let trusted = if crate::fixture::get().is_some() { None } else { std::fs::read_to_string(crate::wifitrust::TRUSTED).ok() };
+    let active = crate::sys::run("nmcli", &["-t", "-f", "UUID,DEVICE", "connection", "show", "--active"]).unwrap_or_default();
+    Some(with_trust(st, &active, trusted.as_deref()))
 }
 
 fn run(args: Vec<String>) -> Result<(), String> {
@@ -188,6 +233,8 @@ impl Panel {
             paused: Arc::default(),
             open: None,
             cap_text: String::new(),
+            probes_open: None,
+            probes_text: String::new(),
         };
         let (tx, ctx, alive, paused, poke) = (p.tx.clone(), ctx.clone(), p.alive.clone(), p.paused.clone(), p.poke.clone());
         let _ = std::thread::Builder::new().name("multilink".into()).spawn(move || {
@@ -364,6 +411,43 @@ impl Panel {
                 }
             });
         }
+        // YGG-74: which servers tell that a link reaches the internet (a Heimdall from before shows none: nothing to change)
+        if !st.probe4.is_empty() || !st.probe6.is_empty() {
+            ui.add_space(8.0);
+            ui::group(ui, pal, Some("Health checks"), |ui| {
+                for (n, (fam, list)) in [(4u8, &st.probe4), (6u8, &st.probe6)].into_iter().enumerate() {
+                    let title = if fam == 4 { "IPv4 servers" } else { "IPv6 servers" };
+                    let open = self.probes_open == Some(fam);
+                    ui::row(ui, pal, n == 0, title, Some(&list.join(", ")), |ui| {
+                        if ui.add_enabled(!self.busy, egui::Button::new(if open { "Cancel" } else { "Change…" })).clicked() {
+                            self.probes_open = if open { None } else { Some(fam) };
+                            self.probes_text = list.join(", ");
+                        }
+                    });
+                    if open {
+                        ui.horizontal(|ui| {
+                            ui.add_space(12.0);
+                            let hint = if fam == 4 { "9.9.9.9:443, 1.1.1.1:443" } else { "[2620:fe::fe]:443" };
+                            ui::field(ui, pal, &mut self.probes_text, hint, 320.0, false);
+                            if ui.add_enabled(!self.busy, egui::Button::new("Save")).clicked() {
+                                want = Some(vec!["probes".into(), fam.to_string(), self.probes_text.split_whitespace().collect()]);
+                                self.probes_open = None;
+                            }
+                            if ui.add_enabled(!self.busy, egui::Button::new("Defaults")).clicked() {
+                                want = Some(vec!["probes".into(), fam.to_string(), "default".into()]);
+                                self.probes_open = None;
+                            }
+                        });
+                    }
+                }
+            });
+            ui::footnote(
+                ui,
+                pal,
+                "Every 2 seconds each connection opens (and closes) a connection to one of these, to know it reaches the internet; \
+                 they see each connection's public address. Up to 8 a kind, as address:port.",
+            );
+        }
         ui::footnote(
             ui,
             pal,
@@ -417,6 +501,28 @@ mod tests {
             "USB (a phone, or an adapter) · 10 Mbit/s · 30 % of new connections · 512 of 2000 MB this month"
         );
         assert_eq!(mbit(s.combined_rate), "42 Mbit/s");
+    }
+
+    /// YGG-74: the health checks' servers are read (none from an older Heimdall), and each Wi-Fi link shows how Heimdall
+    /// trusts its network, from the profile connected on it; the USB link shows none.
+    #[test]
+    fn probes_and_trust() {
+        let with = ACTIVE.trim_end().trim_end_matches('}').to_string()
+            + r#","probe4":["9.9.9.9:443","1.1.1.1:443"],"probe6":["[2620:fe::fe]:443"]}"#;
+        let s = parse(&with).unwrap();
+        assert_eq!((s.probe4.join(","), s.probe6.join(",")), ("9.9.9.9:443,1.1.1.1:443".to_string(), "[2620:fe::fe]:443".to_string()));
+        assert!(parse(ACTIVE).unwrap().probe4.is_empty());
+        let active = "aaaa-1:wlan0\nbbbb-2:usb0\n";
+        let trusted = r#"{"aaaa-1": {"ssid": "Birchwood Library", "level": "trusted"}}"#;
+        let t = with_trust(s.clone(), active, Some(trusted));
+        assert_eq!(t.links[0].trust, Some(crate::wifitrust::Level::Trusted));
+        assert_eq!(t.links[1].trust, None);
+        assert_eq!(describe(&t.links[0], &t.state), "Wi-Fi · trusted network · 32 Mbit/s · 70 % of new connections");
+        let u = with_trust(s.clone(), active, Some("{}"));
+        assert_eq!(describe(&u.links[0], &u.state), "Wi-Fi · untrusted network: every protection on · 32 Mbit/s · 70 % of new connections");
+        // no file, or the link on no profile: nothing said
+        assert_eq!(with_trust(s.clone(), active, None).links[0].trust, None);
+        assert_eq!(with_trust(s, "", Some(trusted)).links[0].trust, None);
     }
 
     #[test]

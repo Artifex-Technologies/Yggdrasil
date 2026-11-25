@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 /// Heimdall's guard, on PATH where Heimdall is installed.
 pub const GUARD: &str = "heimdall-wifi-guard";
 /// Where Heimdall keeps the networks it trusts, and the guard's state for the network connected now (both readable by all).
-const TRUSTED: &str = "/etc/heimdall/wifi-trusted.json";
+pub const TRUSTED: &str = "/etc/heimdall/wifi-trusted.json";
 const STATE: &str = "/run/heimdall-wifi-guard/state.json";
 /// Where the package puts the units (an administrator's own copy would be in /etc).
 const UNIT_DIRS: [&str; 2] = ["/usr/lib/systemd/system", "/etc/systemd/system"];
