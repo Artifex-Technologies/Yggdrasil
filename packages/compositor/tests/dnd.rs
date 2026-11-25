@@ -337,10 +337,19 @@ fn pointer_events() -> EventMask {
     EventMask::ENTER_WINDOW | EventMask::POINTER_MOTION | EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE
 }
 
+/// Waits until the X11 window placed at `at` is drawn there (the green X11::window gives it): only then has XWayland made its
+/// surface, so the pointer and a drag can be in it.
+fn x11_drawn(comp: &Compositor, at: (i32, i32)) {
+    comp.wait(10, "the X11 window drawn where it was placed", |c| {
+        c.screenshot("HEADLESS-1").count((at.0 + 20, at.1 + 20, 50, 50), (0, 255, 0)) == 50 * 50
+    });
+}
+
 /// The button held on the X11 program's window `win` (placed at `at`), and the program takes XdndSelection, as an X11 program
 /// starting a drag does. The window manager's stand-in for the Wayland windows comes: a window of its own that takes XDND, over
 /// the whole screen while the drag lasts (looked for at `over`). The stand-in.
 fn x11_drag_from(comp: &Compositor, x: &X11, win: XWindow, at: (i32, i32), over: (i32, i32)) -> XWindow {
+    x11_drawn(comp, at);
     comp.must(&format!("pointer {} {}", at.0 + 100, at.1 + 100));
     x.until(&mut [], "the pointer on the X11 window", |e| matches!(e, Event::EnterNotify(_) | Event::MotionNotify(_)).then_some(()));
     comp.must("press");
@@ -407,6 +416,7 @@ fn a_file_dragged_from_a_wayland_program_onto_an_x11_program_arrives_there() {
     drag_from(&comp, &mut s, &sw, si.at, URI_MIME);
 
     // over the X11 window: it is told a drag came, offering a URI (XdndEnter), and where the pointer is (XdndPosition)
+    x11_drawn(&comp, xi.at);
     let (px, py) = (xi.at.0 + 150, xi.at.1 + 100);
     comp.must(&format!("pointer {px} {py}"));
     let enter = x.message(&mut [&mut s], x.enter, "XdndEnter");
@@ -550,6 +560,7 @@ fn a_file_dragged_between_two_x11_programs_arrives_there() {
     comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "X11target")));
     let (xi, yi) = (comp.window("X11source").unwrap(), comp.window("X11target").unwrap());
     assert!(xi.at.0 + 300 <= yi.at.0, "side by side: {xi:?} {yi:?}");
+    x11_drawn(&comp, yi.at);
     let (px, py) = (yi.at.0 + 150, yi.at.1 + 100);
     let stand_in = x11_drag_from(&comp, &x, win, xi.at, (px, py));
 
@@ -639,6 +650,7 @@ fn a_drag_over_an_x11_window_goes_on_when_xwayland_goes_away() {
     let _tdev = data_device(&mut t);
     drag_from(&comp, &mut s, &sw, si.at, URI_MIME);
     // over the X11 window: it is told the drag came
+    x11_drawn(&comp, xi.at);
     comp.must(&format!("pointer {} {}", xi.at.0 + 150, xi.at.1 + 100));
     x.message(&mut [&mut s], x.enter, "XdndEnter");
 
@@ -692,6 +704,7 @@ fn an_x11_drag_ends_when_xwayland_goes_away() {
     comp.must(&format!("place {} 600 350 300 200", id_of(&comp, "test.target")));
     t.roundtrip();
     let (xi, yi, ti) = (comp.window("X11source").unwrap(), comp.window("X11target").unwrap(), comp.window("test.target").unwrap());
+    x11_drawn(&comp, yi.at);
     let (px, py) = (yi.at.0 + 150, yi.at.1 + 100);
     let stand_in = x11_drag_from(&comp, &x, win, xi.at, (px, py));
     // over the other X11 window the stand-in steps aside: the drag's target is that window itself
@@ -747,6 +760,7 @@ fn a_drag_let_go_where_an_x11_window_was_is_cancelled() {
     let (si, xi) = (comp.window("test.source").unwrap(), comp.window("X11target").unwrap());
     drag_from(&comp, &mut s, &sw, si.at, URI_MIME);
     // over the X11 window, which takes it
+    x11_drawn(&comp, xi.at);
     comp.must(&format!("pointer {} {}", xi.at.0 + 150, xi.at.1 + 100));
     let source = x.message(&mut [&mut s], x.enter, "XdndEnter")[0];
     x.message(&mut [&mut s], x.position, "XdndPosition");
@@ -887,6 +901,7 @@ fn an_x11_target_ends_unfinished(dropped: bool) {
     s.roundtrip();
     let (si, xi) = (comp.window("test.source").unwrap(), comp.window("X11target").unwrap());
     drag_from(&comp, &mut s, &sw, si.at, URI_MIME);
+    x11_drawn(&comp, xi.at);
     comp.must(&format!("pointer {} {}", xi.at.0 + 150, xi.at.1 + 100));
     let source = x.message(&mut [&mut s], x.enter, "XdndEnter")[0];
     x.message(&mut [&mut s], x.position, "XdndPosition");
