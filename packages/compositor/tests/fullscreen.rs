@@ -396,13 +396,6 @@ fn a_full_screen_window_hides_only_its_own_screens_bar() {
     drop(one);
 }
 
-/// The commits of the full screen windows on a screen so far (the `frames` command's "game NAME N").
-fn game_commits(comp: &Compositor, output: &str) -> u64 {
-    let prefix = format!("game {output} ");
-    let lines = comp.must("frames");
-    lines.iter().find_map(|l| l.strip_prefix(&prefix)).unwrap_or_else(|| panic!("no {prefix}line in {lines:?}")).parse().unwrap()
-}
-
 /// Under variable refresh on the hardware backend only a full screen window's own frames start a refresh of its screen; every
 /// other change waits for its next frame (udev.rs, `vrr_flip`, which has the rule's own tests). Which commits are its frames
 /// is decided for every backend: its own, counted for its own screen. Never the pointer moving or changing its picture, the
@@ -414,7 +407,7 @@ fn only_a_full_screen_windows_own_frames_count_for_its_screen() {
     let mut c = comp.connect();
     let (_k, pointer) = c.input();
     let (bar, _dock) = bar_and_dock(&mut c, 0);
-    let counts = |comp: &Compositor| (game_commits(comp, "HEADLESS-1"), game_commits(comp, "HEADLESS-2"));
+    let counts = |comp: &Compositor| (comp.game_commits("HEADLESS-1"), comp.game_commits("HEADLESS-2"));
     comp.must("pointer 640 360");
     let a = c.window("test.a", "Game");
     c.draw(&a, (640, 480), BLUE);

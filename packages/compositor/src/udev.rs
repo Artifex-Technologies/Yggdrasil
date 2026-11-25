@@ -36,7 +36,7 @@
 //! - **Frames**: drawn only when something changed (`App::wake`), then not again before that frame was shown (the page flip's
 //!   vblank event); a frame with no change is not even sent, and a run of frames with no change waits a refresh between them.
 //!   Under variable refresh with a full screen window (a game) only its frames start a refresh: the pointer, the panels and
-//!   the rest go out with its next frame, at most 1/30 s after its last one (`vrr_flip`).
+//!   the rest go out with its next frame, at most 1/24 s after its last one (`vrr_flip`).
 //!   Nothing is drawn and no timer runs while nothing changes.
 //! - **Input**: libinput (keyboards, mice, touchpads, TrackPoints, the touchscreen and pen, a virtual machine's tablet), named
 //!   as Hyprland names them; Settings > Peripherals' input.conf sets libinput's speed, profile, natural scrolling, left-handed
@@ -95,7 +95,7 @@ use smithay::reexports::wayland_server::Display;
 use smithay::utils::{DeviceFd, Logical, Rectangle, Size, Transform};
 use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 
-use crate::state::{App, Elem, PixElem};
+use crate::state::{App, Elem, GameCommits, PixElem};
 
 /// The backend was asked for: `--drm`, `--backend drm` or `--backend udev` (`=` forms too).
 pub fn wanted(opts: &[String]) -> bool {
@@ -190,8 +190,8 @@ struct Screen {
     feedback: Option<Feedback>,
     /// the last frame's picture went to the screen as it is, a program's buffer on the primary plane (direct scanout)
     direct: bool,
-    /// how many commits of its full screen windows the last frame drawn on it had seen (`App::game_commits`, `vrr_flip`)
-    game_drawn: u64,
+    /// its frames paced by its full screen window's under variable refresh (`vrr_flip`)
+    pacer: Pacer,
 }
 
 /// A screen's two dmabuf feedbacks: the renderer's (the default), and the one with the planes' scanout formats first.
@@ -581,16 +581,19 @@ fn vrr_wanted(policy: VrrPolicy, fullscreen: bool) -> bool {
     }
 }
 
-/// How long a change that is not the game's own frame waits for that frame under variable refresh: 1/30 s, a fixed bound
+/// How long a change that is not the game's own frame waits for that frame under variable refresh: 1/24 s, a fixed bound
 /// rather than one from the screen's lowest VRR rate. KMS tells only that a screen can vary its rate, not its range (that is
 /// in the EDID's range descriptor, which Smithay does not read), and the range is not what this bound is for: with no flip
 /// the screen shows its last frame again at its lowest rate by itself (some drivers double frames below it: low framerate
-/// compensation). The bound is how long the pointer and the panels may lag behind a game that slows or stops: a game at 30
+/// compensation). The bound is how long the pointer and the panels may lag behind a game that slows or stops: a game at 24
 /// frames a second or more carries them with its own frames, a slower or paused one (a menu that does not redraw) lets them
-/// refresh the screen themselves. Valve's gamescope draws the line at 30 too (its adaptive_sync_cursor_min_fps), Hyprland's
-/// cursor:min_refresh_rate at 24. A bound from the lowest rate (48 Hz on many monitors) would let the pointer break the pace
-/// of every game running between 30 and 48 frames a second.
-const GAME_WAIT: Duration = Duration::from_nanos(1_000_000_000 / 30);
+/// refresh the screen themselves. It is a frame at 30 a second (33.3 ms) and a quarter more, so that a game capped at 30, the
+/// most common cap below 60, stays paced: its frames come a millisecond or more late now and then, and with the bound at
+/// exactly 1/30 s (Valve's gamescope, its adaptive_sync_cursor_min_fps) such a frame would come just after the pointer's own
+/// flip and wait for the refresh that flip started (up to 7 ms at 144 Hz), the judder this is for. Hyprland's
+/// cursor:min_refresh_rate is 24 too. A bound from the lowest rate (48 Hz on many monitors) would let the pointer break the
+/// pace of every game running between 30 and 48 frames a second.
+const GAME_WAIT: Duration = Duration::from_nanos(1_000_000_000 / 24);
 
 /// Whether a screen's frame goes out now or waits for its game's next one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -605,7 +608,7 @@ enum Flip {
 /// for). So while it is `paced` (variable refresh is on and a full screen window, the game, covers the screen and shows) only
 /// the game's commits flip at once: the pointer moving or changing its picture, a notification, the panels, a window over the
 /// game and the compositor's own animations wait for the game's next frame and go out with it, and at the latest
-/// `GAME_WAIT` after the game's last commit (`game_last`). A game that has not committed for that long (paused, or under 30
+/// `GAME_WAIT` after the game's last commit (`game_last`). A game that has not committed for that long (paused, or under 24
 /// frames a second) paces nothing: every change flips at once, so the pointer moves at the screen's own rate over its menu.
 /// `game_committed`: the game committed since the screen was last drawn. Off this path (no variable refresh, nothing full
 /// screen, the lock on) every change flips at once, as it always has.
@@ -619,6 +622,31 @@ fn vrr_flip(paced: bool, game_committed: bool, game_last: Option<Instant>, now: 
     match game_last.map(|t| t + GAME_WAIT) {
         Some(at) if at > now => Flip::Wait(at),
         _ => Flip::Now,
+    }
+}
+
+/// Whether a screen's frames are paced by its game (`vrr_flip`): variable refresh was on before this frame and stays on (not
+/// being switched either way: the frame that switches it goes out at once), a full screen window covers the screen (variable
+/// refresh always on, with no game, paces nothing), and the lock is off (its field and pointer show at once).
+fn vrr_paced(vrr_on: bool, vrr_wanted: bool, fullscreen: bool, locked: bool) -> bool {
+    vrr_on && vrr_wanted && fullscreen && !locked
+}
+
+/// A screen's pacing by its game under variable refresh: how many of the game's commits its last frame had
+/// (`App::game_commits`). draw keeps one for each screen and asks it about every frame.
+#[derive(Debug, Default)]
+struct Pacer {
+    game_drawn: u64,
+}
+
+impl Pacer {
+    /// `vrr_flip` for the screen's frame `now`; a frame that goes out has all of the game's commits so far.
+    fn flip(&mut self, paced: bool, game: GameCommits, now: Instant) -> Flip {
+        let flip = vrr_flip(paced, game.count != self.game_drawn, game.last, now);
+        if flip == Flip::Now {
+            self.game_drawn = game.count;
+        }
+        flip
     }
 }
 
@@ -1041,7 +1069,7 @@ fn scan(
                         vrr_capable,
                         feedback,
                         direct: false,
-                        game_drawn: 0,
+                        pacer: Pacer::default(),
                     },
                 );
                 added.push(output);
@@ -1711,9 +1739,8 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
     }
     // under variable refresh (on already, not just switched) the game's frames pace the screen: anything else waits for its
     // next one (no hold either, so the game's frame is drawn the moment it comes)
-    let game = app.game_commits(&screen.output);
-    let paced = now_vrr && want_vrr && fullscreen && !app.locked;
-    if let Flip::Wait(at) = vrr_flip(paced, game.count != screen.game_drawn, game.last, Instant::now()) {
+    let paced = vrr_paced(now_vrr, want_vrr, fullscreen, app.locked);
+    if let Flip::Wait(at) = screen.pacer.flip(paced, app.game_commits(&screen.output), Instant::now()) {
         screen.dirty = true;
         // told once for each wait, not at every mouse event during it
         if b.vrr_timer.is_none_or(|(t, _)| t != at) && std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
@@ -1726,7 +1753,6 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
         }
         return Some(at);
     }
-    screen.game_drawn = game.count;
     let result = match (&mut dev.gpu, &mut screen.drm) {
         (Gpu::Gles { renderer, .. }, Out::Gles(out)) => {
             follow_mode!(renderer, out, screen, Elem);
@@ -1832,13 +1858,14 @@ mod tests {
         let t0 = Instant::now();
         let ms = |n: u64| t0 + Duration::from_millis(n);
         // the game drew 5 ms ago and has not committed since: the pointer, a notification, a panel wait for its next frame,
-        // at most until 1/30 s after its last one
+        // at most until 1/24 s after its last one (so 40 ms after it, a game at 25 frames a second is still waited for)
         assert_eq!(vrr_flip(true, false, Some(ms(0)), ms(5)), Flip::Wait(t0 + GAME_WAIT));
+        assert_eq!(vrr_flip(true, false, Some(ms(0)), ms(40)), Flip::Wait(t0 + GAME_WAIT));
         // the game committed: its frame flips at once (and takes whatever waited along)
         assert_eq!(vrr_flip(true, true, Some(ms(5)), ms(5)), Flip::Now);
-        // the bound is reached, or the game is paused or under 30 frames a second: the change flips by itself
+        // the bound is reached, or the game is paused or under 24 frames a second: the change flips by itself
         assert_eq!(vrr_flip(true, false, Some(ms(0)), t0 + GAME_WAIT), Flip::Now);
-        assert_eq!(vrr_flip(true, false, Some(ms(0)), ms(40)), Flip::Now);
+        assert_eq!(vrr_flip(true, false, Some(ms(0)), ms(42)), Flip::Now);
         assert_eq!(vrr_flip(true, false, Some(ms(0)), ms(2000)), Flip::Now);
         // no full screen window has committed on this screen yet: nothing to wait for
         assert_eq!(vrr_flip(true, false, None, ms(5)), Flip::Now);
@@ -1846,31 +1873,44 @@ mod tests {
         // before
         assert_eq!(vrr_flip(false, false, Some(ms(0)), ms(5)), Flip::Now);
         assert_eq!(vrr_flip(false, true, Some(ms(0)), ms(5)), Flip::Now);
-        assert_eq!(GAME_WAIT, Duration::from_nanos(33_333_333));
+        assert_eq!(GAME_WAIT, Duration::from_nanos(41_666_666));
     }
 
-    /// One screen as draw_all and draw see it under `vrr_flip`, for `flips`.
+    #[test]
+    fn only_a_game_under_variable_refresh_that_was_on_paces_its_screen() {
+        use super::vrr_paced;
+        // (variable refresh on before this frame, wanted for it, a full screen window on the screen, the lock on)
+        assert!(vrr_paced(true, true, true, false), "a game under variable refresh");
+        assert!(!vrr_paced(false, true, true, false), "the frame that switches it on goes out at once");
+        assert!(!vrr_paced(true, false, false, false), "nor the one that switches it off (the game left full screen)");
+        assert!(!vrr_paced(true, true, false, false), "variable refresh always on (YGGDRASIL_COMPOSITOR_VRR=1) with no game");
+        assert!(!vrr_paced(true, true, true, true), "the lock over the game");
+        assert!(!vrr_paced(false, false, false, false), "off variable refresh");
+    }
+
+    /// One screen as draw_all and draw see it, for `flips`: whether its frames are paced, the `Pacer` draw keeps for it,
+    /// whether something changed since it was drawn, the game's commits so far, the timer for its wait, and the flips so far.
     struct Sim {
         paced: bool,
         t0: std::time::Instant,
-        /// something changed since it was drawn; the game's commits so far, those its last frame had, the last one's time
+        pacer: super::Pacer,
         dirty: bool,
-        count: u64,
-        drawn: u64,
-        last: Option<std::time::Instant>,
+        game: crate::state::GameCommits,
         timer: Option<std::time::Instant>,
         flips: Vec<(f64, bool)>,
     }
 
     impl Sim {
+        /// draw for the screen at `now`, when it is to be drawn
         fn pass(&mut self, now: std::time::Instant) {
             if !self.dirty {
                 return;
             }
-            match super::vrr_flip(self.paced, self.count != self.drawn, self.last, now) {
+            let carries = self.game.count != self.pacer.game_drawn;
+            match self.pacer.flip(self.paced, self.game, now) {
                 super::Flip::Now => {
-                    self.flips.push(((now - self.t0).as_secs_f64() * 1000.0, self.count != self.drawn));
-                    (self.dirty, self.drawn, self.timer) = (false, self.count, None);
+                    self.flips.push(((now - self.t0).as_secs_f64() * 1000.0, carries));
+                    (self.dirty, self.timer) = (false, None);
                 }
                 super::Flip::Wait(w) => self.timer = Some(w),
             }
@@ -1878,18 +1918,18 @@ mod tests {
     }
 
     /// The flips one screen makes for a run of changes, as draw_all and draw decide them: a change (ms after the start; true:
-    /// the game's commit, false: anything else) marks the screen to be drawn, and it is drawn when `vrr_flip` says so, at once
+    /// the game's commit, false: anything else) marks the screen to be drawn, and it is drawn when its `Pacer` says so, at once
     /// or when the timer for its wait fires. Gives each flip's time (ms) and whether it carried a game frame.
     fn flips(paced: bool, changes: &[(f64, bool)]) -> Vec<(f64, bool)> {
         let t0 = std::time::Instant::now();
         let at = |ms: f64| t0 + std::time::Duration::from_secs_f64(ms / 1000.0);
-        let mut s = Sim { paced, t0, dirty: false, count: 0, drawn: 0, last: None, timer: None, flips: vec![] };
+        let mut s = Sim { paced, t0, pacer: super::Pacer::default(), dirty: false, game: Default::default(), timer: None, flips: vec![] };
         for &(t, game) in changes {
             if let Some(w) = s.timer.filter(|w| *w <= at(t)) {
                 s.pass(w);
             }
             if game {
-                (s.count, s.last) = (s.count + 1, Some(at(t)));
+                s.game = crate::state::GameCommits { count: s.game.count + 1, last: Some(at(t)) };
             }
             s.dirty = true;
             s.pass(at(t));
@@ -1900,28 +1940,43 @@ mod tests {
         s.flips
     }
 
+    /// A game's frames at `fps` for `ms` milliseconds, each late or early by the next of `jitter` (ms, in turn), and the mouse
+    /// moving all the while (1000 Hz), in time order.
+    fn game_and_mouse(fps: f64, ms: usize, jitter: &[f64]) -> (Vec<f64>, Vec<(f64, bool)>) {
+        let frames = (ms as f64 * fps / 1000.0) as usize;
+        let game: Vec<f64> = (0..=frames).map(|i| i as f64 * 1000.0 / fps + jitter[i % jitter.len()]).collect();
+        let mut changes: Vec<(f64, bool)> = game.iter().map(|t| (*t, true)).chain((0..ms).map(|i| (i as f64 + 0.5, false))).collect();
+        changes.sort_by(|a, b| a.0.total_cmp(&b.0));
+        (game, changes)
+    }
+
     #[test]
     fn a_game_paces_the_screen_and_the_pointer_goes_out_with_its_frames() {
         let round = |v: Vec<(f64, bool)>| v.into_iter().map(|(t, g)| ((t * 10.0).round() / 10.0, g)).collect::<Vec<_>>();
-        // a game at 60 frames a second for 100 ms and the mouse moving all the while (1000 Hz): under variable refresh the
-        // screen flips with the game's frames only, every one carrying a game frame; without, at every mouse event
-        let game: Vec<f64> = (0..=6).map(|i| i as f64 * 1000.0 / 60.0).collect();
-        let mut changes: Vec<(f64, bool)> = game.iter().map(|t| (*t, true)).chain((0..100).map(|i| (i as f64 + 0.5, false))).collect();
-        changes.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // a game at 60 frames a second for 100 ms and the mouse moving all the while: under variable refresh the screen flips
+        // with the game's frames only, every one carrying a game frame; without, at every mouse event
+        let (game, changes) = game_and_mouse(60.0, 100, &[0.0]);
         let paced = flips(true, &changes);
         assert_eq!(paced.len(), game.len(), "{paced:?}");
         assert!(paced.iter().zip(&game).all(|((t, g), want)| *g && (t - want).abs() < 0.01), "{paced:?}");
         assert_eq!(flips(false, &changes).len(), changes.len());
+        // a game capped at 30 frames a second whose frames come up to 3 ms late or early (frame limiters do), for half a
+        // second: still every flip is one of its frames, none the pointer's own (with the bound at exactly 1/30 s every late
+        // frame would follow a flip of the pointer's)
+        let (game, changes) = game_and_mouse(30.0, 500, &[0.0, 3.0, -3.0, 1.0, 3.0, -2.0, 0.5, 3.0]);
+        let paced = flips(true, &changes);
+        assert_eq!(paced.len(), game.len(), "{paced:?}");
+        assert!(paced.iter().zip(&game).all(|((t, g), want)| *g && (t - want).abs() < 0.01), "{paced:?}");
         // a notification (or a panel) 10 ms after a frame of a game at 40 frames a second goes out with its next frame
         assert_eq!(round(flips(true, &[(0.0, true), (10.0, false), (25.0, true)])), [(0.0, true), (25.0, true)]);
-        // the game stops right after the pointer moved: the pointer is shown 1/30 s after the game's last frame
-        assert_eq!(round(flips(true, &[(0.0, true), (5.0, false)])), [(0.0, true), (33.3, false)]);
+        // the game stops right after the pointer moved: the pointer is shown 1/24 s after the game's last frame
+        assert_eq!(round(flips(true, &[(0.0, true), (5.0, false)])), [(0.0, true), (41.7, false)]);
         // a paused game (its menu does not redraw): every move flips at once, the pointer at the screen's own rate
         assert_eq!(round(flips(true, &[(0.0, true), (500.0, false), (501.0, false), (502.0, false)])).len(), 4);
-        // a game under 30 frames a second (20): the pointer waits for the bound, then moves by itself until the next frame
+        // a game under 24 frames a second (20): the pointer waits for the bound, then moves by itself until the next frame
         assert_eq!(
-            round(flips(true, &[(0.0, true), (10.0, false), (40.0, false), (50.0, true)])),
-            [(0.0, true), (33.3, false), (40.0, false), (50.0, true)]
+            round(flips(true, &[(0.0, true), (10.0, false), (45.0, false), (50.0, true)])),
+            [(0.0, true), (41.7, false), (45.0, false), (50.0, true)]
         );
     }
 

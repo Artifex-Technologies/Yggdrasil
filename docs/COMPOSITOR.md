@@ -266,7 +266,8 @@ screen and asking for it again, in front and behind; a menu that reaches past it
 parent; two screens; the dock growing; the screen getting smaller; a decorated window's hidden grips; the lock while windows
 open and close behind it; a finger tapping the small window, the game outside it, where it was and where the hidden bar is.
 The tenth test checks which commits are the full screen window's frames, the only ones that start a refresh under variable
-refresh on the hardware backend (packages/compositor/README.md, "Games on the hardware backend").
+refresh on the hardware backend (packages/compositor/README.md, "Games on the hardware backend"); `tests/x11.rs` checks the
+same for a full screen X11 window, the kind a Proton game opens.
 
 Known limitations: a menu has no grab (a click outside it does not close it, and it does not take the keyboard); there is no
 "always on top" or layer of its own for dialogs (a dialog is a window like any other, in front because it opened last); the
