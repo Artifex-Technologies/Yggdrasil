@@ -1,6 +1,6 @@
 //! The config files the compositor's settings come from (`App::reload_config`): which they are, what tells that one changed,
-//! and the watch that wakes the event loop when one does, and at no other time. (Until 2026-11-25 their times were looked at
-//! every 2 seconds: a wake-up and a pass over the screens each time, YGG-118.)
+//! the watch that wakes the event loop when one does, and at no other time, and the wait between a change and the reading.
+//! (Until 2026-11-25 their times were looked at every 2 seconds: a wake-up and a pass over the screens each time, YGG-118.)
 //!
 //! The watch is inotify on their folders, not on the files: Settings and most editors save a file by writing a new one and
 //! renaming it over the old, which a watch on the old file would miss. A folder that is not there yet (no ~/.config/gtk-3.0,
@@ -10,6 +10,15 @@
 //! folders (another file in ~/.config/yggdrasil, the rest of /etc) is read from the watch and dropped. inotify hears what this
 //! machine does to the files: one changed from another machine in a home on a network file system (NFS) is read at the next
 //! `reload`, or with the next change made here.
+//!
+//! A change is not read the moment it is seen: the files are read once the changes have rested for `SETTLE` (`Wait`,
+//! `App::config_changed`), so a save in steps is read once, when it is finished. Vim and Emacs save by renaming the file to a
+//! backup, then making, writing and closing a new one; read in between, the file is missing or half written (YGG-138:
+//! monitors.lua read while it was missing set the screens to their own size and pulled the pointer onto them, then set them
+//! back). A file that had something in it when it was last read and is missing or empty when the wait ends is waited for once
+//! more, as a save in steps passes through both: back by then, it is read as it is; still missing or empty, it is read so. So
+//! a file removed for good is in force a moment later, as any other change, and not only on `reload`: removing a file to go
+//! back to the defaults is something people do. `reload` reads at once. The timer runs only from a change until the reading.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -18,10 +27,88 @@ use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
 use rustix::io::Errno;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+
+use crate::state::App;
+
+/// How long the config files must rest after a change before they are read: a tenth of a second. The steps of a save leave
+/// the file missing or half written for well under a millisecond, and for about a millisecond on a busy machine (the stall
+/// that showed it, YGG-138); a hundred times that is still as good as at once to someone who saves a file and looks, and
+/// Settings does not wait for it: it asks for `reload` once it has written a file.
+pub const SETTLE: Duration = Duration::from_millis(100);
+
+/// The wait between the watch seeing a change and the files being read: one timer for a burst of changes, started by the
+/// first and ending `SETTLE` after the last.
+#[derive(Default)]
+pub struct Wait {
+    /// when the watch last saw a change; None while no wait runs
+    last: Option<Instant>,
+    /// the wait was held once for a file that went (`rested`)
+    held: bool,
+    /// the files that had something in them when they were last read (`read`)
+    full: Vec<PathBuf>,
+}
+
+impl Wait {
+    /// The watch saw a change at `now`: true when no wait runs yet (one is to be started), else the one running ends `SETTLE`
+    /// after it.
+    pub fn changed(&mut self, now: Instant) -> bool {
+        self.held = false;
+        self.last.replace(now).is_none()
+    }
+
+    /// The wait's time came (at `now`): how much longer it is to run, or None when the files are to be read now (the wait is
+    /// over). One more `SETTLE` when a file that had something in it when last read is missing or empty, once.
+    pub fn rested(&mut self, now: Instant) -> Option<Duration> {
+        let since = self.last.map_or(SETTLE, |t| now.saturating_duration_since(t));
+        if since < SETTLE {
+            return Some(SETTLE - since);
+        }
+        if !self.held && self.full.iter().any(|f| !has_something(f)) {
+            self.held = true;
+            self.last = Some(now);
+            return Some(SETTLE);
+        }
+        self.last = None;
+        None
+    }
+
+    /// The files are being read (`App::reload_config`): which of them have something in them.
+    pub fn read(&mut self, files: Vec<PathBuf>) {
+        self.full = files.into_iter().filter(|f| has_something(f)).collect();
+    }
+}
+
+/// A file with something in it (where it leads, for a link).
+fn has_something(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.len() > 0)
+}
+
+impl App {
+    /// The watch saw one of the config files change: they are read once the changes have rested (`Wait`).
+    pub fn config_changed(&mut self) {
+        if !self.config_wait.changed(Instant::now()) {
+            return;
+        }
+        let timer =
+            self.loop_handle.insert_source(Timer::from_duration(SETTLE), |_, _, app| match app.config_wait.rested(Instant::now()) {
+                Some(more) => TimeoutAction::ToDuration(more),
+                None => {
+                    app.reload_config();
+                    TimeoutAction::Drop
+                }
+            });
+        if timer.is_err() {
+            // no timer: read at once (reload_config notes the files again)
+            self.config_wait = Wait::default();
+            self.reload_config();
+        }
+    }
+}
 
 /// Every file `App::reload_config` reads. A file read there and missing here would be read again only on `reload`.
 pub fn files() -> Vec<PathBuf> {
@@ -243,6 +330,59 @@ mod tests {
         write(&d.join("a.conf.new"), "style = dark\n");
         std::fs::rename(d.join("a.conf.new"), &f).unwrap();
         assert_ne!(stamp(&f), full, "renamed over it: the same time and size, another file");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_burst_of_changes_is_read_once_it_has_rested() {
+        let ms = Duration::from_millis;
+        let t = Instant::now();
+        let mut w = Wait::default();
+        assert!(w.changed(t), "the first change starts the wait");
+        assert!(!w.changed(t + ms(30)), "the next ones move its end");
+        assert_eq!(w.rested(t + ms(100)), Some(ms(30)), "SETTLE after the last change");
+        assert_eq!(w.rested(t + ms(130)), None, "then the files are read");
+        assert!(w.changed(t + ms(500)), "the wait is over: the next change starts another");
+    }
+
+    #[test]
+    fn a_file_missing_or_empty_when_the_wait_ends_is_waited_for_once_more() {
+        let ms = Duration::from_millis;
+        let d = scratch("wait");
+        let (f, backup, absent) = (d.join("monitors.lua"), d.join("monitors.lua~"), d.join("input.conf"));
+        let text = "hl.monitor({ output = \"DP-1\", scale = 2 })\n";
+        std::fs::write(&f, text).unwrap();
+        let mut w = Wait::default();
+        let files = || vec![f.clone(), absent.clone()];
+        w.read(files());
+        let t = Instant::now();
+        // a save in steps whose wait ends while the file is renamed to its backup: once more, and read once it is back
+        std::fs::rename(&f, &backup).unwrap();
+        w.changed(t);
+        assert_eq!(w.rested(t + ms(100)), Some(SETTLE), "missing");
+        std::fs::write(&f, text).unwrap();
+        w.changed(t + ms(150));
+        assert_eq!(w.rested(t + ms(200)), Some(ms(50)), "the new file closed: SETTLE after that");
+        assert_eq!(w.rested(t + ms(250)), None, "back: read");
+        w.read(files());
+        // ... or while the new file is made and still empty
+        std::fs::rename(&f, &backup).unwrap();
+        std::fs::File::create(&f).unwrap();
+        w.changed(t + ms(300));
+        assert_eq!(w.rested(t + ms(400)), Some(SETTLE), "empty");
+        std::fs::write(&f, text).unwrap();
+        w.changed(t + ms(410));
+        assert_eq!(w.rested(t + ms(510)), None, "written: read");
+        w.read(files());
+        // removed for good: read as missing at the end of the second wait, once
+        std::fs::remove_file(&f).unwrap();
+        w.changed(t + ms(600));
+        assert_eq!(w.rested(t + ms(700)), Some(SETTLE));
+        assert_eq!(w.rested(t + ms(800)), None, "still missing: read so");
+        w.read(files());
+        // files that had nothing in them when last read and still have not: no reason to wait longer (another file changed)
+        w.changed(t + ms(900));
+        assert_eq!(w.rested(t + ms(1000)), None);
         let _ = std::fs::remove_dir_all(&d);
     }
 

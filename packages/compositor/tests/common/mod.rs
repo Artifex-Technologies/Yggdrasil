@@ -492,8 +492,8 @@ pub struct State {
     pub pointer_at: (f64, f64),
     pub buttons: Vec<u32>,
     pub axis: Vec<(u32, f64)>,
-    /// the keyboard's repeat (rate, delay) as last told
-    pub repeat_info: Option<(i32, i32)>,
+    /// the keyboard's repeat (rate, delay) each time it was told, in order: the last one is in force
+    pub repeats: Vec<(i32, i32)>,
     /// ext-session-lock
     pub locked: bool,
     pub lock_finished: bool,
@@ -1073,7 +1073,7 @@ impl Dispatch<WlKeyboard, ()> for State {
                 }
             }
             wl_keyboard::Event::Enter { surface, .. } => st.kb_focus = Some(surface.id()),
-            wl_keyboard::Event::RepeatInfo { rate, delay } => st.repeat_info = Some((rate, delay)),
+            wl_keyboard::Event::RepeatInfo { rate, delay } => st.repeats.push((rate, delay)),
             wl_keyboard::Event::Leave { .. } => st.kb_focus = None,
             wl_keyboard::Event::Key { key, state: WEnum::Value(wl_keyboard::KeyState::Pressed), .. } => {
                 if let Some(f) = &st.kb_focus {

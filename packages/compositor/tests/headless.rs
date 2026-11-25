@@ -5,7 +5,8 @@
 //! - a client maps a layer surface (a bar) and a toplevel (a window), and the compositor lists them
 //! - the screenshot is not blank: the bar's red and the window's blue are where they were put
 //! - a size or scale change through the control socket reaches the clients (output events, a new configure, the fractional scale)
-//! - the config files are read again as soon as one changes, and an idle compositor neither draws nor wakes up meanwhile
+//! - the config files are read again a moment after one changes (once, when a file saved in steps is finished), and an idle
+//!   compositor neither draws nor wakes up meanwhile
 
 mod common;
 
@@ -13,6 +14,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use common::*;
+use wayland_protocols_wlr::output_management::v1::client::zwlr_output_manager_v1::ZwlrOutputManagerV1;
 
 // ------------------------------------------------------------------ the tests
 
@@ -279,10 +281,10 @@ fn a_resting_pointer_hides_with_a_frame_of_its_own() {
 }
 
 /// The config files are watched (configs.rs, YGG-118), no longer looked at every 2 s: an idle compositor sleeps, without one
-/// pass over the screens or one wake-up, until one of them changes, and the change is in force at once (2 s are allowed here,
-/// for a busy machine), however it is saved: written in place, a new file renamed over it (as Settings and most editors save),
-/// in folders made after the start, through a link into another folder, removed. Every other file reload_config reads wakes
-/// it as well; another file in the same folders draws nothing.
+/// pass over the screens or one wake-up, until one of them changes, and the change is in force once it has rested (0.1 s, 0.2 s
+/// for a removed file: configs::SETTLE; 2 s are allowed here, for a busy machine), however it is saved: written in place, a new
+/// file renamed over it (as Settings and most editors save), in folders made after the start, through a link into another
+/// folder, removed. Every other file reload_config reads wakes it as well; another file in the same folders draws nothing.
 #[test]
 fn an_idle_compositor_sleeps_until_a_config_file_changes() {
     let _l = limit(60, "the config files' watch");
@@ -357,6 +359,86 @@ fn an_idle_compositor_sleeps_until_a_config_file_changes() {
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(passes(&comp), before, "another file in the same folders draws nothing");
     assert_eq!(idle_for(&comp, 2500), (0, 0), "passes and wake-ups in 2.5 s with nothing going on, after all that");
+}
+
+/// Save `file` as Vim and Emacs do by default: the file renamed to a backup, a new one made, written in two parts and closed,
+/// the backup removed, with `pause` between the steps (as a busy machine makes them). Meanwhile the file is missing, then
+/// there and empty, then half written.
+fn save_in_steps(file: &std::path::Path, text: &str, pause: Duration) {
+    use std::io::Write;
+    let backup = file.with_file_name(format!("{}~", file.file_name().unwrap().to_string_lossy()));
+    std::fs::rename(file, &backup).unwrap();
+    std::thread::sleep(pause);
+    let mut new = std::fs::File::create(file).unwrap();
+    std::thread::sleep(pause);
+    let (first, second) = text.split_at(text.len() / 2);
+    new.write_all(first.as_bytes()).unwrap();
+    std::thread::sleep(pause);
+    new.write_all(second.as_bytes()).unwrap();
+    std::thread::sleep(pause);
+    drop(new);
+    std::thread::sleep(pause);
+    std::fs::remove_file(&backup).unwrap();
+}
+
+/// A config file saved in steps, as Vim and Emacs save, is read once it is finished, never while it is missing or half
+/// written (YGG-138): the watch reads the files once their changes have rested (configs.rs). Ten saves of each file, 2 ms
+/// between the steps (twice the stall that showed it): Settings > Displays' monitors.lua sets the screens once a save, as they
+/// were, and the pointer stays where it is (read while it was missing, the screens took their own size and pulled the pointer
+/// onto them, then the file's again); Settings > Peripherals' input.conf has programs told the key repeat once a save, the
+/// file's, and the mouse keeps its settings.
+#[test]
+fn a_file_saved_in_steps_is_read_once_it_is_finished() {
+    let _l = limit(90, "files saved in steps");
+    let monitors = "-- Written by Settings > Displays. Loaded by Yggdrasil's Hyprland config.\n\
+                    hl.monitor({ output = \"HEADLESS-1\", mode = \"1920x1080@60.00\", position = \"0x0\", scale = 1 })\n\
+                    hl.monitor({ output = \"HEADLESS-2\", mode = \"1280x720@60.00\", position = \"1920x0\", scale = 1.5 })\n";
+    let input =
+        yggdrasil_wm::input::InputConf::parse("sensitivity = -0.5\naccel_profile = flat\nrepeat_rate = 40\nrepeat_delay = 300\n").text();
+    let comp = Compositor::start_with(&["--outputs", "2", "--size", "800x600"], |dir| {
+        std::fs::write(dir.join("home/.config/yggdrasil/monitors.lua"), monitors).unwrap();
+        std::fs::write(dir.join("home/.config/yggdrasil/input.conf"), &input).unwrap();
+    });
+    let conf = comp.dir.join("home/.config/yggdrasil");
+    let screens = comp.must("outputs");
+    assert_eq!(
+        screens,
+        ["HEADLESS-1 1920x1080 scale=1 at=0,0 logical=1920x1080", "HEADLESS-2 1280x720 scale=1.5 at=1920,0 logical=853x480"]
+    );
+    let mouse = comp.must("input");
+    assert_eq!(
+        mouse[1],
+        "yggdrasil-headless-mouse\tsensitivity=-0.5\taccel_profile=flat\tscroll_factor=1\tnatural_scroll=0\tleft_handed=0"
+    );
+    // a program told of the screens (wlr-output-management: a `done` each time they are set) and of the key repeat
+    let mut c = comp.connect();
+    let _heads: ZwlrOutputManagerV1 = c.globals.bind(&c.qh, 4..=4, ()).expect("wlr-output-management");
+    let _input = c.input();
+    c.until("the screens and the key repeat", |s| s.mgmt.dones == 1 && s.repeats == [(40, 300)]);
+    // where only the file's first screen reaches (each screen is 800x600 by itself)
+    comp.must("pointer 1700 1000");
+
+    let pause = Duration::from_millis(2);
+    for n in 1..=10 {
+        save_in_steps(&conf.join("monitors.lua"), monitors, pause);
+        c.until(&format!("monitors.lua's save {n} read"), |s| s.mgmt.dones > n);
+        let now = (c.state.mgmt.dones - n, comp.must("outputs"), comp.must("cursor"));
+        assert_eq!(now, (1, screens.clone(), vec!["1700 1000".to_string()]), "save {n}: the screens set once, as they were");
+    }
+    for n in 1..=10 {
+        save_in_steps(&conf.join("input.conf"), &input, pause);
+        c.until(&format!("input.conf's save {n} read"), |s| s.repeats.len() > n);
+        let now = (c.state.repeats[1..].to_vec(), comp.must("input"));
+        assert_eq!(now, (vec![(40, 300); n], mouse.clone()), "save {n}: the key repeat told once a save, the file's");
+    }
+    // and nothing after the last save, no timer left; the mouse at the file's half speed
+    std::thread::sleep(Duration::from_millis(500));
+    c.roundtrip();
+    assert_eq!((c.state.mgmt.dones, c.state.repeats.len()), (11, 11), "nothing read after the saves");
+    assert_eq!(idle_for(&comp, 1000), (0, 0), "passes and wake-ups in 1 s once the saves are read");
+    comp.must("pointer-move 100 40");
+    assert_eq!(comp.must("cursor"), ["1750 1020"]);
+    assert!(!comp.log_tail(200).contains("monitors.lua:"), "{}", comp.log_tail(20));
 }
 
 /// SIGTERM, SIGINT and SIGHUP end it cleanly, as on the hardware backend: its loop stops, and its Wayland socket, the socket's
