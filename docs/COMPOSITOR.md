@@ -463,18 +463,31 @@ goes away ends the drag for good, and a drag the X11 program gave up ends with t
 XWayland's transfers with its X connection (above): when it closes, the window manager's clipboard, middle-click selection
 and XdndSelection transfers end before the compositor lets the window manager go; a stale transfer replaced by a new request
 is removed before it is answered, so a failed answer can no longer leave its pipe watched; and a drop on an X11 window that
-was not finished yet is cancelled (`tests/dnd.rs`). Known limitation: while a Wayland program's drag is over an X11 window (or
-dropped there and not finished yet), any X11 program can ask for its data, since X11 cannot tell programs apart. X11 programs that read a drag's
-data before the drop (Wine; Chromium, Electron and CEF programs on X11) can take drops this way.
+was not finished yet is cancelled (`tests/dnd.rs`). A fifth cancels a drop on an X11 window that has not finished it
+(XdndFinished) 10 s after the drop: before, an X11 program that hung after taking a drop left the dragging program waiting,
+and stopped every X11 program's drag, until it ended. A sixth passes a finger's lift on to XWayland when an X11 program drags
+with a finger: before, that drag never dropped, and XWayland kept the finger, and the pointer's left button, down
+(`tests/dnd.rs`). A seventh (since 2026-11-25) keeps a Wayland program's drag from every X11 program until its drop: X11 cannot
+tell which program asks for the data, so the window manager gives it only once it has told the X11 window under the drag of a
+drop that window accepted (XdndDrop, its last answer, XdndStatus, taking the drag), and only until that window finishes or the
+drop ends (at most the 10 s). Before that, and for a drop the window refused (before the button was let go, or in its answer
+to where the pointer last moved), every X11 program asking is refused the data, the target too; the drag's types are still
+told. So no X11 program can read what a Wayland program drags across an X11 window on its way somewhere else. X11 programs
+that read a drag's data on the drop, as GTK, Qt and SDL programs do, take a Wayland program's drop as before; those that read
+it before the drop and not again (Wine, and Chromium, Electron and CEF programs on X11) get no data, so a Wayland program's
+drop on them does nothing (`tests/dnd.rs`). Known limitation: during an accepted drop, from XdndDrop until the target finishes
+(at most the 10 s), any X11 program that asks is given the data too, since X11 cannot tell it from the target.
 
 **Our Smithay fork** (github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit in
-packages/compositor/Cargo.toml): since 2026-11-24, Smithay's main branch (54cf9c10) with six commits of ours, each for
-something the compositor's own code cannot do well, and a seventh that only formats a line. They bind the X11 sockets apart from
+packages/compositor/Cargo.toml): since 2026-11-24, Smithay's main branch (54cf9c10) with nine commits of ours, each for
+something the compositor's own code cannot do well, and a tenth that only formats a line. They bind the X11 sockets apart from
 starting XWayland (XWayland on the first X11 program, above); fix two X11 window manager bugs (close, and the events dropped
 after setting the primary screen: "Tried by hand", above); clamp a layer surface's size at i32::MAX and `_GTK_FRAME_EXTENTS`
 at what an X window can hold (a program's huge values ended a debug build: a negative size, an overflow in
-`X11Surface::geometry`; `tests/hostile.rs`, `tests/x11.rs`); fix the three drag and drop bugs above; and end the window
-manager's transfers, and a drop not finished yet, when XWayland's X connection closes (above; `tests/dnd.rs`). The rest of
+`X11Surface::geometry`; `tests/hostile.rs`, `tests/x11.rs`); fix the three drag and drop bugs above; end the window
+manager's transfers, and a drop not finished yet, when XWayland's X connection closes; cancel a drop an X11 program has not
+finished 10 s after it; pass a finger's lift on to XWayland during an X11 program's drag; and give a Wayland program's drag's
+data to X11 programs only from a drop an X11 window accepted until the drop ends (all above; `tests/dnd.rs`). The rest of
 what our fork of Smithay 0.7 carried is Smithay main's own: a new X11 window's first place and size at fractional scales; the
 session lock's checks (a program refused as a second locker can neither unlock the session nor show its lock screen in place
 of the real one, which would get the password; the compositor keeps its own check of which lock's surfaces it shows:
