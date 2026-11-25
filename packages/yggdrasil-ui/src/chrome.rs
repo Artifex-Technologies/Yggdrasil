@@ -21,8 +21,29 @@ const MINIMIZE: Color32 = Color32::from_rgb(0xfe, 0xbc, 0x2e);
 const MAXIMIZE: Color32 = Color32::from_rgb(0x28, 0xc8, 0x40);
 const CLOSE: Color32 = Color32::from_rgb(0xff, 0x5f, 0x57);
 
+/// Whether the window is maximized: the compositor says so and it nearly fills its screen. Hyprland 0.57 also says
+/// "maximized" for a floating window (1280x800 on a 3440x1440 screen: YGG-75), which then read "Restore" and could not be
+/// maximized with a double-click; Daedalus checks the size the same way (`frame::fills`).
 fn maximized(ctx: &egui::Context) -> bool {
-    ctx.input(|i| i.viewport().maximized.unwrap_or(false))
+    ctx.input(|i| {
+        let v = i.viewport();
+        really_maximized(v.maximized, v.inner_rect, v.monitor_size)
+    })
+}
+
+/// `maximized`'s rule, from what the viewport knows (sizes in points); without the sizes, the flag as it is.
+fn really_maximized(flag: Option<bool>, inner: Option<Rect>, monitor: Option<egui::Vec2>) -> bool {
+    flag.unwrap_or(false)
+        && match (inner, monitor) {
+            (Some(r), Some(m)) => fills(r.width(), r.height(), m.x, m.y),
+            _ => true,
+        }
+}
+
+/// Whether a window of this size fills a screen of that size, allowing for a bar and a dock (a maximized window leaves
+/// room for them).
+pub fn fills(w: f32, h: f32, screen_w: f32, screen_h: f32) -> bool {
+    w + 160.0 >= screen_w && h + 160.0 >= screen_h
 }
 
 /// The rest of the strip: drag to move the window, double-click to maximize or restore.
@@ -114,7 +135,7 @@ pub fn resize_edges(ctx: &egui::Context) {
         }
         return;
     }
-    let (full, max) = ctx.input(|i| (i.viewport().fullscreen.unwrap_or(false), i.viewport().maximized.unwrap_or(false)));
+    let (full, max) = (ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)), maximized(ctx));
     if full || max {
         return;
     }
@@ -153,7 +174,7 @@ pub fn resize_edges(ctx: &egui::Context) {
 /// A hairline around the window, so its edge stays visible against a dark background now that the
 /// system frame (and its shadow) is gone.
 pub fn outline(ctx: &egui::Context, pal: &Palette) {
-    if ctx.input(|i| i.viewport().maximized.unwrap_or(false) || i.viewport().fullscreen.unwrap_or(false)) {
+    if maximized(ctx) || ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
         return;
     }
     let rect = ctx.viewport_rect().shrink(0.5);
@@ -163,4 +184,25 @@ pub fn outline(ctx: &egui::Context, pal: &Palette) {
         Stroke::new(1.0, pal.border),
         egui::StrokeKind::Inside,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// YGG-75: Hyprland's "maximized" for a floating window is not taken; a window that fills its screen beside a bar
+    /// is; without sizes the compositor's word stands.
+    #[test]
+    fn maximized_means_the_window_fills_its_screen() {
+        let screen = Some(vec2(3440.0, 1440.0));
+        let rect = |w: f32, h: f32| Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(w, h)));
+        assert!(!really_maximized(Some(true), rect(1280.0, 800.0), screen));
+        assert!(really_maximized(Some(true), rect(3440.0, 1392.0), screen)); // beside a 48 px bar
+        assert!(really_maximized(Some(true), rect(3424.0, 1300.0), screen)); // and a dock, with gaps
+        assert!(!really_maximized(Some(false), rect(3440.0, 1440.0), screen));
+        assert!(!really_maximized(None, rect(3440.0, 1440.0), screen));
+        assert!(really_maximized(Some(true), None, screen));
+        assert!(really_maximized(Some(true), rect(1280.0, 800.0), None));
+        assert!(fills(1920.0, 1080.0, 1920.0, 1080.0) && !fills(1280.0, 800.0, 1920.0, 1080.0));
+    }
 }
