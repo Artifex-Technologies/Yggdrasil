@@ -48,8 +48,8 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 opt-level = 2
 lto = "thin"
 
-# Smithay's main branch (54cf9c10; its version is still 0.7.0, so it stands in for the 0.7 above) with seven commits of ours:
-# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit (5bb77de9).
+# Smithay's main branch (54cf9c10; its version is still 0.7.0, so it stands in for the 0.7 above) with ten commits of ours:
+# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit (7773aa92).
 #   514b9ae1  the X11 sockets bound apart from starting XWayland (X11Sockets, XWayland::spawn_with_sockets), so XWayland
 #             starts on the first X11 program (xwayland.rs)
 #   3c8ca3a4  two X11 window manager fixes: every event was dropped after set_randr_primary_output until the next request;
@@ -62,5 +62,11 @@ lto = "thin"
 #   9107c377  the window manager's clipboard, primary-selection and XdndSelection transfers, and a drop not finished yet,
 #             end when XWayland's X connection closes (before, such a transfer's pipe becoming ready ended the compositor)
 #   5bb77de9  rustfmt only
+#   2cdd308a  a drop on an X11 window that its target has not finished (XdndFinished) 10 s after it is cancelled (before,
+#             a hung target left the dragging program waiting and stopped every X11 drag)
+#   cef101c1  a finger drag's lift passed on to XWayland for an X11 program's drag (before, it never dropped, and XWayland
+#             kept the finger and the left button down)
+#   7773aa92  a Wayland program's drag's data given to X11 programs only from a drop the X11 window accepted until the drop
+#             ends (before, any X11 program could read it while the drag was over any X11 window)
 [patch.crates-io]
-smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "cef101c1bd0f7c4b533fcbe19abd06a6b90ca7ce" }
+smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "7773aa9206821f00356a10ee13589a5b03802ea7" }
