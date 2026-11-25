@@ -23,6 +23,8 @@ use wayland_client::protocol::wl_data_device_manager::{DndAction, WlDataDeviceMa
 use wayland_client::protocol::wl_data_offer::{self, WlDataOffer};
 use wayland_client::protocol::wl_data_source::{self, WlDataSource};
 use wayland_client::{event_created_child, Connection, Dispatch, Proxy, QueueHandle, WEnum};
+use wayland_protocols::xdg::shell::client::xdg_surface::{self, XdgSurface};
+use wayland_protocols::xdg::shell::client::xdg_toplevel::{self, XdgToplevel};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::{
     Atom, AtomEnum, ClientMessageEvent, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, SelectionNotifyEvent,
@@ -50,6 +52,8 @@ struct Log {
     sent: usize,
     finished: bool,
     cancelled: bool,
+    /// a program's looks at the serial counter (`look`)
+    looks: Vec<u32>,
 }
 
 thread_local! {
@@ -107,6 +111,23 @@ impl Dispatch<WlDataSource, Dragged> for State {
     }
 }
 
+/// A window of a program's own that is never drawn (so never shown): its first configure's serial tells where the serial
+/// counter stands, as any program can see it (`look`).
+struct Look;
+
+impl Dispatch<XdgSurface, Look> for State {
+    fn event(_: &mut Self, xs: &XdgSurface, event: xdg_surface::Event, _: &Look, _: &Connection, _: &QueueHandle<Self>) {
+        if let xdg_surface::Event::Configure { serial } = event {
+            xs.ack_configure(serial);
+            log(|l| l.looks.push(serial));
+        }
+    }
+}
+
+impl Dispatch<XdgToplevel, Look> for State {
+    fn event(_: &mut Self, _: &XdgToplevel, _: xdg_toplevel::Event, _: &Look, _: &Connection, _: &QueueHandle<Self>) {}
+}
+
 /// Dispatches the programs until `done`, at most 5 s.
 fn until(programs: &mut [&mut Client], what: &str, done: impl Fn(&Log) -> bool) {
     let start = Instant::now();
@@ -147,6 +168,26 @@ fn drag_from(comp: &Compositor, s: &mut Client, w: &Window, at: (i32, i32), mime
     source.set_actions(DndAction::Copy);
     device.start_drag(Some(&source), &w.surface, None, s.state.button_serial);
     s.roundtrip();
+}
+
+/// A new source of the program `c`'s text, offered as a copy.
+fn text(c: &Client, m: &WlDataDeviceManager) -> WlDataSource {
+    let source = m.create_data_source(&c.qh, Dragged);
+    source.offer(MIME.into());
+    source.set_actions(DndAction::Copy);
+    source
+}
+
+/// Where the serial counter stands, as the program `c` can see it at any time: a window of its own (`Look`) and the serial of
+/// its first configure.
+fn look(c: &mut Client) -> u32 {
+    let n = log(|l| l.looks.len());
+    let surface = c.compositor.create_surface(&c.qh, ());
+    let xdg = c.wm_base.get_xdg_surface(&surface, &c.qh, Look);
+    xdg.get_toplevel(&c.qh, Look);
+    surface.commit();
+    until(&mut [c], "the first configure of a window of its own", |l| l.looks.len() > n);
+    log(|l| l.looks[n])
 }
 
 #[test]
@@ -193,6 +234,78 @@ fn what_is_dropped_on_another_program_arrives_there() {
     offer.finish();
     until(&mut [&mut s, &mut t], "the dragging program told the drop finished", |l| l.finished);
     assert!(!log(|l| l.cancelled), "not cancelled");
+}
+
+/// A program can make a drag only of a press on its own window. Smithay checks only a drag's serial, and serials are one counter
+/// every program sees (`look`): a program with no pointer and nothing shown asks to drag its text with the serial of a press on
+/// another program's window, then with every serial around the compositor's own move (Super and the left button), whose serial
+/// no program is told. Neither becomes its drag: it is told its drag is cancelled, the pointer is not the drag's closed hand,
+/// the window the pointer goes over is offered nothing, and the press and the move go on as they were.
+#[test]
+fn a_program_cannot_drag_with_another_programs_press() {
+    let _l = limit(60, "a drag with another program's press");
+    let comp = Compositor::start(&["--size", "1000x600"]);
+    // the program pressed on, on the left; the one the pointer goes over, on the right, which takes text
+    let mut a = comp.connect();
+    let (_ak, _ap) = a.input();
+    let aw = a.window("test.pressed", "Pressed");
+    a.draw(&aw, (300, 200), 0xff0000ff);
+    let mut t = comp.connect();
+    let (_tk, _tp) = t.input();
+    let tw = t.window("test.target", "Target");
+    t.draw(&tw, (300, 200), 0xff00ff00);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.pressed")));
+    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "test.target")));
+    a.roundtrip();
+    t.roundtrip();
+    let (ai, ti) = (comp.window("test.pressed").unwrap(), comp.window("test.target").unwrap());
+    let _tdev = data_device(&mut t);
+    // the other program: a data device and its text, no pointer, no keyboard, nothing shown
+    let mut b = comp.connect();
+    let m: WlDataDeviceManager = b.globals.bind(&b.qh, 3..=3, ()).expect("wl_data_device_manager 3");
+    let device: WlDataDevice = m.get_data_device(&b.seat, &b.qh, ());
+    let origin = b.compositor.create_surface(&b.qh, ());
+    b.roundtrip();
+
+    // the button held on the first program's window, and the other program told that press's serial
+    let (px, py) = (ai.at.0 + 100, ai.at.1 + 100);
+    comp.must(&format!("pointer {px} {py}"));
+    a.until("the pointer on the pressed window", |st| st.pointer_on == Some(aw.surface.id()));
+    comp.must("press");
+    a.until("the press", |st| st.button_serial != 0);
+    let pointer = comp.must("pointer-look");
+    device.start_drag(Some(&text(&b, &m)), &origin, None, a.state.button_serial);
+    until(&mut [&mut b], "the other program told its drag is cancelled", |l| l.cancelled);
+    assert_eq!(comp.must("pointer-look"), pointer, "the pointer as it was, not a drag's closed hand");
+    // over the window on the right: it is offered nothing, and the press is still the first program's
+    comp.must(&format!("pointer {} {}", ti.at.0 + 150, ti.at.1 + 100));
+    for p in [&mut a, &mut b, &mut t] {
+        p.roundtrip();
+    }
+    assert!(log(|l| l.entered.is_none()), "nothing offered to the window under the pointer");
+    assert_eq!(a.state.pointer_on, Some(aw.surface.id()), "the press still the first program's");
+    comp.must("release");
+
+    // the compositor's own move, with every serial handed out between two looks at the counter (the move's among them)
+    log(|l| *l = Log::default());
+    let first = look(&mut b);
+    comp.must(&format!("pointer {px} {py}"));
+    comp.must("key-down super");
+    comp.must("press");
+    comp.must(&format!("pointer {} {py}", px + 20));
+    assert_eq!(comp.window("test.pressed").unwrap().at, (ai.at.0 + 20, ai.at.1), "Super and the left button move the window");
+    let pointer = comp.must("pointer-look");
+    let last = look(&mut b);
+    let source = text(&b, &m);
+    for serial in first..=last {
+        device.start_drag(Some(&source), &origin, None, serial);
+    }
+    until(&mut [&mut b], "the other program told its drag is cancelled", |l| l.cancelled);
+    assert_eq!(comp.must("pointer-look"), pointer, "the pointer as it was, not a drag's closed hand");
+    comp.must(&format!("pointer {} {py}", px + 40));
+    assert_eq!(comp.window("test.pressed").unwrap().at, (ai.at.0 + 40, ai.at.1), "the move goes on");
+    comp.must("release");
+    comp.must("key-up super");
 }
 
 // ------------------------------------------------------------------ X11 programs (XDND)

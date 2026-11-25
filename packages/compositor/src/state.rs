@@ -37,8 +37,10 @@ use smithay::reexports::calloop::{LoopHandle, LoopSignal};
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecoMode;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
-use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
-use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_output::WlOutput, wl_seat, wl_surface::WlSurface};
+use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason, ObjectId};
+use smithay::reexports::wayland_server::protocol::{
+    wl_buffer, wl_data_source::WlDataSource, wl_output::WlOutput, wl_seat, wl_surface::WlSurface,
+};
 use smithay::reexports::wayland_server::{Client, DisplayHandle, Resource};
 use smithay::utils::Rectangle;
 use smithay::utils::{FrameExtents, IsAlive, Scale};
@@ -3420,10 +3422,45 @@ impl DataDeviceHandler for App {
         &mut self.data_device_state
     }
 }
+
+/// Did the button or finger held go down on a surface of the program that owns `asker`? Smithay checks only a request's serial,
+/// and serials are one counter every program sees (a program learns them from its own configures): without this, any program
+/// could take another program's press, or the compositor's own Super+drag (a grab on no surface), for its drag or its move.
+fn pressed_by(focus: Option<&(PtrFocus, Point<f64, Logical>)>, asker: &ObjectId) -> bool {
+    focus.is_some_and(|(f, _)| f.surface().id().same_client_as(asker))
+}
+
 impl WaylandDndGrabHandler for App {
-    /// A program started dragging (with the left button held, or a finger down): a closed hand, its icon under the pointer,
-    /// and the drag grab that routes the offer to the window under it.
+    /// A program started dragging (with the left button held, or a finger down, on its own window): a closed hand, its icon
+    /// under the pointer, and the drag grab that routes the offer to the window under it. A program asking with a press that is
+    /// not its own is told its drag is cancelled, and nothing changes.
     fn dnd_requested<S: Source>(&mut self, source: S, icon: Option<WlSurface>, seat: Seat<Self>, serial: Serial, type_: GrabType) {
+        // the program asking: its data source's, or without one (a drag within the program) its origin surface's
+        let any: &dyn std::any::Any = &source;
+        let Some(asker) =
+            any.downcast_ref::<WlDataSource>().map(Resource::id).or_else(|| any.downcast_ref::<WlSurface>().map(Resource::id))
+        else {
+            return source.cancel();
+        };
+        match type_ {
+            GrabType::Pointer => {
+                let pointer = seat.get_pointer().unwrap();
+                let Some(start) = pointer.grab_start_data().filter(|s| pressed_by(s.focus.as_ref(), &asker)) else {
+                    return source.cancel();
+                };
+                let grab = DnDGrab::new_pointer(&self.display_handle, start, source, seat);
+                pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Keep);
+            }
+            GrabType::Touch => {
+                let Some(touch) = seat.get_touch() else { return source.cancel() };
+                let Some(start) = touch.grab_start_data().filter(|s| pressed_by(s.focus.as_ref(), &asker)) else {
+                    return source.cancel();
+                };
+                let grab = DnDGrab::new_touch(&self.display_handle, start, source, seat);
+                touch.set_grab(self, grab, serial);
+            }
+        }
+        // a drag now: the closed hand, and its icon under the pointer
         self.dragging = true;
         // the offset the icon's first picture was committed with (before the drag began)
         self.dnd_offset = icon
@@ -3432,20 +3469,6 @@ impl WaylandDndGrabHandler for App {
             .unwrap_or_default();
         self.dnd_icon = icon;
         self.cursor.status = CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Grabbing);
-        match type_ {
-            GrabType::Pointer => {
-                let pointer = seat.get_pointer().unwrap();
-                let Some(start) = pointer.grab_start_data() else { return self.end_drag() };
-                let grab = DnDGrab::new_pointer(&self.display_handle, start, source, seat);
-                pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Keep);
-            }
-            GrabType::Touch => {
-                let Some(touch) = seat.get_touch() else { return self.end_drag() };
-                let Some(start) = touch.grab_start_data() else { return self.end_drag() };
-                let grab = DnDGrab::new_touch(&self.display_handle, start, source, seat);
-                touch.set_grab(self, grab, serial);
-            }
-        }
         self.wake();
     }
 }
@@ -3562,6 +3585,13 @@ impl App {
         self.cursor.status = CursorImageStatus::default_named();
         self.wake();
     }
+
+    /// What a program may move or resize its window with: the pointer's grab under `serial`, if the button went down on one of
+    /// the program's own surfaces (`pressed_by`).
+    fn own_press(&self, surface: &ToplevelSurface, serial: Serial) -> Option<smithay::input::pointer::GrabStartData<App>> {
+        let start = self.pointer.with_grab(|s, g| (s == serial).then(|| g.start_data().clone())).flatten()?;
+        pressed_by(start.focus.as_ref(), &surface.wl_surface().id()).then_some(start)
+    }
 }
 
 impl OutputHandler for App {}
@@ -3593,11 +3623,12 @@ impl XdgShellHandler for App {
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, serial: Serial) {
+        let start = self.own_press(&surface, serial);
         if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
-            eprintln!("move request, serial {:?}, grab ok: {}", serial, self.pointer.has_grab(serial));
+            eprintln!("move request, serial {:?}, grab ok: {}", serial, start.is_some());
         }
         let pointer = self.pointer.clone();
-        let (Some(start), Some(window)) = (pointer.grab_start_data().filter(|_| pointer.has_grab(serial)), self.window_of(&surface)) else {
+        let (Some(start), Some(window)) = (start, self.window_of(&surface)) else {
             return;
         };
         let origin = self.space.element_location(&window).unwrap_or_default();
@@ -3606,7 +3637,7 @@ impl XdgShellHandler for App {
 
     fn resize_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, serial: Serial, edges: ResizeEdge) {
         let pointer = self.pointer.clone();
-        let (Some(start), Some(window)) = (pointer.grab_start_data().filter(|_| pointer.has_grab(serial)), self.window_of(&surface)) else {
+        let (Some(start), Some(window)) = (self.own_press(&surface, serial), self.window_of(&surface)) else {
             return;
         };
         let origin = self.space.element_location(&window).unwrap_or_default();

@@ -11,7 +11,7 @@ use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, Unde
 use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexProgram};
 use smithay::backend::renderer::utils::{CommitCounter, DamageSet, OpaqueRegions};
 use smithay::desktop::Window;
-use smithay::input::pointer::Focus;
+use smithay::input::pointer::{Focus, GrabStartData};
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -32,7 +32,7 @@ use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, PropMode};
 use x11rb::wrapper::ConnectionExt as _;
 
 use crate::grabs::{MoveGrab, ResizeGrab};
-use crate::state::{self, App, KbFocus};
+use crate::state::{self, App, KbFocus, PtrFocus};
 
 /// Make X11 programs possible: XWayland starts when the first X11 program connects, not with the compositor (about 23 MB and
 /// its start-up saved while none runs). The display's sockets are bound now, so DISPLAY is known at once (printed as
@@ -141,6 +141,12 @@ fn is_helper(x: &X11Surface) -> bool {
 /// The same X11 window? (compared by id: an X11Surface stops comparing equal to itself once its window is destroyed)
 fn same(a: &X11Surface, b: &X11Surface) -> bool {
     a.xwm_id() == b.xwm_id() && a.window_id() == b.window_id()
+}
+
+/// Did the held button go down on this X11 window? Only such a press may become its move or resize: not another program's press,
+/// a press on the desktop, nor the compositor's own Super+drag.
+fn pressed_on(start: &GrabStartData<App>, window: &X11Surface) -> bool {
+    matches!(&start.focus, Some((PtrFocus::X11(x, _), _)) if same(x, window))
 }
 
 /// `want` made to fit in `zone`: no bigger than it, and moved so that all of it is on it.
@@ -667,17 +673,22 @@ impl XwmHandler for App {
         }
     }
 
-    /// The program's own title bar or edge is dragged (it holds the button down): the same grabs as for Wayland windows.
+    /// The program's own title bar or edge is dragged (it holds the button down on that window): the same grabs as for Wayland
+    /// windows. Any X11 program may ask this for any window at any time; without a press on the window it is ignored.
     fn move_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32) {
         let pointer = self.pointer.clone();
-        let (Some(start), Some(w)) = (pointer.grab_start_data(), self.x11_window(&window)) else { return };
+        let (Some(start), Some(w)) = (pointer.grab_start_data().filter(|s| pressed_on(s, &window)), self.x11_window(&window)) else {
+            return;
+        };
         let Some(origin) = self.space.element_location(&w) else { return };
         pointer.set_grab(self, MoveGrab { start, window: w, origin }, SERIAL_COUNTER.next_serial(), Focus::Clear);
     }
 
     fn resize_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32, edge: X11Edge) {
         let pointer = self.pointer.clone();
-        let (Some(start), Some(w)) = (pointer.grab_start_data(), self.x11_window(&window)) else { return };
+        let (Some(start), Some(w)) = (pointer.grab_start_data().filter(|s| pressed_on(s, &window)), self.x11_window(&window)) else {
+            return;
+        };
         let Some(origin) = self.space.element_location(&w) else { return };
         let edges = match edge {
             X11Edge::Top => ResizeEdge::Top,
