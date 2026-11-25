@@ -65,7 +65,11 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   which I left out.
 
 - **Wi-Fi & Network** (`src/wifi_ui.rs`): joining goes through `packages/netjoin` (shared with the installer), NetworkManager's
-  AddAndActivateConnection over D-Bus with the password inside the message. Since 2026-11-14 Other Networks ends with
+  AddAndActivateConnection over D-Bus with the password inside the message. A network that joins but gives out no address
+  (NetworkManager's "IP configuration could not be reserved" or "the base network connection was interrupted", as a phone's
+  hotspot does with a weak mobile signal) is said in plain words (`src/noaddress.rs`): the first time "joined but gave no
+  address this time", the second in a row "Joined NAME, but it is not giving out an address", with the phone's signal to
+  check. Since 2026-11-14 Other Networks ends with
   **Hidden network…**: the name, the security (None or WPA/WPA2/WPA3 Personal) and the password, for a network that does not
   broadcast its name (the profile is marked hidden). The join window shows the address the network will see, with a Copy
   button: the adapter's own one, or, while NetworkManager's configuration gives each Wi-Fi network a private address (as

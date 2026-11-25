@@ -404,11 +404,14 @@ impl App {
             if ask {
                 self.wifi_join = Some(Request::new(&ssid, ""));
             } else {
-                self.change(ctx, move || sys::act("nmcli", &["device", "wifi", "connect", &ssid]));
+                self.change(ctx, move || crate::noaddress::join(&ssid, || sys::act("nmcli", &["device", "wifi", "connect", &ssid])));
             }
         }
         if let Some(uuid) = join {
-            self.change(ctx, move || sys::act("nmcli", &["connection", "up", &uuid]));
+            // a network that joins but gives no address is said in plain words (YGG-76)
+            let name = n.saved.iter().find(|p| p.uuid == uuid).map(|p| if p.ssid.is_empty() { p.name.clone() } else { p.ssid.clone() });
+            let name = name.unwrap_or_default();
+            self.change(ctx, move || crate::noaddress::join(&name, || sys::act("nmcli", &["connection", "up", &uuid])));
         }
         if history {
             self.wifi_history = true;
@@ -487,7 +490,7 @@ impl App {
                     self.wifi_join = Some(Request::new(&w.ssid, ""));
                 } else {
                     let ssid = w.ssid.clone();
-                    self.change(ctx, move || sys::act("nmcli", &["device", "wifi", "connect", &ssid]));
+                    self.change(ctx, move || crate::noaddress::join(&ssid, || sys::act("nmcli", &["device", "wifi", "connect", &ssid])));
                 }
             }
         }
@@ -540,7 +543,8 @@ impl App {
                     }
                 } else if in_range && ui::action(ui, pal, "Join this network").clicked() {
                     let id = uuid.to_string();
-                    self.change(ctx, move || sys::act("nmcli", &["connection", "up", &id]));
+                    let name = if saved.ssid.is_empty() { saved.name.clone() } else { saved.ssid.clone() };
+                    self.change(ctx, move || crate::noaddress::join(&name, || sys::act("nmcli", &["connection", "up", &id])));
                 }
             }
             if !self.net_forget {

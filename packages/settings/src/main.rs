@@ -32,6 +32,7 @@ mod media;
 mod multilink_ui;
 mod nav;
 mod netconf;
+mod noaddress;
 mod peripherals;
 mod printers;
 mod privmic;
