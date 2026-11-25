@@ -511,14 +511,21 @@ fn an_x11_window_shown_again_under_the_resting_pointer_hears_it_move() {
     conn.flush().unwrap();
     comp.wait(10, "the window managed", |c| c.window("Prog").is_some());
     comp.must(&format!("place {} 100 100 300 200", client_of(&comp, "Prog")));
-    // the pointer to `at` on the screen: does the program hear it move there (within 2 s)?
+    // A window is listed as soon as the program shows it; the pointer can be in it only once XWayland has made its surface
+    // (then it is active) and drawn it (its green, away from where the pointer goes).
+    let shown = |c: &Compositor| {
+        c.window("Prog").is_some_and(|w| w.at == (100, 100) && w.states.iter().any(|s| s == "active"))
+            && c.screenshot("HEADLESS-1").count((110, 220, 100, 50), (0, 255, 0)) == 100 * 50
+    };
+    comp.wait(10, "the window drawn where it was placed", shown);
+    // the pointer to `at` on the screen: does the program hear it move there, in its window (within 2 s)?
     let heard_at = |at: (i32, i32)| {
         comp.must(&format!("pointer {} {}", at.0, at.1));
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(2) {
             while let Some(e) = conn.poll_for_event().expect("the X11 connection") {
                 if let x11rb::protocol::Event::MotionNotify(m) = e {
-                    if (m.root_x as i32, m.root_y as i32) == at {
+                    if m.event == win && (m.event_x as i32, m.event_y as i32) == (at.0 - 100, at.1 - 100) {
                         return true;
                     }
                 }
@@ -528,13 +535,15 @@ fn an_x11_window_shown_again_under_the_resting_pointer_hears_it_move() {
         false
     };
     assert!(heard_at((250, 200)), "the program hears the pointer in its window");
-    // hidden and shown again while the pointer rests on it, back where it was
+    // hidden and shown again while the pointer rests on it, back where it was (gone from the screen in between)
     conn.unmap_window(win).unwrap();
     conn.flush().unwrap();
-    comp.wait(10, "the window hidden", |c| c.window("Prog").is_none());
+    comp.wait(10, "the window hidden", |c| {
+        c.window("Prog").is_none() && c.screenshot("HEADLESS-1").count((110, 220, 100, 50), (0, 255, 0)) == 0
+    });
     conn.map_window(win).unwrap();
     conn.flush().unwrap();
-    comp.wait(10, "the window shown again where it was", |c| c.window("Prog").is_some_and(|w| w.at == (100, 100)));
+    comp.wait(10, "the window drawn again where it was", shown);
     // the pointer moves within it: heard
     comp.must("pointer 260 200");
     assert!(heard_at((270, 210)), "the program hears the pointer in its window shown again");
