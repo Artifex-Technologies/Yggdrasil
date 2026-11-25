@@ -886,6 +886,69 @@ fn the_grips_of_an_x11_window_lie_over_its_own_shadow() {
     }
 }
 
+/// The edge of its shadow where an X11 program takes clicks (GTK 3's resize border, 10 pixels out from its window) is in the
+/// program's own pixels: at 125 % X11 programs draw in the screen's, so the edge is 8 logical pixels wide. A click 9 out
+/// reaches what is behind (the X server finds no window of the program there), one 4 out is the program's.
+#[test]
+fn the_clickable_edge_of_an_x11_shadow_is_in_the_programs_pixels() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "the edge of an X11 shadow at 125 %");
+    let (comp, display) = with_xwayland_on(&["--output", "1600x900@1.25"], |_| {});
+    let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = conn.setup().roots[screen].root;
+    let atom = |n: &str| conn.intern_atom(false, n.as_bytes()).unwrap().reply().unwrap().atom;
+    let (extents, motif) = (atom("_GTK_FRAME_EXTENTS"), atom("_MOTIF_WM_HINTS"));
+    // a 350x250 window in a 25 pixel shadow, in the program's pixels (280x200 in 20 here), with its own title bar
+    let win = conn.generate_id().unwrap();
+    let aux = CreateWindowAux::new().background_pixel(0xff0000).event_mask(EventMask::BUTTON_PRESS);
+    conn.create_window(0, win, root, 0, 0, 400, 300, 0, WindowClass::INPUT_OUTPUT, 0, &aux).unwrap();
+    conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"x11edge\0X11edge\0").unwrap();
+    conn.change_property32(PropMode::REPLACE, win, motif, motif, &[2, 0, 0, 0, 0]).unwrap();
+    conn.change_property32(PropMode::REPLACE, win, extents, AtomEnum::CARDINAL, &[25; 4]).unwrap();
+    conn.map_window(win).unwrap();
+    conn.flush().unwrap();
+    // its X window at 60,60 (75,75 in the program's pixels)
+    comp.wait(10, "the window shown", |c| c.window("X11edge").is_some_and(|w| w.rect() == (80, 80, 280, 200)));
+    // a Wayland window behind it, reaching out past its right edge (at 360)
+    let mut c = comp.connect();
+    let behind = c.window("test.behind", "Behind");
+    c.draw(&behind, (200, 150), 0xff0000ff);
+    c.roundtrip();
+    comp.wait(10, "the window behind listed", |c| c.window("test.behind").is_some());
+    comp.must(&format!("place {} 260 100 200 150", client_of(&comp, "test.behind")));
+    let id = client_of(&comp, "X11edge");
+    let active = |app: &str| comp.must("active").iter().any(|l| l.split('\t').nth(1) == Some(app));
+    comp.must(&format!("activate {id}"));
+    comp.wait(10, "the X11 window in front", |_| active("X11edge"));
+    // 9 pixels right of the window (11.25 of the program's, past its border)
+    while conn.poll_for_event().unwrap().is_some() {}
+    comp.must("pointer 369 180");
+    comp.must("click");
+    comp.wait(10, "the window behind given the click", |_| active("test.behind"));
+    // 4 pixels out (5 of the program's) it is the X11 window's, in X in its shadow: 304,120 into its X window here
+    comp.must(&format!("activate {id}"));
+    comp.wait(10, "the X11 window in front again", |_| active("X11edge"));
+    comp.must("pointer 364 180");
+    comp.must("click");
+    let start = Instant::now();
+    loop {
+        match conn.poll_for_event().unwrap() {
+            Some(x11rb::protocol::Event::ButtonPress(e)) => {
+                assert_eq!((e.event, e.event_x, e.event_y), (win, 380, 150), "where the click in the shadow landed");
+                break;
+            }
+            Some(_) => {}
+            None => {
+                assert!(start.elapsed() < Duration::from_secs(5), "the click reached the shadow: {}", comp.log_tail(20));
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+}
+
 /// A program may write anything into _GTK_FRAME_EXTENTS, and Smithay reads each side as 0 to 65535 (one above i32::MAX as
 /// none): sides that add up to 2^31, a side of i32::MAX on the left and top or on the right and bottom, sides above i32::MAX,
 /// a shadow far wider than its window, and one side of 300 (just past MAX_SHADOW), set before the window is shown and on a

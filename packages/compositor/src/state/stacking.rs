@@ -26,7 +26,8 @@ use crate::deco::{self, Hit};
 /// How far out from its window an X11 program's surface takes clicks. A program that draws its own shadow (GTK, Chromium) keeps
 /// its resize border at the inner edge of the shadow and lets clicks on the rest through to what is behind, by an X input
 /// shape that XWayland does not hand on: the surface would take them all over the shadow, which is not drawn. GTK 3 takes
-/// them 10 pixels out, GTK 4 12 (a click past GTK 3's would be lost: the X server finds no window of it there).
+/// them 10 pixels out, GTK 4 12 (a click past GTK 3's would be lost: the X server finds no window of it there). In the
+/// program's own pixels: X11 programs draw at XWayland's scale, so at 125 % this is 8 logical pixels.
 const X11_BORDER: f64 = 10.0;
 
 /// What is under a point of the space, the frontmost thing there.
@@ -135,7 +136,7 @@ impl App {
         // where the surface's own origin is (the window's geometry may start inside it, past a client-side shadow); an X11
         // window's surface only as far out as X11_BORDER, and not past the window where the compositor's grips are
         let render = loc - geo.loc;
-        if w.x11_surface().is_none() || around(if grips { 0.0 } else { X11_BORDER }).contains(pos) {
+        if w.x11_surface().is_none() || around(if grips { 0.0 } else { X11_BORDER / self.x11_client_scale() }).contains(pos) {
             if let Some((s, p)) = w.surface_under(pos - render.to_f64(), WindowSurfaceType::ALL) {
                 return Some(Under::Window(w.clone(), s, (p + render).to_f64()));
             }
