@@ -26,6 +26,9 @@ pub struct Status {
     pub version: String,
     pub kvm: bool,
     pub ask_password: bool,
+    /// A new guest's processors and memory (MiB) when its description names none; 0: Limbo's own (YGG-139).
+    pub default_cpus: i64,
+    pub default_memory_mb: i64,
     pub total: i64,
     pub images: i64,
     pub guests: i64,
@@ -129,6 +132,8 @@ pub fn parse(json: &str) -> Option<Shown> {
         version: s["version"].as_str().unwrap_or("").to_string(),
         kvm: s["kvm"].as_bool().unwrap_or(false),
         ask_password: s["ask_password"].as_bool().unwrap_or(true),
+        default_cpus: s["default_cpus"].as_i64().unwrap_or(0),
+        default_memory_mb: s["default_memory_mb"].as_i64().unwrap_or(0),
         total: space["total_bytes"].as_i64().unwrap_or(0),
         images: space["images_bytes"].as_i64().unwrap_or(0),
         guests: space["guests_bytes"].as_i64().unwrap_or(0),
@@ -250,6 +255,18 @@ pub fn describe(i: &Instance) -> String {
     s
 }
 
+/// `limbo settings defaults CPUS MEMORY_MB`'s arguments, or why these values cannot be set: processors 0 to 64, memory 0
+/// or at least 512 MiB (a manifest's own ranges; 0 is Limbo's own).
+pub fn defaults_args(cpus: i64, mem: i64) -> Result<Vec<String>, String> {
+    if !(0..=64).contains(&cpus) {
+        return Err("Processors: 0 to 64".into());
+    }
+    if mem != 0 && !(512..=1 << 20).contains(&mem) {
+        return Err("Memory: 0, or 512 MiB or more".into());
+    }
+    Ok(vec!["settings".into(), "defaults".into(), cpus.to_string(), mem.to_string()])
+}
+
 /// Does an answer ask for the password (the switch is on)?
 pub fn wants_password(out: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(out).ok().and_then(|v| v["code"].as_str().map(|c| c == "password_required")).unwrap_or(false)
@@ -279,6 +296,8 @@ pub struct Panel {
     /// listed addresses yet).
     allow_text: std::collections::HashMap<String, String>,
     allow_for: Option<String>,
+    /// A new guest's processors and memory as being edited (from the status until changed).
+    defaults: Option<(i64, i64)>,
 }
 
 /// The programs a change runs: Limbo's command and pkexec (a test gives stand-ins).
@@ -413,6 +432,7 @@ impl Panel {
             saved: None,
             allow_text: Default::default(),
             allow_for: None,
+            defaults: None,
         };
         p.load(ctx);
         p
@@ -446,6 +466,7 @@ impl Panel {
                 Msg::Shown(s) => self.shown = s,
                 Msg::Done(r) => {
                     self.busy = false;
+                    self.defaults = None;
                     if let Err(e) = r {
                         self.status = e;
                     }
@@ -518,6 +539,29 @@ impl Panel {
                     job = Some((vec!["settings".into(), "password".into(), if ask { "on" } else { "off" }.into()], true, None));
                 }
             });
+            // a new guest's processors and memory when its description names none (YGG-139), root's: with the password
+            let (mut cpus, mut mem) = self.defaults.unwrap_or((status.default_cpus, status.default_memory_mb));
+            let sub = "For a guest whose description names none. 0 is Limbo's own: 2 processors, 4096 MiB";
+            ui::row(ui, pal, false, "New guests get", Some(sub), |ui| {
+                ui.add_enabled_ui(!self.busy, |ui| {
+                    ui.add(egui::DragValue::new(&mut cpus).range(0..=64).suffix(" processors"));
+                    ui.add(egui::DragValue::new(&mut mem).range(0..=1 << 20).speed(64).suffix(" MiB"));
+                    let changed = (cpus, mem) != (status.default_cpus, status.default_memory_mb);
+                    match defaults_args(cpus, mem) {
+                        Ok(args) => {
+                            if ui.add_enabled(changed, egui::Button::new("Apply")).clicked() {
+                                job = Some((args, true, None));
+                            }
+                        }
+                        Err(why) => {
+                            ui.label(why);
+                        }
+                    }
+                });
+            });
+            if (cpus, mem) != self.defaults.unwrap_or((status.default_cpus, status.default_memory_mb)) {
+                self.defaults = Some((cpus, mem));
+            }
         });
         ui.add_space(8.0);
         ui::group(ui, pal, None, |ui| {
@@ -811,6 +855,42 @@ mod tests {
             "pkexec\nlimbo instance set lab --network allowlist --allow 1.1.1.1:udp:53,2606:4700::1111:tcp:443,9.9.9.9:tcp:853 --json\n\
              pkexec\nlimbo instance set lab --network allowlist --allow 2606:4700::1111:tcp:443,9.9.9.9:tcp:853 --json\n"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// YGG-139: a new guest's defaults are read from the status (0 when Limbo leaves them out), checked as Limbo checks
+    /// them, and set through pkexec with `limbo settings defaults`.
+    #[test]
+    fn a_new_guests_defaults_are_shown_and_set() {
+        let Some(Shown::Ready { status, .. }) = parse(SHOW) else { panic!("not parsed") };
+        assert_eq!((status.default_cpus, status.default_memory_mb), (0, 0));
+        let show = r#"{"status": {"ask_password": false, "default_cpus": 4, "default_memory_mb": 8192}, "instances": [], "licenses": []}"#;
+        let Some(Shown::Ready { status, .. }) = parse(show) else { panic!("not parsed") };
+        assert_eq!((status.default_cpus, status.default_memory_mb), (4, 8192));
+
+        assert_eq!(defaults_args(4, 8192).unwrap(), ["settings", "defaults", "4", "8192"]);
+        assert_eq!(defaults_args(0, 0).unwrap(), ["settings", "defaults", "0", "0"]);
+        for (c, m) in [(65, 0), (-1, 0), (2, 100), (2, -5)] {
+            assert!(defaults_args(c, m).is_err(), "{c} {m}");
+        }
+
+        let dir = std::env::temp_dir().join(format!("settings-limbo-defaults-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let seen = dir.join("seen");
+        let script = |name: &str, body: String| {
+            use std::os::unix::fs::PermissionsExt;
+            let p = dir.join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p.to_string_lossy().into_owned()
+        };
+        let p = Programs {
+            limbo: script("limbo", format!("#!/bin/sh\necho \"limbo $*\" >> '{}'\necho '{{}}'\n", seen.display())),
+            pkexec: script("pkexec", format!("#!/bin/sh\necho pkexec >> '{}'\nexec \"$@\"\n", seen.display())),
+        };
+        run(&p, &defaults_args(4, 8192).unwrap(), true, None).unwrap();
+        assert_eq!(std::fs::read_to_string(&seen).unwrap(), "pkexec\nlimbo settings defaults 4 8192 --json\n");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

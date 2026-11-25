@@ -547,6 +547,9 @@ About only when switched on, have no picture.
     stopped or held, processors, memory, network, its own changes, owner), the runs and hand-started guests, and the Windows
     licenses (masked).
   - **Ask for my password for Limbo changes:** the switch (`pkexec limbo settings password on|off`).
+  - **New guests get:** the processors and memory a guest gets when its description names none (0 is Limbo's own, 2 and
+    4096 MiB; `pkexec limbo settings defaults CPUS MEMORY_MB`, read from `limbo settings show`'s status; needs a Limbo
+    with 37099a0). Not yet looked at on screen.
   - **Start, Stop, Free space** on the person's own guests: run as the person; when Limbo answers `password_required` the
     same command runs again through pkexec. A held guest has no buttons; its row says "held by Heimdall".
   - **Network** of each own guest (root's choice, so always through pkexec; from its next start): No network, Internet only,
