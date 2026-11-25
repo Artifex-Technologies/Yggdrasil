@@ -6,7 +6,7 @@ description = "Lets X11 programs that draw their own title bar (Steam) be dragge
 license = "MPL-2.0"
 
 [dependencies]
-x11rb = "0.13.2"
+x11rb = "0.14.0"
 # Hyprland's socket, found and bounded the same way as every other tool's
 yggdrasil-wm = { path = "../wm" }
 
