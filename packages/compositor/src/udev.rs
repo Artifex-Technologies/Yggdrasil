@@ -210,7 +210,7 @@ fn screen_feedback(out: &GbmOut, render_node: DrmNode, render_formats: &FormatSe
         let device = surface.device_fd().dev_id().ok()?;
         let builder = DmabufFeedbackBuilder::new(render_node.dev_id(), render_formats.iter().copied());
         let render = builder.clone().build().ok()?;
-        let scanout = builder.add_preference_tranche(device, Some(TrancheFlags::Scanout), scanout).build().ok()?;
+        let scanout = builder.add_preference_tranche(device, TrancheFlags::Scanout, scanout, 4u32..=6).build().ok()?;
         Some(Feedback { render, scanout })
     })
 }
@@ -374,8 +374,8 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 for d in b.devices.values_mut() {
                     let active = match &mut d.gpu {
-                        Gpu::Gles { manager, .. } => manager.activate(false),
-                        Gpu::Pixman { manager, .. } => manager.activate(false),
+                        Gpu::Gles { manager, .. } => manager.lock().activate(false),
+                        Gpu::Pixman { manager, .. } => manager.lock().activate(false),
                     };
                     if let Err(e) = active {
                         eprintln!("yggdrasil-compositor: the GPU did not come back: {e}");
@@ -667,7 +667,7 @@ fn make_gpu(node: DrmNode, drm: DrmDevice, fd: DrmDeviceFd) -> Result<Gpu, Strin
                     .and_then(|d| d.try_get_render_node().ok().flatten())
                     .unwrap_or(node);
                 let allocator = GbmAllocator::new(gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
-                let exporter = GbmFramebufferExporter::new(gbm.clone(), Some(render_node));
+                let exporter = GbmFramebufferExporter::new(gbm.clone(), render_node.into());
                 let formats: FormatSet = renderer.egl_context().dmabuf_render_formats().iter().copied().collect();
                 let manager = DrmOutputManager::new(drm, allocator, exporter, Some(gbm), COLOR_FORMATS.iter().copied(), formats);
                 return Ok(Gpu::Gles { renderer: Box::new(renderer), manager });
@@ -881,7 +881,13 @@ fn scan(
                 let o = Output::new(
                     name.clone(),
                     // no serial number: programs would get one more way to tell this machine apart
-                    PhysicalProperties { size: (w as i32, h as i32).into(), subpixel: Subpixel::Unknown, make, model, serial_number: String::new() },
+                    PhysicalProperties {
+                        size: (w as i32, h as i32).into(),
+                        subpixel: Subpixel::Unknown,
+                        make,
+                        model,
+                        serial_number: String::new(),
+                    },
                 );
                 for m in &modes {
                     o.add_mode(Mode::from(*m));
@@ -913,6 +919,7 @@ fn scan(
         };
         let made = match &mut dev.gpu {
             Gpu::Gles { renderer, manager } => manager
+                .lock()
                 .initialize_output::<_, Elem>(
                     crtc,
                     start,
@@ -925,6 +932,7 @@ fn scan(
                 .map(Out::Gles)
                 .map_err(|e| e.to_string()),
             Gpu::Pixman { renderer, manager } => manager
+                .lock()
                 .initialize_output::<_, PixElem>(
                     crtc,
                     start,
@@ -1155,7 +1163,7 @@ fn resumed(udev: &Rc<RefCell<Udev>>, app: &mut App) {
 fn input_added(udev: &Rc<RefCell<Udev>>, app: &mut App, device: smithay::reexports::input::Device) {
     let mut b = udev.borrow_mut();
     let taken: Vec<String> = b.inputs.iter().map(|(_, i)| i.name.clone()).collect();
-    let name = crate::input::device_name(device.name(), &taken);
+    let name = crate::input::device_name(&device.name(), &taken);
     b.inputs.push((device.clone(), DeviceInfo { raw: device.name().to_string(), name, kind: InputKind::Other }));
     let caps = |d: &smithay::reexports::input::Device| crate::input::Caps {
         pointer: d.has_capability(DeviceCapability::Pointer),
@@ -1284,7 +1292,17 @@ fn set_up_input(device: &mut smithay::reexports::input::Device, info: &DeviceInf
     if device.config_tap_finger_count() > 0 {
         let _ = device.config_tap_set_enabled(p.tap_to_click.unwrap_or_else(|| device.config_tap_default_enabled()));
         let _ = device.config_tap_set_drag_enabled(p.tap_and_drag.unwrap_or_else(|| device.config_tap_default_drag_enabled()));
-        let _ = device.config_tap_set_drag_lock_enabled(p.drag_lock.unwrap_or_else(|| device.config_tap_default_drag_lock_enabled()));
+        let _ = device.config_tap_set_drag_lock_enabled(
+            p.drag_lock
+                .map(|on| {
+                    if on {
+                        smithay::reexports::input::DragLockState::EnabledTimeout
+                    } else {
+                        smithay::reexports::input::DragLockState::Disabled
+                    }
+                })
+                .unwrap_or_else(|| device.config_tap_default_drag_lock_enabled()),
+        );
     }
     if device.config_dwt_is_available() {
         let _ = device.config_dwt_set_enabled(p.disable_while_typing.unwrap_or_else(|| device.config_dwt_default_enabled()));

@@ -90,8 +90,15 @@ pub fn remove_display_files(app: &App) {
 fn spawn(app: &mut App, handle: LoopHandle<'static, App>, sockets: X11Sockets) -> Result<(), Box<dyn std::error::Error>> {
     // XWayland's own messages are rarely useful; YGGDRASIL_COMPOSITOR_DEBUG shows them
     let out = || if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() { Stdio::inherit() } else { Stdio::null() };
-    let (xwayland, client) =
-        XWayland::spawn_with_sockets(&app.display_handle, sockets, std::iter::empty::<(String, String)>(), std::iter::empty::<String>(), out(), out(), |_| ())?;
+    let (xwayland, client) = XWayland::spawn_with_sockets(
+        &app.display_handle,
+        sockets,
+        std::iter::empty::<(String, String)>(),
+        std::iter::empty::<String>(),
+        out(),
+        out(),
+        |_| (),
+    )?;
     // X11 programs at the screens' own resolution from the start (follow_scale), before XWayland reads the screens
     app.xwayland_client = Some(client.clone());
     app.follow_scale();
@@ -99,19 +106,22 @@ fn spawn(app: &mut App, handle: LoopHandle<'static, App>, sockets: X11Sockets) -
     let token = handle
         .insert_source(xwayland, move |event, _, app| {
             match event {
-                XWaylandEvent::Ready { x11_socket, display_number } => match X11Wm::start_wm(wm_handle.clone(), &app.display_handle, x11_socket, client.clone())
-                {
-                    Ok(mut wm) => {
-                        // games ask for the primary monitor to know where to go full screen
-                        let _ = wm.set_randr_primary_output(Some(&app.output));
-                        app.xwm = Some(wm);
-                        app.x11_display = Some(display_number);
-                        // the reader first: it also keeps XSETTINGS, which x11_resources sends it
-                        app.x11_reader = crate::x11asked::Reader::start(display_number, &wm_handle);
-                        app.x11_resources(true);
+                XWaylandEvent::Ready { x11_socket, display_number } => {
+                    match X11Wm::start_wm(wm_handle.clone(), &app.display_handle, x11_socket, client.clone()) {
+                        Ok(mut wm) => {
+                            // games ask for the primary monitor to know where to go full screen
+                            let _ = wm.set_randr_primary_output(Some(&app.output));
+                            app.xwm = Some(wm);
+                            app.x11_display = Some(display_number);
+                            // the reader first: it also keeps XSETTINGS, which x11_resources sends it
+                            app.x11_reader = crate::x11asked::Reader::start(display_number, &wm_handle);
+                            app.x11_resources(true);
+                        }
+                        Err(e) => {
+                            eprintln!("yggdrasil-compositor: the X11 window manager could not start, X11 programs will not show: {e}")
+                        }
                     }
-                    Err(e) => eprintln!("yggdrasil-compositor: the X11 window manager could not start, X11 programs will not show: {e}"),
-                },
+                }
                 XWaylandEvent::Error => eprintln!("yggdrasil-compositor: XWayland stopped while starting; X11 programs will not run"),
             }
         })

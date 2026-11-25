@@ -22,6 +22,7 @@ use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
 use smithay::desktop::{layer_map_for_output, LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType};
+use smithay::input::dnd::{DnDGrab, DndGrabHandler, DndTarget, GrabType, Source};
 use smithay::input::keyboard::{keysyms, FilterResult, KeyboardHandle};
 use smithay::input::pointer::Focus;
 use smithay::input::pointer::{ButtonEvent, CursorImageStatus, MotionEvent, PointerHandle};
@@ -44,7 +45,6 @@ use smithay::wayland::compositor::{
 use smithay::wayland::idle_notify::{IdleNotifierHandler, IdleNotifierState};
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::seat::WaylandFocus;
-use smithay::input::dnd::{DnDGrab, DndGrabHandler, DndTarget, GrabType, Source};
 use smithay::wayland::selection::data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler};
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker};
@@ -379,6 +379,8 @@ impl ClientData for ClientState {
 /// Who has the keyboard: a Wayland surface (a window, a panel, the locker), or an X11 window. An X11 window needs more than its
 /// surface: the X server must also be told which of its windows has the focus, or XWayland passes the keys to none of them
 /// (Smithay's X11Surface does that, then hands the keys to its surface).
+// X11Surface is large on Smithay main (432 bytes); there is one focus per seat, so boxing it would buy nothing
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum KbFocus {
     Wl(WlSurface),

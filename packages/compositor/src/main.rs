@@ -332,7 +332,13 @@ fn run_nested(
     let mode = Mode { size: backend.borrow().window_size(), refresh: 60_000 };
     let output = Output::new(
         "yggdrasil-1".into(),
-        PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "nested window".into(), serial_number: String::new() },
+        PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: Subpixel::Unknown,
+            make: "Yggdrasil".into(),
+            model: "nested window".into(),
+            serial_number: String::new(),
+        },
     );
     let _global = output.create_global::<App>(&dh);
     toplevels::create_global(&dh);

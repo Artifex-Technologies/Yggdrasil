@@ -122,4 +122,3 @@ impl PointerConstraintsHandler for App {
         }
     }
 }
-

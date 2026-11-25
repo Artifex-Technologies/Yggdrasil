@@ -229,7 +229,11 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
                 app.key((k + 8).into(), smithay::backend::input::KeyState::Pressed, t);
             }
             for k in keys.iter().rev() {
-                app.key((k + 8).into(), smithay::backend::input::KeyState::Released, smithay::backend::input::InputTime::from_micros(t.micros() + 1000));
+                app.key(
+                    (k + 8).into(),
+                    smithay::backend::input::KeyState::Released,
+                    smithay::backend::input::InputTime::from_micros(t.micros() + 1000),
+                );
             }
             Ok(vec![])
         }
