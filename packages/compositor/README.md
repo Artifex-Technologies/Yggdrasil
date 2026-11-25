@@ -148,9 +148,9 @@ The session's behaviour is set in `packages/session/hyprland/yggdrasil.lua` (wit
 - The system's keyboard layout, Settings > Displays' `monitors.lua` (modes, scales, places, screens off), screens that come and
   go, remembered window places and the screens set to tile, Steam's maximize request ignored (items 3 and 5, 2026-11-12, below).
 
-**Built but only tried nested (not in the headless tests):** XWayland and games (opaque games, `_NET_WM_STATE` before mapping,
-Wine's WM_STATE), Super+T and tiling workspaces, window controls for server-side decoration, move and resize
-by the program's own title bar, Super+drag, xdg-activation, idle inhibit, clipboard and primary selection.
+**Built but only tried nested (not in the headless tests):** XWayland and games (opaque games, Wine's WM_STATE), Super+T and
+tiling workspaces, window controls for server-side decoration, move and resize by the program's own title bar, Super+drag,
+xdg-activation, idle inhibit, clipboard and primary selection.
 
 **X11 programs at the screen's resolution** (2026-11-22): XWayland's client scale is the largest scale of the screens that are
 on, so XWayland is told each screen's size in pixels: on a 1920x1200 screen at 125% a game is offered 1920x1200 and drawn sharp,
@@ -432,9 +432,10 @@ without a GPU driver, `YGGDRASIL_COMPOSITOR_RENDERER=pixman` keeps Mesa out alto
 own guests have no display and need root, so it only lends its Arch cloud image as a read-only base), memory capped (4 GB in a
 6 GB scope), a virtio GPU with virgl through the host's render node (`boot gl`) or without 3D (`boot 2d`), a USB keyboard and
 tablet. `provision` installs what the guest needs (mesa, seatd, libinput, polkit, foot, XWayland, fonts, wlr-randr) and logs `ygg`
-in on tty1 by itself; `deploy` copies the release builds in; `start [ARGS]` runs the compositor on tty1 through logind (default:
-the panel and Settings); `shot NAME [KEYS]` presses keys and saves the screen (through QEMU's VNC socket, which reads the virgl
-picture back); `type`, `click`, `move` give input; `ctl`, `measure`, `stop`. Screenshots stay in the VM's folder, not here.
+in on tty1 by itself; `deploy` copies the release builds in; `start [ARGS]` runs the compositor on tty1 through logind, with
+the own session's environment (default: the panel and Settings); `shot NAME [KEYS]` presses keys and saves the screen (through
+QEMU's VNC socket, which reads the virgl picture back); `type`, `click`, `move` give input; `ctl`, `measure`, `stop`. Screenshots
+stay in the VM's folder, not here.
 
 ## Building and running the tests
 

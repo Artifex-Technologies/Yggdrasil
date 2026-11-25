@@ -114,7 +114,7 @@ fn spawn(app: &mut App, handle: LoopHandle<'static, App>, sockets: X11Sockets) -
                             let _ = wm.set_randr_primary_output(Some(&app.output));
                             app.xwm = Some(wm);
                             app.x11_display = Some(display_number);
-                            app.x11_reader = crate::x11asked::Reader::start(display_number, &wm_handle);
+                            app.x11_reader = crate::x11asked::Reader::start(display_number);
                             app.x11_resources(true);
                         }
                         Err(e) => {
@@ -151,6 +151,10 @@ pub fn fit_in(zone: Rectangle<i32, Logical>, want: Rectangle<i32, Logical>) -> R
     let y = want.loc.y.min(zone.loc.y + zone.size.h - h).max(zone.loc.y);
     Rectangle::new((x, y).into(), (w, h).into())
 }
+
+/// Where an X11 window made full screen or maximized as it was shown (it asked before) would have gone: where it goes back to.
+/// Kept with the window until XWayland has made its surface (state.rs, adopt).
+pub struct PlaceBefore(pub Rectangle<i32, Logical>);
 
 /// A game, recognised by its X11 class: a Steam game (`steam_app_<id>`) or a Windows program through Wine or Proton (`<name>.exe`).
 /// Games are drawn opaque whatever their alpha channel holds.
@@ -336,22 +340,6 @@ impl App {
         set_x_resources(d, set);
     }
 
-    /// What an X11 window asked for before it was shown (x11asked.rs), now that the answer is in: full screen or maximized,
-    /// unless it already is, or the person has placed it since.
-    pub fn x11_asked(&mut self, a: crate::x11asked::Asked) {
-        let Some(w) = self.all_windows().into_iter().map(|(w, _)| w).find(|w| w.x11_surface().is_some_and(|x| x.window_id() == a.window))
-        else {
-            return;
-        };
-        let Some(x) = w.x11_surface() else { return };
-        if a.fullscreen && !x.is_fullscreen() {
-            self.fullscreen(&w);
-        } else if a.maximized && !a.fullscreen && !x.is_maximized() && !self.placed_by_layout(&w) && !crate::state::ignores_maximize(&w) {
-            self.maximize(&w);
-        }
-        self.wake();
-    }
-
     /// The window (shown, minimized or on another workspace) of an X11 window, if the compositor manages it.
     fn x11_window(&self, x: &X11Surface) -> Option<Window> {
         self.all_windows().into_iter().map(|(w, _)| w).find(|w| w.x11_surface().is_some_and(|s| same(s, x)))
@@ -452,9 +440,15 @@ impl XwmHandler for App {
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
     /// A program shows a window: it is placed like a Wayland window (one after another, a little offset; tiled on a tiling
-    /// workspace once its surface exists).
+    /// workspace once its surface exists), or full screen or maximized when it asked for that before it was shown.
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
         self.wake();
+        // A window that asks to start minimized (WM_HINTS' initial state Iconic, which Smithay marks hidden before this) is shown
+        // like any other, so it is told it is shown: not hidden, WM_STATE Normal (Wine keeps a window minimized while its
+        // WM_STATE says Iconic).
+        if window.is_hidden() {
+            let _ = window.set_hidden(false);
+        }
         if window.set_mapped(true).is_err() {
             return;
         }
@@ -483,15 +477,25 @@ impl XwmHandler for App {
         };
         let _ = window.configure(place);
         self.space.map_element(w.clone(), place.loc, true);
-        // What it asked for before it was shown (full screen, maximized) is read on another thread: x11_asked acts on it.
+        // its own icon, for the dock (x11asked.rs)
         if let Some(r) = &self.x11_reader {
-            r.ask(window.window_id());
-            // its own icon, for the dock (x11asked.rs)
             r.icon(window.window_id(), &window.class());
         }
-        // A game the size of the screen that did not say so is taken as going full screen (a guess, so only for games).
-        if game_full {
-            self.fullscreen(&w);
+        // What it asked for before it was shown (`_NET_WM_STATE`, which Smithay reads before this), from its first frame: full
+        // screen or maximized. A game the size of the screen that did not say so is taken as going full screen (a guess, so only
+        // for games). Steam's maximize is ignored, as its maximize requests are, and it is told so: a window marked maximized is
+        // held at its place and size. Leaving full screen or maximized, it goes back to `place` (adopt keeps it for that, once
+        // XWayland has made the surface the compositor keeps places by).
+        let full = game_full || window.is_fullscreen();
+        if !full && window.is_maximized() && crate::state::ignores_maximize(&w) {
+            let _ = window.set_maximized(false);
+        } else if full || window.is_maximized() {
+            w.user_data().insert_if_missing(|| PlaceBefore(place));
+            if full {
+                self.fullscreen(&w);
+            } else {
+                self.maximize(&w);
+            }
         }
     }
 
