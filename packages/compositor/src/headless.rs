@@ -41,7 +41,9 @@
 //!   switcher                     the window switcher's cards while it is open (control.rs)
 //!   frames                       how many frames were drawn since the start: "drawn N" (screens drawn with something changed
 //!                                on them) and "passes N" (times the screens were looked at); for tests that nothing is drawn
-//!                                while nothing changes
+//!                                while nothing changes. Then "game NAME N" for each output: the commits of the full screen
+//!                                windows on it, the only ones that start a refresh under variable refresh on the hardware
+//!                                (udev.rs, `vrr_flip`)
 //!   key COMBO...                 press and let go of keys, one combination after another: super+ctrl+2, Return, a,
 //!                                XF86AudioMute, ctrl (the left one; rctrl the right one)
 //!   key-down COMBO, key-up COMBO press keys and keep them down (a held key repeats its shortcut), let them go
@@ -792,7 +794,11 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             write_png(&s.image, Path::new(path), pointer.as_ref().map(|(p, at)| (&**p, *at)))?;
             Ok(vec![])
         }
-        ["frames"] => Ok(vec![format!("drawn {}", h.drawn), format!("passes {}", h.passes)]),
+        ["frames"] => {
+            let mut lines = vec![format!("drawn {}", h.drawn), format!("passes {}", h.passes)];
+            lines.extend(app.space.outputs().map(|o| format!("game {} {}", o.name(), app.game_commits(o).count)));
+            Ok(lines)
+        }
         ["key", combos @ ..] if !combos.is_empty() => {
             let mut all = vec![];
             for c in combos {

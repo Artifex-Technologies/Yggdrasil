@@ -262,6 +262,14 @@ impl Compositor {
         self.must("focus").join("\n")
     }
 
+    /// The commits of the full screen windows on an output so far (the `frames` command's "game NAME N"): under variable
+    /// refresh on the hardware backend only these start a refresh of the screen (udev.rs, `vrr_flip`).
+    pub fn game_commits(&self, output: &str) -> u64 {
+        let prefix = format!("game {output} ");
+        let lines = self.must("frames");
+        lines.iter().find_map(|l| l.strip_prefix(&prefix)).unwrap_or_else(|| panic!("no {prefix}line in {lines:?}")).parse().unwrap()
+    }
+
     /// Wait (up to `secs`) until `done` holds for the compositor; `what` names it in the failure.
     pub fn wait(&self, secs: u64, what: &str, done: impl Fn(&Compositor) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(secs);

@@ -151,6 +151,67 @@ fn an_x11_window_opens_as_it_asked_before_it_was_shown() {
     }
 }
 
+/// Under variable refresh on the hardware backend only a full screen window's own frames start a refresh of its screen
+/// (udev.rs, `vrr_flip`; tests/fullscreen.rs has the rest of which commits count). Proton games are X11 windows, found from
+/// their surface through XWayland's association and full screen by their X window's state: such a window's frames count as
+/// its screen's game frames, and none once it has left full screen.
+#[test]
+fn a_full_screen_x11_windows_frames_are_its_screens_game_frames() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    use x11rb::protocol::xproto::{ChangeGCAux, ClientMessageEvent, CreateGCAux, Rectangle};
+    let _l = limit(60, "a full screen X11 window's frames");
+    let (comp, display) = with_xwayland_on(&["--size", "800x600"], |_| {});
+    let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = conn.setup().roots[screen].root;
+    let atom = |n: &[u8]| conn.intern_atom(false, n).unwrap().reply().unwrap().atom;
+    let (net_state, full) = (atom(b"_NET_WM_STATE"), atom(b"_NET_WM_STATE_FULLSCREEN"));
+    // a game as Proton opens one: full screen asked for before it is shown
+    let win = conn.generate_id().unwrap();
+    let aux = CreateWindowAux::new().background_pixel(0x0000ff);
+    conn.create_window(0, win, root, 0, 0, 300, 200, 0, WindowClass::INPUT_OUTPUT, 0, &aux).unwrap();
+    conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, b"game\0Game\0").unwrap();
+    conn.change_property32(PropMode::REPLACE, win, net_state, AtomEnum::ATOM, &[full]).unwrap();
+    conn.map_window(win).unwrap();
+    let gc = conn.generate_id().unwrap();
+    conn.create_gc(gc, win, &CreateGCAux::new()).unwrap();
+    conn.flush().unwrap();
+    // the game draws a frame (all of its window in one colour); the frame is on the screen once its middle has that colour
+    let draw = |rgb: u32| {
+        conn.change_gc(gc, &ChangeGCAux::new().foreground(rgb)).unwrap();
+        conn.poly_fill_rectangle(win, gc, &[Rectangle { x: 0, y: 0, width: 800, height: 600 }]).unwrap();
+        conn.flush().unwrap();
+    };
+    let shown = |what: &str, at: (i32, i32), rgb: (u8, u8, u8)| {
+        comp.wait(10, what, |c| c.screenshot("HEADLESS-1").count((at.0, at.1, 40, 40), rgb) == 40 * 40);
+    };
+    comp.wait(10, "the window full screen", |c| c.window("Game").is_some_and(|w| w.has("fullscreen") && w.rect() == (0, 0, 800, 600)));
+    // (its very first picture may come before XWayland has tied its surface to the X window, and then cannot count: the next
+    // one does, which is all the pacing needs)
+    shown("its first frame", (380, 280), (0, 0, 255));
+    let mut n = comp.game_commits("HEADLESS-1");
+    for (rgb, on_screen) in [(0xff0000, (255, 0, 0)), (0x00ff00, (0, 255, 0)), (0xffff00, (255, 255, 0))] {
+        draw(rgb);
+        shown("its next frame", (380, 280), on_screen);
+        let now = comp.game_commits("HEADLESS-1");
+        assert!(now > n, "its frame counted: {now} after {n}");
+        n = now;
+    }
+
+    // the game leaves full screen (a _NET_WM_STATE remove message to the root, as programs send it): a window like any other
+    let ev = ClientMessageEvent::new(32, win, net_state, [0, full, 0, 1, 0]);
+    conn.send_event(false, root, EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY, ev).unwrap();
+    conn.flush().unwrap();
+    comp.wait(10, "the window back at its own size", |c| c.window("Game").is_some_and(|w| !w.has("fullscreen") && w.size == (300, 200)));
+    let left = comp.game_commits("HEADLESS-1");
+    let at = comp.window("Game").unwrap().at;
+    draw(0xff00ff);
+    shown("its frame out of full screen", (at.0 + 130, at.1 + 80), (255, 0, 255));
+    assert_eq!(comp.game_commits("HEADLESS-1"), left, "a window that left full screen paces nothing");
+}
+
 /// X11 programs show the desktop's pointer (YGG-10): the compositor sets Xcursor.theme and Xcursor.size in XWayland's X
 /// resources (libXcursor reads them), with Xft.dpi beside them, and sets them again when the pointer's theme changes.
 #[test]

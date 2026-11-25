@@ -188,6 +188,16 @@ pub type DmabufImport = Box<dyn FnMut(&smithay::backend::allocator::dmabuf::Dmab
 /// Shows the pointer the way it should look.
 pub type CursorHook = Box<dyn FnMut(&CursorImageStatus)>;
 
+/// How many times the full screen windows on a screen committed, and when the last time was (`App::game_commits`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GameCommits {
+    pub count: u64,
+    pub last: Option<std::time::Instant>,
+}
+
+/// A screen's `GameCommits`, kept with its output.
+struct GameCommitsOf(std::cell::Cell<GameCommits>);
+
 pub struct App {
     /// GPU pictures from programs (linux-dmabuf): the protocol's state, and how the renderer takes one in (set by the backend;
     /// None until then, when every import fails and programs fall back to shared memory).
@@ -1379,6 +1389,21 @@ impl App {
                 && window_geometry(w).size.w > 0
                 && self.space.outputs_for_element(w).contains(output)
         })
+    }
+
+    /// A full screen window committed (a game's frame): counted for each screen it covers (`game_commits`).
+    fn count_game_commit(&self, w: &Window) {
+        let now = std::time::Instant::now();
+        for o in self.space.outputs_for_element(w) {
+            let c = &o.user_data().get_or_insert(|| GameCommitsOf(std::cell::Cell::new(GameCommits::default()))).0;
+            c.set(GameCommits { count: c.get().count + 1, last: Some(now) });
+        }
+    }
+
+    /// The commits of the full screen windows on `output` since the start. Under variable refresh only these start a refresh
+    /// of the screen; the pointer, the panels and every other change wait for the next one (udev.rs, `vrr_flip`).
+    pub fn game_commits(&self, output: &Output) -> GameCommits {
+        output.user_data().get::<GameCommitsOf>().map(|c| c.0.get()).unwrap_or_default()
     }
 
     /// Make a window full screen (the whole output).
@@ -3405,6 +3430,9 @@ impl CompositorHandler for App {
             let found = self.space.elements().find(|w| is_window_of(w, &root)).cloned();
             if let Some(w) = found {
                 w.on_commit();
+                if win_has(&w, xdg_toplevel::State::Fullscreen) {
+                    self.count_game_commit(&w);
+                }
                 if self.unplaced.contains(&root) {
                     let size = window_geometry(&w).size;
                     if size.w > 0 && size.h > 0 {
