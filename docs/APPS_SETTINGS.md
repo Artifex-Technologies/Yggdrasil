@@ -545,6 +545,12 @@ About only when switched on, have no picture.
   - **Ask for my password for Limbo changes:** the switch (`pkexec limbo settings password on|off`).
   - **Start, Stop, Free space** on the person's own guests: run as the person; when Limbo answers `password_required` the
     same command runs again through pkexec. A held guest has no buttons; its row says "held by Heimdall".
+  - **Network** of each own guest (root's choice, so always through pkexec; from its next start): No network, Internet only,
+    or Listed addresses. A guest on listed addresses shows each one (address, protocol, port, from the effective `allow` list
+    Limbo gives) with Remove, and a field to add one (`ADDRESS:tcp|udp:PORT`, IPv6 and `/BITS` too). `--allow` replaces the
+    whole list, so every add or remove sends all of it (`limbo instance set NAME --network allowlist --allow A,B,...`); the
+    last address cannot be removed (No network closes it instead). Choosing Listed addresses asks for the first address and
+    sends it with the mode.
   - **Windows licenses:** add (name, and the key on stdin, never a command line) and remove, through pkexec.
   - Quarantine decisions are not here: they are Heimdall's (Security > the monitor's page).
   - A Limbo from before this protocol is named as such ("older than this page"); one that does not run, or a person not in

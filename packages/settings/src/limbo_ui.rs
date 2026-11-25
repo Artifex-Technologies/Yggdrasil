@@ -49,6 +49,53 @@ pub struct Instance {
     pub held_by_heimdall: bool,
     pub held: bool,
     pub pending: bool,
+    /// What an `allowlist` guest may reach, as it will start (Limbo's effective list; empty in every other mode).
+    pub allow: Vec<Allowed>,
+}
+
+/// One address an `allowlist` guest may reach.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Allowed {
+    pub addr: String,
+    pub proto: String,
+    pub port: i64,
+}
+
+impl Allowed {
+    /// As `limbo instance set --allow` takes it: ADDRESS:tcp|udp:PORT.
+    pub fn text(&self) -> String {
+        format!("{}:{}:{}", self.addr, self.proto, self.port)
+    }
+}
+
+/// One entry as typed (`1.1.1.1:udp:53`, `2606:4700::1111:tcp:443`, `10.0.0.0/8:tcp:22`), read from the right as Limbo reads
+/// `--allow`; Limbo checks the address itself when the list is sent.
+pub fn parse_allowed(text: &str) -> Result<Allowed, String> {
+    let t = text.trim();
+    let bad = || "Write it as ADDRESS:tcp:PORT or ADDRESS:udp:PORT, e.g. 1.1.1.1:udp:53".to_string();
+    let (rest, port) = t.rsplit_once(':').ok_or_else(bad)?;
+    let (addr, proto) = rest.rsplit_once(':').ok_or_else(bad)?;
+    if addr.is_empty() || addr.contains(',') || addr.chars().any(char::is_whitespace) {
+        return Err(bad());
+    }
+    if proto != "tcp" && proto != "udp" {
+        return Err("The protocol is tcp or udp".into());
+    }
+    let port = port.parse::<i64>().ok().filter(|p| (1..=65535).contains(p)).ok_or("The port is a number from 1 to 65535")?;
+    Ok(Allowed { addr: addr.into(), proto: proto.into(), port })
+}
+
+/// The root command that gives a guest exactly this list: `--allow` replaces the whole list, so every change sends all of it.
+pub fn allow_args(name: &str, list: &[Allowed]) -> Vec<String> {
+    vec![
+        "instance".into(),
+        "set".into(),
+        name.into(),
+        "--network".into(),
+        "allowlist".into(),
+        "--allow".into(),
+        list.iter().map(Allowed::text).collect::<Vec<_>>().join(","),
+    ]
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -107,6 +154,18 @@ pub fn parse(json: &str) -> Option<Shown> {
                     held_by_heimdall: i["held_by_heimdall"].as_bool().unwrap_or(false),
                     held: !i["hold"].is_null() && i.get("hold").is_some(),
                     pending: i["pending"].as_bool().unwrap_or(false),
+                    allow: i["allow"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .map(|x| Allowed {
+                                    addr: x["addr"].as_str().unwrap_or("").to_string(),
+                                    proto: x["proto"].as_str().unwrap_or("").to_string(),
+                                    port: x["port"].as_i64().unwrap_or(0),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                 })
                 .collect()
         })
@@ -216,6 +275,22 @@ pub struct Panel {
     free_confirm: Option<String>,
     /// Where the last report was saved.
     saved: Option<String>,
+    /// The address being typed for each guest's list, and the guest whose first address is being asked for (it is not on
+    /// listed addresses yet).
+    allow_text: std::collections::HashMap<String, String>,
+    allow_for: Option<String>,
+}
+
+/// The programs a change runs: Limbo's command and pkexec (a test gives stand-ins).
+pub struct Programs {
+    pub limbo: String,
+    pub pkexec: String,
+}
+
+impl Default for Programs {
+    fn default() -> Programs {
+        Programs { limbo: LIMBO.into(), pkexec: "pkexec".into() }
+    }
 }
 
 pub fn installed() -> bool {
@@ -237,11 +312,11 @@ fn show_json() -> String {
 }
 
 /// Runs `limbo ARGS --json` as the person, and through pkexec when Limbo asks for the password (or `root` says it must).
-fn run(args: &[String], root: bool, stdin: Option<String>) -> Result<(), String> {
+pub fn run(p: &Programs, args: &[String], root: bool, stdin: Option<String>) -> Result<(), String> {
     let go = |pk: bool| -> Result<String, String> {
-        let mut c = if pk { Command::new("pkexec") } else { Command::new(LIMBO) };
+        let mut c = if pk { Command::new(&p.pkexec) } else { Command::new(&p.limbo) };
         if pk {
-            c.arg(LIMBO);
+            c.arg(&p.limbo);
         }
         c.args(args).arg("--json").stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(if stdin.is_some() {
             Stdio::piped()
@@ -329,6 +404,8 @@ impl Panel {
             adding: false,
             free_confirm: None,
             saved: None,
+            allow_text: Default::default(),
+            allow_for: None,
         };
         p.load(ctx);
         p
@@ -351,7 +428,7 @@ impl Panel {
         self.status.clear();
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         std::thread::spawn(move || {
-            let _ = tx.send(Msg::Done(run(&args, root, stdin)));
+            let _ = tx.send(Msg::Done(run(&Programs::default(), &args, root, stdin)));
             ctx.request_repaint();
         });
     }
@@ -496,15 +573,18 @@ impl Panel {
                                         true,
                                         None,
                                     ));
+                                    self.allow_for = None;
                                 }
                             }
-                            ui.label(
-                                RichText::new(
-                                    "Listed addresses only: limbo instance set NAME --network allowlist --allow ADDRESS:tcp:PORT",
-                                )
-                                .size(11.0)
-                                .color(pal.dim),
-                            );
+                            // listed addresses need at least one: the first is asked for below, and sent with the mode
+                            if ui
+                                .add_enabled(!self.busy && !i.held, egui::Button::selectable(i.network == "allowlist", "Listed addresses"))
+                                .on_hover_text("Only the addresses you list")
+                                .clicked()
+                                && i.network != "allowlist"
+                            {
+                                self.allow_for = Some(i.name.clone());
+                            }
                         })
                         .response
                         .on_hover_text("What it may reach, from its next start (asks for your password)");
@@ -521,6 +601,52 @@ impl Panel {
                         }
                     }
                 });
+                let listed = i.network == "allowlist";
+                if listed || self.allow_for.as_deref() == Some(i.name.as_str()) {
+                    let editable = !self.busy && !i.held;
+                    for (k, e) in i.allow.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.add_space(24.0);
+                            ui.label(RichText::new(format!("{}  ·  {} port {}", e.addr, e.proto, e.port)).size(13.0));
+                            let only = i.allow.len() == 1;
+                            let r = ui.add_enabled(editable && !only, egui::Button::new("Remove")).on_disabled_hover_text(if only {
+                                "A guest on listed addresses needs at least one: choose No network instead"
+                            } else {
+                                "Not now"
+                            });
+                            if r.clicked() {
+                                let mut rest = i.allow.clone();
+                                rest.remove(k);
+                                job = Some((allow_args(&i.name, &rest), true, None));
+                            }
+                        });
+                    }
+                    ui.horizontal(|ui| {
+                        ui.add_space(24.0);
+                        let text = self.allow_text.entry(i.name.clone()).or_default();
+                        ui::field(ui, pal, text, "1.1.1.1:udp:53", 240.0, false);
+                        let label = if listed { "Add address" } else { "Use listed addresses" };
+                        if ui.add_enabled(editable && !text.trim().is_empty(), egui::Button::new(label)).clicked() {
+                            match parse_allowed(text) {
+                                Ok(a) if listed && i.allow.contains(&a) => self.status = format!("{} is listed already", a.text()),
+                                Ok(a) => {
+                                    let mut list = if listed { i.allow.clone() } else { vec![] };
+                                    list.push(a);
+                                    job = Some((allow_args(&i.name, &list), true, None));
+                                    text.clear();
+                                    self.allow_for = None;
+                                }
+                                Err(e) => self.status = e,
+                            }
+                        }
+                        if !listed && ui::quiet(ui, pal, "Cancel").clicked() {
+                            self.allow_for = None;
+                        }
+                    })
+                    .response
+                    .on_hover_text("From its next start; asks for your password");
+                    ui.add_space(4.0);
+                }
             }
         });
         if !others.is_empty() {
@@ -631,6 +757,55 @@ mod tests {
          "disk": {"base_bytes": 1, "own_bytes": 0}, "owner": "", "mine": false,
          "hold": {"id": "q-1", "status": "open", "level": "isolate", "by": "heimdall", "since": "2026-11-05T08:00:00Z"}, "held_by_heimdall": true}],
       "licenses": [{"id": "lic-1", "name": "Windows 11 Pro", "masked": "XXXXX-XXXXX-XXXXX-XXXXX-7K2QF", "added": "x", "assigned": ["win11"]}]}"#;
+
+    /// YGG-65: an allowlist guest's addresses are read, a typed one is read from the right as Limbo reads `--allow`, and adding
+    /// or removing one sends the whole list through pkexec to Limbo (stand-ins for both record what they were given).
+    #[test]
+    fn the_listed_addresses_are_read_and_sent_whole() {
+        let show = r#"{"status": {}, "licenses": [], "instances": [
+            {"name": "lab", "kind": "instance", "network": "allowlist",
+             "allow": [{"addr": "1.1.1.1", "port": 53, "proto": "udp"}, {"addr": "2606:4700::1111", "port": 443, "proto": "tcp"}]},
+            {"name": "plain", "kind": "instance", "network": "none", "allow": []}]}"#;
+        let Some(Shown::Ready { instances, .. }) = parse(show) else { panic!("not parsed") };
+        let texts = |l: &[Allowed]| l.iter().map(Allowed::text).collect::<Vec<_>>().join(",");
+        assert_eq!(texts(&instances[0].allow), "1.1.1.1:udp:53,2606:4700::1111:tcp:443");
+        assert!(instances[1].allow.is_empty());
+
+        assert_eq!(parse_allowed(" 9.9.9.9:tcp:853 ").unwrap().text(), "9.9.9.9:tcp:853");
+        let v6 = parse_allowed("2606:4700::1111:udp:53").unwrap();
+        assert_eq!((v6.addr.as_str(), v6.proto.as_str(), v6.port), ("2606:4700::1111", "udp", 53));
+        assert_eq!(parse_allowed("10.0.0.0/8:tcp:22").unwrap().addr, "10.0.0.0/8");
+        for bad in ["1.1.1.1:53", "1.1.1.1:icmp:0", "1.1.1.1:tcp:70000", "1.1.1.1:tcp:0", ":tcp:80", "a,b:tcp:1", "a b:tcp:1", ""] {
+            assert!(parse_allowed(bad).is_err(), "{bad}");
+        }
+
+        let dir = std::env::temp_dir().join(format!("settings-limbo-allow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let seen = dir.join("seen");
+        let script = |name: &str, body: String| {
+            use std::os::unix::fs::PermissionsExt;
+            let p = dir.join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p.to_string_lossy().into_owned()
+        };
+        let p = Programs {
+            limbo: script("limbo", format!("#!/bin/sh\necho \"limbo $*\" >> '{}'\necho '{{}}'\n", seen.display())),
+            pkexec: script("pkexec", format!("#!/bin/sh\necho pkexec >> '{}'\nexec \"$@\"\n", seen.display())),
+        };
+        let mut list = instances[0].allow.clone();
+        list.push(parse_allowed("9.9.9.9:tcp:853").unwrap());
+        run(&p, &allow_args("lab", &list), true, None).unwrap();
+        list.remove(0);
+        run(&p, &allow_args("lab", &list), true, None).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&seen).unwrap(),
+            "pkexec\nlimbo instance set lab --network allowlist --allow 1.1.1.1:udp:53,2606:4700::1111:tcp:443,9.9.9.9:tcp:853 --json\n\
+             pkexec\nlimbo instance set lab --network allowlist --allow 2606:4700::1111:tcp:443,9.9.9.9:tcp:853 --json\n"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn the_answer_parses() {
