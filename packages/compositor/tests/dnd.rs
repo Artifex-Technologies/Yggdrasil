@@ -53,9 +53,11 @@ struct Log {
     sent: usize,
     finished: bool,
     cancelled: bool,
-    /// a program's looks at the serial counter (`look`), and the serial of the last finger down it was told of
+    /// a program's looks at the serial counter (`look`), the serial of the last finger down it was told of, and whether it was
+    /// told a finger lifted
     looks: Vec<u32>,
     touched: Option<u32>,
+    lifted: bool,
 }
 
 thread_local! {
@@ -130,13 +132,16 @@ impl Dispatch<XdgToplevel, Look> for State {
     fn event(_: &mut Self, _: &XdgToplevel, _: xdg_toplevel::Event, _: &Look, _: &Connection, _: &QueueHandle<Self>) {}
 }
 
-/// A program's touch: the serial of a finger down, which a drag made with that finger names.
+/// A program's touch: the serial of a finger down, which a drag made with that finger names, and the finger's lift (a finger
+/// that became a drag lifts without the program being told).
 struct Finger;
 
 impl Dispatch<WlTouch, Finger> for State {
     fn event(_: &mut Self, _: &WlTouch, event: wl_touch::Event, _: &Finger, _: &Connection, _: &QueueHandle<Self>) {
-        if let wl_touch::Event::Down { serial, .. } = event {
-            log(|l| l.touched = Some(serial));
+        match event {
+            wl_touch::Event::Down { serial, .. } => log(|l| l.touched = Some(serial)),
+            wl_touch::Event::Up { .. } => log(|l| l.lifted = true),
+            _ => {}
         }
     }
 }
@@ -319,6 +324,59 @@ fn a_program_cannot_drag_with_another_programs_press() {
     assert_eq!(comp.window("test.pressed").unwrap().at, (ai.at.0 + 40, ai.at.1), "the move goes on");
     comp.must("release");
     comp.must("key-up super");
+}
+
+/// The same with a finger: a program told the serial of a finger put down on another program's window cannot make a drag of
+/// it. It is told its drag is cancelled, the pointer is not a drag's closed hand, the window the finger goes over is offered
+/// nothing, and the finger stays the first program's: it is told the finger lifted.
+#[test]
+fn a_program_cannot_drag_with_another_programs_finger() {
+    let _l = limit(60, "a drag with another program's finger");
+    let comp = Compositor::start(&["--size", "1000x600"]);
+    // the program touched, on the left; the one the finger goes over, on the right, which takes text
+    let mut a = comp.connect();
+    let (_ak, _ap) = a.input();
+    let aw = a.window("test.pressed", "Pressed");
+    a.draw(&aw, (300, 200), 0xff0000ff);
+    let mut t = comp.connect();
+    let (_tk, _tp) = t.input();
+    let tw = t.window("test.target", "Target");
+    t.draw(&tw, (300, 200), 0xff00ff00);
+    comp.must(&format!("place {} 50 100 300 200", id_of(&comp, "test.pressed")));
+    comp.must(&format!("place {} 600 100 300 200", id_of(&comp, "test.target")));
+    a.roundtrip();
+    t.roundtrip();
+    let (ai, ti) = (comp.window("test.pressed").unwrap(), comp.window("test.target").unwrap());
+    let _tdev = data_device(&mut t);
+    // the other program: a data device and its text, no touch, nothing shown
+    let mut b = comp.connect();
+    let m: WlDataDeviceManager = b.globals.bind(&b.qh, 3..=3, ()).expect("wl_data_device_manager 3");
+    let device: WlDataDevice = m.get_data_device(&b.seat, &b.qh, ());
+    let origin = b.compositor.create_surface(&b.qh, ());
+    b.roundtrip();
+    // the first touch gives the seat its touch; the first program then takes it
+    let (x, y) = (ai.at.0 + 100, ai.at.1 + 100);
+    comp.must(&format!("touch-down 0 {x} {y}"));
+    comp.must("touch-up 0");
+    a.until("the seat has touch", |st| st.seat_caps & 4 != 0);
+    let _touch = a.seat.get_touch(&a.qh, Finger);
+    a.roundtrip();
+
+    // a finger down on the first program's window, and the other program told its serial
+    comp.must(&format!("touch-down 1 {x} {y}"));
+    until(&mut [&mut a], "the finger down", |l| l.touched.is_some());
+    let pointer = comp.must("pointer-look");
+    device.start_drag(Some(&text(&b, &m)), &origin, None, log(|l| l.touched.unwrap()));
+    until(&mut [&mut b], "the other program told its drag is cancelled", |l| l.cancelled);
+    assert_eq!(comp.must("pointer-look"), pointer, "the pointer as it was, not a drag's closed hand");
+    // over the window on the right: it is offered nothing; the finger lifts, and the first program is told
+    comp.must(&format!("touch-move 1 {} {}", ti.at.0 + 150, ti.at.1 + 100));
+    for p in [&mut a, &mut b, &mut t] {
+        p.roundtrip();
+    }
+    assert!(log(|l| l.entered.is_none()), "nothing offered to the window under the finger");
+    comp.must("touch-up 1");
+    until(&mut [&mut a], "the first program told the finger lifted", |l| l.lifted);
 }
 
 /// A program that starts its drag again with the same press (the button still held) replaces its first drag: that one is told it
