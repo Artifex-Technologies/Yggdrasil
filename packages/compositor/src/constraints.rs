@@ -10,7 +10,7 @@
 //!
 //! The hardware backend moves the pointer through `pointer_moved_by`; the headless backend's `pointer-move DX DY` (its virtual
 //! mouse) does the same, for the tests.
-use crate::state::App;
+use crate::state::{App, PtrFocus};
 use smithay::input::pointer::{PointerHandle, RelativeMotionEvent};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point};
@@ -27,12 +27,12 @@ enum Hold {
 }
 
 impl App {
-    /// A mouse or touchpad moved by `delta` (libinput's, after its acceleration; `raw` before it), at `utime` microseconds: the
+    /// A mouse or touchpad moved by `delta` (libinput's, after its acceleration; `raw` before it), at `time`: the
     /// program under the pointer is told the relative motion, and the pointer moves unless a constraint holds it.
-    pub fn pointer_moved_by(&mut self, delta: Point<f64, Logical>, raw: Point<f64, Logical>, utime: u64) {
+    pub fn pointer_moved_by(&mut self, delta: Point<f64, Logical>, raw: Point<f64, Logical>, time: smithay::backend::input::InputTime) {
         let pointer = self.pointer.clone();
-        let under = self.surface_under(self.pointer_location);
-        pointer.relative_motion(self, under.clone(), &RelativeMotionEvent { delta, delta_unaccel: raw, utime });
+        let under = self.target_under(self.pointer_location);
+        pointer.relative_motion(self, under.clone(), &RelativeMotionEvent { delta, delta_unaccel: raw, time });
         let to = self.pointer_location + delta;
         let to = self.nearest_on_screens(to).unwrap_or(to);
         match self.hold(&pointer, under.as_ref()) {
@@ -47,19 +47,19 @@ impl App {
             }
             _ => {}
         }
-        self.pointer_to(to, (utime / 1000) as u32);
+        self.pointer_to(to, time);
         self.constraint_check();
     }
 
     /// The constraint active on the surface under the pointer, if the pointer is inside its region.
-    fn hold(&self, pointer: &PointerHandle<App>, under: Option<&(WlSurface, Point<f64, Logical>)>) -> Hold {
-        let Some((surface, origin)) = under else { return Hold::Free };
-        let (surface, origin) = (surface.clone(), *origin);
+    fn hold(&self, pointer: &PointerHandle<App>, under: Option<&(PtrFocus, Point<f64, Logical>)>) -> Hold {
+        let Some((focus, origin)) = under else { return Hold::Free };
+        let (surface, origin) = (focus.surface(), *origin);
         let at = self.pointer_location - origin;
         // read before the constraint is (with_pointer_constraint holds the surface's state, which this takes too)
         let size =
-            smithay::backend::renderer::utils::with_renderer_surface_state(&surface, |st| st.surface_size()).flatten().unwrap_or_default();
-        with_pointer_constraint(&surface, pointer, |c| {
+            smithay::backend::renderer::utils::with_renderer_surface_state(surface, |st| st.surface_size()).flatten().unwrap_or_default();
+        with_pointer_constraint(surface, pointer, |c| {
             let Some(c) = c.filter(|c| c.is_active()) else { return Hold::Free };
             if !c.region().is_none_or(|r| r.contains(at.to_i32_round())) {
                 return Hold::Free;
@@ -122,6 +122,3 @@ impl PointerConstraintsHandler for App {
         }
     }
 }
-
-smithay::delegate_pointer_constraints!(App);
-smithay::delegate_relative_pointer!(App);

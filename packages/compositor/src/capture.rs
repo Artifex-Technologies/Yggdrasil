@@ -99,7 +99,7 @@ impl App {
         match source {
             Source::Window(s) => {
                 let w = self.window_for(s)?;
-                let geo = w.geometry();
+                let geo = crate::state::window_geometry(&w);
                 let scale = self.window_output(&w).current_scale().fractional_scale();
                 let (pw, ph) = ((geo.size.w as f64 * scale).round() as u32, (geo.size.h as f64 * scale).round() as u32);
                 (pw > 0 && ph > 0).then_some((pw, ph))

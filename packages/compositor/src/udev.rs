@@ -46,8 +46,9 @@
 //! - **Waiting for programs' GPUs** (sync.rs): a commit with a GPU buffer is applied once the buffer is drawn, through
 //!   explicit sync (linux-drm-syncobj-v1, which NVIDIA needs) where the GPU can, the buffer's own fences otherwise.
 //!
-//! Not yet (later milestones, docs/COMPOSITOR.md): several GPUs drawing for each other (a laptop's NVIDIA GPU behind the Intel
-//! one), direct scanout of full screen games tuned per GPU, VRR, tearing control.
+//! Known limitations (docs/COMPOSITOR.md): each GPU draws only its own screens (none draws for another, as a laptop's NVIDIA
+//! GPU behind the Intel one would need); no window goes to a plane, so a full screen game is always composited
+//! (`App::send_dmabuf_feedback` says why); no tearing control (Smithay's DRM compositor has no asynchronous page flips).
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -182,7 +183,8 @@ struct Screen {
     /// variable refresh can be switched on this screen without a modeset (the monitor and the GPU say so)
     vrr_capable: bool,
     /// what programs on this screen are told to allocate their GPU buffers as (linux-dmabuf feedback): the renderer's
-    /// formats, and for a window the screen could show directly (a full screen game) the formats its planes scan out first
+    /// formats, and for a window the screen tried to show directly the formats its planes scan out first (no window is tried:
+    /// `App::send_dmabuf_feedback`)
     feedback: Option<Feedback>,
     /// the last frame's picture went to the screen as it is, a program's buffer on the primary plane (direct scanout)
     direct: bool,
@@ -210,7 +212,7 @@ fn screen_feedback(out: &GbmOut, render_node: DrmNode, render_formats: &FormatSe
         let device = surface.device_fd().dev_id().ok()?;
         let builder = DmabufFeedbackBuilder::new(render_node.dev_id(), render_formats.iter().copied());
         let render = builder.clone().build().ok()?;
-        let scanout = builder.add_preference_tranche(device, Some(TrancheFlags::Scanout), scanout).build().ok()?;
+        let scanout = builder.add_preference_tranche(device, TrancheFlags::Scanout, scanout, 4u32..=6).build().ok()?;
         Some(Feedback { render, scanout })
     })
 }
@@ -374,8 +376,8 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 for d in b.devices.values_mut() {
                     let active = match &mut d.gpu {
-                        Gpu::Gles { manager, .. } => manager.activate(false),
-                        Gpu::Pixman { manager, .. } => manager.activate(false),
+                        Gpu::Gles { manager, .. } => manager.lock().activate(false),
+                        Gpu::Pixman { manager, .. } => manager.lock().activate(false),
                     };
                     if let Err(e) = active {
                         eprintln!("yggdrasil-compositor: the GPU did not come back: {e}");
@@ -667,7 +669,7 @@ fn make_gpu(node: DrmNode, drm: DrmDevice, fd: DrmDeviceFd) -> Result<Gpu, Strin
                     .and_then(|d| d.try_get_render_node().ok().flatten())
                     .unwrap_or(node);
                 let allocator = GbmAllocator::new(gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
-                let exporter = GbmFramebufferExporter::new(gbm.clone(), Some(render_node));
+                let exporter = GbmFramebufferExporter::new(gbm.clone(), render_node.into());
                 let formats: FormatSet = renderer.egl_context().dmabuf_render_formats().iter().copied().collect();
                 let manager = DrmOutputManager::new(drm, allocator, exporter, Some(gbm), COLOR_FORMATS.iter().copied(), formats);
                 return Ok(Gpu::Gles { renderer: Box::new(renderer), manager });
@@ -880,7 +882,14 @@ fn scan(
                 let (w, h) = conn.size().unwrap_or((0, 0));
                 let o = Output::new(
                     name.clone(),
-                    PhysicalProperties { size: (w as i32, h as i32).into(), subpixel: Subpixel::Unknown, make, model },
+                    // no serial number: programs would get one more way to tell this machine apart
+                    PhysicalProperties {
+                        size: (w as i32, h as i32).into(),
+                        subpixel: Subpixel::Unknown,
+                        make,
+                        model,
+                        serial_number: String::new(),
+                    },
                 );
                 for m in &modes {
                     o.add_mode(Mode::from(*m));
@@ -912,6 +921,7 @@ fn scan(
         };
         let made = match &mut dev.gpu {
             Gpu::Gles { renderer, manager } => manager
+                .lock()
                 .initialize_output::<_, Elem>(
                     crtc,
                     start,
@@ -924,6 +934,7 @@ fn scan(
                 .map(Out::Gles)
                 .map_err(|e| e.to_string()),
             Gpu::Pixman { renderer, manager } => manager
+                .lock()
                 .initialize_output::<_, PixElem>(
                     crtc,
                     start,
@@ -1154,7 +1165,7 @@ fn resumed(udev: &Rc<RefCell<Udev>>, app: &mut App) {
 fn input_added(udev: &Rc<RefCell<Udev>>, app: &mut App, device: smithay::reexports::input::Device) {
     let mut b = udev.borrow_mut();
     let taken: Vec<String> = b.inputs.iter().map(|(_, i)| i.name.clone()).collect();
-    let name = crate::input::device_name(device.name(), &taken);
+    let name = crate::input::device_name(&device.name(), &taken);
     b.inputs.push((device.clone(), DeviceInfo { raw: device.name().to_string(), name, kind: InputKind::Other }));
     let caps = |d: &smithay::reexports::input::Device| crate::input::Caps {
         pointer: d.has_capability(DeviceCapability::Pointer),
@@ -1283,7 +1294,17 @@ fn set_up_input(device: &mut smithay::reexports::input::Device, info: &DeviceInf
     if device.config_tap_finger_count() > 0 {
         let _ = device.config_tap_set_enabled(p.tap_to_click.unwrap_or_else(|| device.config_tap_default_enabled()));
         let _ = device.config_tap_set_drag_enabled(p.tap_and_drag.unwrap_or_else(|| device.config_tap_default_drag_enabled()));
-        let _ = device.config_tap_set_drag_lock_enabled(p.drag_lock.unwrap_or_else(|| device.config_tap_default_drag_lock_enabled()));
+        let _ = device.config_tap_set_drag_lock_enabled(
+            p.drag_lock
+                .map(|on| {
+                    if on {
+                        smithay::reexports::input::DragLockState::EnabledTimeout
+                    } else {
+                        smithay::reexports::input::DragLockState::Disabled
+                    }
+                })
+                .unwrap_or_else(|| device.config_tap_default_drag_lock_enabled()),
+        );
     }
     if device.config_dwt_is_available() {
         let _ = device.config_dwt_set_enabled(p.disable_while_typing.unwrap_or_else(|| device.config_dwt_default_enabled()));

@@ -308,6 +308,50 @@ impl Drop for Compositor {
     }
 }
 
+// ------------------------------------------------------------------ X11 programs
+
+/// Whether XWayland is installed: the X11 tests are skipped where it is not.
+pub fn xwayland_installed() -> bool {
+    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("Xwayland").is_file()))
+}
+
+/// The compositor's Xwayland process, if one runs.
+pub fn xwayland_of(comp: &Compositor) -> Option<u32> {
+    let parent = comp.child.id().to_string();
+    std::fs::read_dir("/proc").ok()?.filter_map(Result::ok).find_map(|e| {
+        let stat = std::fs::read_to_string(e.path().join("stat")).ok()?;
+        // pid (comm) state ppid ...
+        let (head, rest) = stat.rsplit_once(')')?;
+        let comm = head.split_once('(')?.1;
+        let ppid = rest.split_whitespace().nth(1)?;
+        (comm == "Xwayland" && ppid == parent && !rest.trim_start().starts_with('Z'))
+            .then(|| e.file_name().to_string_lossy().parse().ok())?
+    })
+}
+
+/// The compositor with XWayland, on the screens of `args` and with `setup` run on the test's folder first, and the X display
+/// it printed.
+pub fn with_xwayland_on(args: &[&str], setup: impl FnOnce(&Path)) -> (Compositor, String) {
+    with_xwayland_env(args, &[], setup)
+}
+
+/// As `with_xwayland_on`, with more environment for the compositor (YGGDRASIL_COMPOSITOR_DEBUG=1 puts XWayland's own messages
+/// and the compositor's debug lines in its log, for a failure's report).
+pub fn with_xwayland_env(args: &[&str], env: &[(&str, &str)], setup: impl FnOnce(&Path)) -> (Compositor, String) {
+    let mut all = vec![("YGGDRASIL_COMPOSITOR_XWAYLAND", "1")];
+    all.extend_from_slice(env);
+    let comp = Compositor::start_env(args, &all, setup);
+    let start = Instant::now();
+    loop {
+        let found = comp.log.lock().unwrap().iter().find_map(|l| l.strip_prefix("DISPLAY=").map(str::to_string));
+        if let Some(d) = found {
+            return (comp, d);
+        }
+        assert!(start.elapsed() < Duration::from_secs(20), "XWayland did not start: {}", comp.log_tail(20));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// A line of `windows`: app id, title, place, size, workspace (1-based), states.
 #[derive(Debug, Clone)]
 pub struct WinInfo {

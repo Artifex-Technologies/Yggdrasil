@@ -21,6 +21,7 @@
 //! - **Device names**: as Hyprland names them (lower case, spaces as `-`, `-1`, `-2` ... after a name already taken), so
 //!   input.conf's sections and Settings > Peripherals mean the same device on both.
 
+use smithay::backend::input::InputTime;
 use yggdrasil_wm::input::{self, Accel, ClickMethod, InputConf, Pointer, ScrollMethod};
 
 /// The headless backend's devices (the control socket's input): their names as `devices` lists them.
@@ -203,7 +204,7 @@ pub fn scroll(m: &Mouse, v: f64) -> f64 {
 /// An axis that is not in the event did not stop: a vertical two-finger scroll is not a stop of the horizontal axis on every
 /// frame (the laptop, 2026-11-19).
 pub fn axis_frame(
-    time: u32,
+    time: InputTime,
     source: smithay::backend::input::AxisSource,
     factor: f64,
     h: (Option<f64>, Option<f64>),
@@ -278,17 +279,47 @@ mod tests {
     fn a_touchpad_scroll_stops_only_the_axis_that_stopped() {
         use smithay::backend::input::AxisSource;
         // a vertical two-finger scroll: the horizontal axis is not in the event, and it did not stop
-        let f = super::axis_frame(10, AxisSource::Finger, 1.0, (None, None), (Some(-3.5), None));
+        let f = super::axis_frame(
+            smithay::backend::input::InputTime::from_millis(10),
+            AxisSource::Finger,
+            1.0,
+            (None, None),
+            (Some(-3.5), None),
+        );
         assert_eq!((f.axis, f.stop, f.source), ((0.0, -3.5), (false, false), Some(AxisSource::Finger)));
         // the fingers lifted: libinput's 0 on the vertical axis is its stop
-        let f = super::axis_frame(20, AxisSource::Finger, 1.0, (None, None), (Some(0.0), None));
+        let f = super::axis_frame(
+            smithay::backend::input::InputTime::from_millis(20),
+            AxisSource::Finger,
+            1.0,
+            (None, None),
+            (Some(0.0), None),
+        );
         assert_eq!(f.stop, (false, true));
-        let f = super::axis_frame(20, AxisSource::Finger, 1.0, (Some(0.0), None), (Some(0.0), None));
+        let f = super::axis_frame(
+            smithay::backend::input::InputTime::from_millis(20),
+            AxisSource::Finger,
+            1.0,
+            (Some(0.0), None),
+            (Some(0.0), None),
+        );
         assert_eq!(f.stop, (true, true), "both stopped");
         // a wheel never stops; its notches are kept, the value comes from them when libinput gives none, times the factor
-        let f = super::axis_frame(30, AxisSource::Wheel, 2.0, (None, None), (None, Some(120.0)));
+        let f = super::axis_frame(
+            smithay::backend::input::InputTime::from_millis(30),
+            AxisSource::Wheel,
+            2.0,
+            (None, None),
+            (None, Some(120.0)),
+        );
         assert_eq!((f.axis, f.v120, f.stop), ((0.0, 30.0), Some((0, 120)), (false, false)));
-        let f = super::axis_frame(30, AxisSource::Wheel, 1.0, (None, None), (Some(0.0), Some(0.0)));
+        let f = super::axis_frame(
+            smithay::backend::input::InputTime::from_millis(30),
+            AxisSource::Wheel,
+            1.0,
+            (None, None),
+            (Some(0.0), Some(0.0)),
+        );
         assert_eq!(f.stop, (false, false));
     }
 

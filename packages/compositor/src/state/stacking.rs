@@ -16,18 +16,28 @@ use smithay::desktop::{layer_map_for_output, LayerSurface, Window, WindowSurface
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::{self, ResizeEdge};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::{Logical, Point, Rectangle};
+use smithay::utils::{FrameExtents, Logical, Point, Rectangle};
 use smithay::wayland::shell::wlr_layer::Layer;
+use smithay::xwayland::X11Surface;
 
-use super::{win_has, App};
+use super::{win_has, window_geometry, App, PtrFocus};
 use crate::deco::{self, Hit};
 
+/// How far out from its window an X11 program's surface takes clicks. A program that draws its own shadow (GTK, Chromium) keeps
+/// its resize border at the inner edge of the shadow and lets clicks on the rest through to what is behind, by an X input
+/// shape that XWayland does not hand on: the surface would take them all over the shadow, which is not drawn. GTK 3 takes
+/// them 10 pixels out, GTK 4 12 (a click past GTK 3's would be lost: the X server finds no window of it there). In the
+/// program's own pixels: X11 programs draw at XWayland's scale, so at 125 % this is 8 logical pixels.
+const X11_BORDER: f64 = 10.0;
+
 /// What is under a point of the space, the frontmost thing there.
+// an X11 window is large (see KbFocus); this lives only while a point is looked up, so boxing it would only add an allocation
+#[allow(clippy::large_enum_variant)]
 pub enum Under {
     /// the lock's surface on that screen (while locked there is nothing else)
     Lock(WlSurface, Point<f64, Logical>),
-    /// an X11 menu or tooltip: its surface and where that surface's origin is
-    Overlay(WlSurface, Point<f64, Logical>),
+    /// an X11 menu or tooltip: its window, its surface and where that surface's origin is
+    Overlay(X11Surface, WlSurface, Point<f64, Logical>),
     /// a panel or background on a layer: the (sub)surface under the point and its origin
     Layer(LayerSurface, Layer, WlSurface, Point<f64, Logical>),
     /// a window: its surface, a subsurface or one of its menus (xdg popups) under the point, and that surface's origin
@@ -42,8 +52,24 @@ impl Under {
     /// The surface that gets pointer and touch events (none for the compositor's own controls and grips).
     pub fn surface(self) -> Option<(WlSurface, Point<f64, Logical>)> {
         match self {
-            Under::Lock(s, p) | Under::Overlay(s, p) | Under::Layer(_, _, s, p) | Under::Window(_, s, p) => Some((s, p)),
+            Under::Lock(s, p) | Under::Overlay(_, s, p) | Under::Layer(_, _, s, p) | Under::Window(_, s, p) => Some((s, p)),
             Under::Controls(..) | Under::Edge(..) => None,
+        }
+    }
+
+    /// What pointer and touch events go to, as the seat's focus: as `surface`, with an X11 window or menu as itself, so a drag
+    /// can speak XDND to it (its surface gets the events all the same).
+    pub fn target(self) -> Option<(PtrFocus, Point<f64, Logical>)> {
+        match self {
+            Under::Overlay(x, s, p) => Some((PtrFocus::X11(x, s), p)),
+            Under::Window(w, s, p) => Some((
+                match w.x11_surface() {
+                    Some(x) => PtrFocus::X11(x.clone(), s),
+                    None => PtrFocus::Wl(s),
+                },
+                p,
+            )),
+            u => u.surface().map(|(s, p)| (PtrFocus::Wl(s), p)),
         }
     }
 
@@ -70,8 +96,8 @@ impl App {
                 .find(|(o, _)| o == &output)
                 .map(|(_, l)| Under::Lock(l.wl_surface().clone(), origin.to_f64()));
         }
-        if let Some((s, p)) = self.overlay_under(pos) {
-            return Some(Under::Overlay(s, p));
+        if let Some((x, s, p)) = self.overlay_under(pos) {
+            return Some(Under::Overlay(x, s, p));
         }
         let full = self.fullscreen_in_front(&output);
         let on_layer = |layer: Layer| {
@@ -94,7 +120,7 @@ impl App {
     /// The part of one window at `pos`: its controls (drawn over its picture), its picture or menus, its grips (outside it).
     fn window_part(&self, w: &Window, pos: Point<f64, Logical>) -> Option<Under> {
         let loc = self.space.element_location(w)?;
-        let geo = w.geometry();
+        let geo = window_geometry(w);
         if geo.size.w <= 0 || geo.size.h <= 0 {
             // nothing drawn yet: `scene` skips it, so the pointer passes through it too
             return None;
@@ -104,17 +130,21 @@ impl App {
                 return Some(Under::Controls(w.clone(), deco::hit(pos.x - r.loc.x as f64)));
             }
         }
-        // where the surface's own origin is (the window's geometry may start inside it, past a client-side shadow)
+        let inner = Rectangle::new(loc, geo.size).to_f64();
+        let around = |by: f64| inner + FrameExtents::new(by, by, by, by);
+        let grips = self.bar_visible(w);
+        // where the surface's own origin is (the window's geometry may start inside it, past a client-side shadow); an X11
+        // window's surface only as far out as X11_BORDER, and not past the window where the compositor's grips are
         let render = loc - geo.loc;
-        if let Some((s, p)) = w.surface_under(pos - render.to_f64(), WindowSurfaceType::ALL) {
-            return Some(Under::Window(w.clone(), s, (p + render).to_f64()));
+        if w.x11_surface().is_none() || around(if grips { 0.0 } else { X11_BORDER / self.x11_client_scale() }).contains(pos) {
+            if let Some((s, p)) = w.surface_under(pos - render.to_f64(), WindowSurfaceType::ALL) {
+                return Some(Under::Window(w.clone(), s, (p + render).to_f64()));
+            }
         }
-        if !self.bar_visible(w) {
+        if !grips {
             return None;
         }
-        let inner = Rectangle::new(loc, geo.size).to_f64();
-        let g = deco::GRIP as f64;
-        let outer = Rectangle::new((inner.loc.x - g, inner.loc.y - g).into(), (inner.size.w + 2.0 * g, inner.size.h + 2.0 * g).into());
+        let outer = around(deco::GRIP as f64);
         if inner.contains(pos) || !outer.contains(pos) {
             return None;
         }
@@ -156,7 +186,10 @@ impl App {
         self.space
             .elements()
             .rev()
-            .filter(|w| w.geometry().size.w > 0 && w.geometry().size.h > 0)
+            .filter(|w| {
+                let size = window_geometry(w).size;
+                size.w > 0 && size.h > 0
+            })
             .find(|w| self.window_output(w) == *o)
             .is_some_and(|w| win_has(w, xdg_toplevel::State::Fullscreen))
     }

@@ -11,7 +11,7 @@ use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, Unde
 use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexProgram};
 use smithay::backend::renderer::utils::{CommitCounter, DamageSet, OpaqueRegions};
 use smithay::desktop::Window;
-use smithay::input::pointer::Focus;
+use smithay::input::pointer::{Focus, GrabStartData};
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -24,6 +24,7 @@ use smithay::wayland::selection::primary_selection::{
 };
 use smithay::wayland::selection::SelectionTarget;
 use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState};
+use smithay::xwayland::xwm::settings::Value;
 use smithay::xwayland::xwm::{Reorder, ResizeEdge as X11Edge, WmWindowProperty, XwmId};
 use smithay::xwayland::{X11Sockets, X11Surface, X11Wm, XWayland, XWaylandClientData, XWaylandEvent, XwmHandler};
 use x11rb::connection::Connection as _;
@@ -31,7 +32,7 @@ use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, PropMode};
 use x11rb::wrapper::ConnectionExt as _;
 
 use crate::grabs::{MoveGrab, ResizeGrab};
-use crate::state::{self, App, KbFocus};
+use crate::state::{self, App, KbFocus, PtrFocus};
 
 /// Make X11 programs possible: XWayland starts when the first X11 program connects, not with the compositor (about 23 MB and
 /// its start-up saved while none runs). The display's sockets are bound now, so DISPLAY is known at once (printed as
@@ -90,8 +91,15 @@ pub fn remove_display_files(app: &App) {
 fn spawn(app: &mut App, handle: LoopHandle<'static, App>, sockets: X11Sockets) -> Result<(), Box<dyn std::error::Error>> {
     // XWayland's own messages are rarely useful; YGGDRASIL_COMPOSITOR_DEBUG shows them
     let out = || if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() { Stdio::inherit() } else { Stdio::null() };
-    let (xwayland, client) =
-        XWayland::spawn_with_sockets(&app.display_handle, sockets, std::iter::empty::<(String, String)>(), out(), out(), |_| ())?;
+    let (xwayland, client) = XWayland::spawn_with_sockets(
+        &app.display_handle,
+        sockets,
+        std::iter::empty::<(String, String)>(),
+        std::iter::empty::<String>(),
+        out(),
+        out(),
+        |_| (),
+    )?;
     // X11 programs at the screens' own resolution from the start (follow_scale), before XWayland reads the screens
     app.xwayland_client = Some(client.clone());
     app.follow_scale();
@@ -99,19 +107,21 @@ fn spawn(app: &mut App, handle: LoopHandle<'static, App>, sockets: X11Sockets) -
     let token = handle
         .insert_source(xwayland, move |event, _, app| {
             match event {
-                XWaylandEvent::Ready { x11_socket, display_number } => match X11Wm::start_wm(wm_handle.clone(), x11_socket, client.clone())
-                {
-                    Ok(mut wm) => {
-                        // games ask for the primary monitor to know where to go full screen
-                        let _ = wm.set_randr_primary_output(Some(&app.output));
-                        app.xwm = Some(wm);
-                        app.x11_display = Some(display_number);
-                        // the reader first: it also keeps XSETTINGS, which x11_resources sends it
-                        app.x11_reader = crate::x11asked::Reader::start(display_number, &wm_handle);
-                        app.x11_resources(true);
+                XWaylandEvent::Ready { x11_socket, display_number } => {
+                    match X11Wm::start_wm(wm_handle.clone(), &app.display_handle, x11_socket, client.clone()) {
+                        Ok(mut wm) => {
+                            // games ask for the primary monitor to know where to go full screen
+                            let _ = wm.set_randr_primary_output(Some(&app.output));
+                            app.xwm = Some(wm);
+                            app.x11_display = Some(display_number);
+                            app.x11_reader = crate::x11asked::Reader::start(display_number);
+                            app.x11_resources(true);
+                        }
+                        Err(e) => {
+                            eprintln!("yggdrasil-compositor: the X11 window manager could not start, X11 programs will not show: {e}")
+                        }
                     }
-                    Err(e) => eprintln!("yggdrasil-compositor: the X11 window manager could not start, X11 programs will not show: {e}"),
-                },
+                }
                 XWaylandEvent::Error => eprintln!("yggdrasil-compositor: XWayland stopped while starting; X11 programs will not run"),
             }
         })
@@ -133,6 +143,12 @@ fn same(a: &X11Surface, b: &X11Surface) -> bool {
     a.xwm_id() == b.xwm_id() && a.window_id() == b.window_id()
 }
 
+/// Did the held button go down on this X11 window? Only such a press may become its move or resize: not another program's press,
+/// a press on the desktop, nor the compositor's own Super+drag.
+fn pressed_on(start: &GrabStartData<App>, window: &X11Surface) -> bool {
+    matches!(&start.focus, Some((PtrFocus::X11(x, _), _)) if same(x, window))
+}
+
 /// `want` made to fit in `zone`: no bigger than it, and moved so that all of it is on it.
 pub fn fit_in(zone: Rectangle<i32, Logical>, want: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
     let w = want.size.w.min(zone.size.w).max(1);
@@ -141,6 +157,10 @@ pub fn fit_in(zone: Rectangle<i32, Logical>, want: Rectangle<i32, Logical>) -> R
     let y = want.loc.y.min(zone.loc.y + zone.size.h - h).max(zone.loc.y);
     Rectangle::new((x, y).into(), (w, h).into())
 }
+
+/// Where an X11 window made full screen or maximized as it was shown (it asked before) would have gone: where it goes back to.
+/// Kept with the window until XWayland has made its surface (state.rs, adopt).
+pub struct PlaceBefore(pub Rectangle<i32, Logical>);
 
 /// A game, recognised by its X11 class: a Steam game (`steam_app_<id>`) or a Windows program through Wine or Proton (`<name>.exe`).
 /// Games are drawn opaque whatever their alpha channel holds.
@@ -193,13 +213,20 @@ pub fn with_resources(old: &str, set: &[(&str, String)]) -> String {
     s
 }
 
-/// Set X resources on XWayland's root window (RESOURCE_MANAGER, as xrdb does), the other lines kept. On a thread of its own:
-/// the X server is a client of this compositor and may be waiting on it.
 /// A value in XSETTINGS.
 #[derive(Clone, Debug, PartialEq)]
 pub enum XVal {
     Int(i32),
     Str(String),
+}
+
+impl From<XVal> for Value {
+    fn from(v: XVal) -> Value {
+        match v {
+            XVal::Int(i) => Value::Integer(i),
+            XVal::Str(s) => Value::String(s),
+        }
+    }
 }
 
 /// GTK's own settings file (settings.ini, which ygg-theme and Settings write).
@@ -211,21 +238,23 @@ pub fn gtk_ini_path() -> std::path::PathBuf {
     config.join("gtk-3.0/settings.ini")
 }
 
+/// The settings.ini keys GTK also reads from XSETTINGS: the key, its XSETTINGS name, a number (true/false or digits) rather
+/// than text.
+const GTK_XSETTINGS: [(&str, &str, bool); 10] = [
+    ("gtk-theme-name", "Net/ThemeName", false),
+    ("gtk-icon-theme-name", "Net/IconThemeName", false),
+    ("gtk-font-name", "Gtk/FontName", false),
+    ("gtk-sound-theme-name", "Net/SoundThemeName", false),
+    ("gtk-decoration-layout", "Gtk/DecorationLayout", false),
+    ("gtk-xft-hintstyle", "Xft/HintStyle", false),
+    ("gtk-xft-rgba", "Xft/RGBA", false),
+    ("gtk-xft-antialias", "Xft/Antialias", true),
+    ("gtk-xft-hinting", "Xft/Hinting", true),
+    ("gtk-enable-animations", "Gtk/EnableAnimations", true),
+];
+
 /// GTK's settings from settings.ini's [Settings] group, under the names XSETTINGS gives them (only the ones the file sets).
 pub fn gtk_xsettings(ini: &str) -> Vec<(String, XVal)> {
-    // settings.ini key, XSETTINGS name, a number (true/false or digits) rather than text
-    const MAP: [(&str, &str, bool); 10] = [
-        ("gtk-theme-name", "Net/ThemeName", false),
-        ("gtk-icon-theme-name", "Net/IconThemeName", false),
-        ("gtk-font-name", "Gtk/FontName", false),
-        ("gtk-sound-theme-name", "Net/SoundThemeName", false),
-        ("gtk-decoration-layout", "Gtk/DecorationLayout", false),
-        ("gtk-xft-hintstyle", "Xft/HintStyle", false),
-        ("gtk-xft-rgba", "Xft/RGBA", false),
-        ("gtk-xft-antialias", "Xft/Antialias", true),
-        ("gtk-xft-hinting", "Xft/Hinting", true),
-        ("gtk-enable-animations", "Gtk/EnableAnimations", true),
-    ];
     let mut in_settings = false;
     let mut out = vec![];
     for l in ini.lines().map(str::trim) {
@@ -235,7 +264,7 @@ pub fn gtk_xsettings(ini: &str) -> Vec<(String, XVal)> {
         }
         let Some((k, v)) = l.split_once('=').filter(|_| in_settings) else { continue };
         let (k, v) = (k.trim(), v.trim().trim_matches('"'));
-        let Some((_, name, number)) = MAP.iter().find(|(key, _, _)| *key == k) else { continue };
+        let Some((_, name, number)) = GTK_XSETTINGS.iter().find(|(key, _, _)| *key == k) else { continue };
         let value = if *number {
             match v {
                 "true" => XVal::Int(1),
@@ -254,36 +283,8 @@ pub fn gtk_xsettings(ini: &str) -> Vec<(String, XVal)> {
     out
 }
 
-/// The XSETTINGS property (`_XSETTINGS_SETTINGS`, the freedesktop XSETTINGS layout): little-endian, every setting last changed
-/// at `serial`.
-pub fn xsettings_blob(serial: u32, items: &[(String, XVal)]) -> Vec<u8> {
-    let pad = |b: &mut Vec<u8>, n: usize| b.extend(std::iter::repeat_n(0u8, (4 - n % 4) % 4));
-    // byte order (LSBFirst), three unused, the serial, how many
-    let mut b = vec![0u8, 0, 0, 0];
-    b.extend(serial.to_le_bytes());
-    b.extend((items.len() as u32).to_le_bytes());
-    for (name, v) in items {
-        b.push(match v {
-            XVal::Int(_) => 0,
-            XVal::Str(_) => 1,
-        });
-        b.push(0);
-        b.extend((name.len() as u16).to_le_bytes());
-        b.extend(name.as_bytes());
-        pad(&mut b, name.len());
-        b.extend(serial.to_le_bytes());
-        match v {
-            XVal::Int(i) => b.extend(i.to_le_bytes()),
-            XVal::Str(s) => {
-                b.extend((s.len() as u32).to_le_bytes());
-                b.extend(s.as_bytes());
-                pad(&mut b, s.len());
-            }
-        }
-    }
-    b
-}
-
+/// Set X resources on XWayland's root window (RESOURCE_MANAGER, as xrdb does), the other lines kept. On a thread of its own:
+/// the X server is a client of this compositor and may be waiting on it.
 fn set_x_resources(display: u32, set: Vec<(&'static str, String)>) {
     let _ = std::thread::Builder::new().name("x-resources".into()).spawn(move || {
         let Ok((conn, screen)) = x11rb::rust_connection::RustConnection::connect(Some(&format!(":{display}"))) else { return };
@@ -318,7 +319,7 @@ impl App {
     /// 1.0, as KDE does for programs that scale themselves: the fonts of GTK and Qt programs, and Chromium-based ones (Steam's
     /// window) whole, grow back to the desktop's size). Set when the window manager starts, when the scale changes and when
     /// the pointer's theme does.
-    pub fn x11_resources(&self, dpi: bool) {
+    pub fn x11_resources(&mut self, dpi: bool) {
         // only once XWayland runs: a connection to the display before then would start it
         let (Some(d), true) = (self.x11_display, self.xwm.is_some()) else { return };
         let scale = self.x11_client_scale();
@@ -327,33 +328,22 @@ impl App {
         if dpi {
             set.push(("Xft.dpi", ((96.0 * scale).round() as u32).to_string()));
         }
-        // XSETTINGS too (GTK programs under X11 read their DPI, pointer, theme and font there, and follow changes at once)
-        if let Some(r) = &self.x11_reader {
-            let ini = std::fs::read_to_string(gtk_ini_path()).unwrap_or_default();
-            let mut items = gtk_xsettings(&ini);
-            items.push(("Gtk/CursorThemeName".into(), XVal::Str(theme.clone())));
-            items.push(("Gtk/CursorThemeSize".into(), XVal::Int((size as f64 * scale).round() as i32)));
-            items.push(("Xft/DPI".into(), XVal::Int((96.0 * scale * 1024.0).round() as i32)));
-            let serial = self.xsettings_serial.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            r.settings(xsettings_blob(serial, &items));
+        // XSETTINGS too (GTK programs under X11 read their DPI, pointer, theme and font there, and follow changes at once), kept
+        // by Smithay's window manager, which owns _XSETTINGS_S0 from its start. A setting settings.ini no longer has is taken out.
+        let ini = std::fs::read_to_string(gtk_ini_path()).unwrap_or_default();
+        let mut items = gtk_xsettings(&ini);
+        items.push(("Gtk/CursorThemeName".into(), XVal::Str(theme)));
+        items.push(("Gtk/CursorThemeSize".into(), XVal::Int((size as f64 * scale).round() as i32)));
+        items.push(("Xft/DPI".into(), XVal::Int((96.0 * scale * 1024.0).round() as i32)));
+        let gone: Vec<String> =
+            GTK_XSETTINGS.iter().map(|(_, n, _)| n.to_string()).filter(|n| !items.iter().any(|(i, _)| i == n)).collect();
+        if let Some(wm) = &mut self.xwm {
+            let _ = wm.set_xsettings(items.into_iter().map(|(n, v)| (n, v.into())));
+            let _ = wm.remove_xsettings(gone.into_iter());
         }
+        // Smithay only queues them on its window manager's X connection: they are sent once it has handled its next X event.
+        // Changing the root's RESOURCE_MANAGER (set_x_resources) brings it one at once.
         set_x_resources(d, set);
-    }
-
-    /// What an X11 window asked for before it was shown (x11asked.rs), now that the answer is in: full screen or maximized,
-    /// unless it already is, or the person has placed it since.
-    pub fn x11_asked(&mut self, a: crate::x11asked::Asked) {
-        let Some(w) = self.all_windows().into_iter().map(|(w, _)| w).find(|w| w.x11_surface().is_some_and(|x| x.window_id() == a.window))
-        else {
-            return;
-        };
-        let Some(x) = w.x11_surface() else { return };
-        if a.fullscreen && !x.is_fullscreen() {
-            self.fullscreen(&w);
-        } else if a.maximized && !a.fullscreen && !x.is_maximized() && !self.placed_by_layout(&w) && !crate::state::ignores_maximize(&w) {
-            self.maximize(&w);
-        }
-        self.wake();
     }
 
     /// The window (shown, minimized or on another workspace) of an X11 window, if the compositor manages it.
@@ -392,31 +382,55 @@ impl App {
         for h in self.heads.list.iter().filter(|h| h.enabled) {
             h.output.change_current_state(None, None, None, None);
         }
+        // (a client-side shadow is counted in those pixels too: the window keeps its place and size, the X window is placed
+        // around it)
         for w in self.space.elements() {
             if let Some(x) = w.x11_surface() {
-                let _ = x.configure(None);
+                let r = state::x11_rect(x);
+                state::x11_place(w, r.loc, r.size);
             }
         }
         self.x11_resources(true);
     }
 
-    /// Is the point over an X11 menu or tooltip? A click there is the menu's, not the window's behind it.
+    /// Is the point over an X11 menu or tooltip (anywhere on its X window, a shadow it draws included)? A click there is the
+    /// menu's, not the window's behind it.
     pub fn over_overlay(&self, pos: Point<f64, Logical>) -> bool {
-        self.overlays.iter().any(|x| x.geometry().to_f64().contains(pos))
+        self.overlays.iter().any(|x| x.last_configure().to_f64().contains(pos))
     }
 
-    /// The surface of an X11 menu or tooltip under the point, and where that surface's origin is on screen.
-    pub fn overlay_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+    /// The X11 menu or tooltip under the point: its window, its surface and where that surface's origin is on screen.
+    pub fn overlay_under(&self, pos: Point<f64, Logical>) -> Option<(X11Surface, WlSurface, Point<f64, Logical>)> {
+        use smithay::desktop::{utils::under_from_surface_tree, WindowSurfaceType};
+        if self.overlays.is_empty() {
+            return None;
+        }
+        // While an X11 program drags, the icon it moves under the pointer (a window like these) is passed over (Smithay's
+        // surface_under), so the window beneath it is where the drag goes. Only while a button or a finger is held: Smithay
+        // can think a drag still goes on after the program gave it up (XdndLeave), and then every menu would let the pointer
+        // through. (is_grabbed takes the grab's lock: no grab looks up what is under the pointer.)
+        let held = self.pointer.is_grabbed() || self.seat.get_touch().is_some_and(|t| t.is_grabbed());
         for x in self.overlays.iter().rev() {
-            let Some(s) = x.wl_surface() else { continue };
-            let loc = x.geometry().loc;
-            if let Some((s, p)) =
-                smithay::desktop::utils::under_from_surface_tree(&s, pos - loc.to_f64(), (0, 0), smithay::desktop::WindowSurfaceType::ALL)
-            {
-                return Some((s, (p + loc).to_f64()));
+            // the X window's place (its surface starts there, a shadow it draws included)
+            let loc = x.last_configure().loc;
+            let at = pos - loc.to_f64();
+            let hit = if held {
+                x.surface_under(at, (0, 0), WindowSurfaceType::ALL)
+            } else {
+                x.wl_surface().and_then(|s| under_from_surface_tree(&s, at, (0, 0), WindowSurfaceType::ALL))
+            };
+            if let Some((s, p)) = hit {
+                return Some((x.clone(), s, (p + loc).to_f64()));
             }
         }
         None
+    }
+
+    /// Is this X11 window one of the XWayland that runs now? One can outlive its XWayland as a drag's target (XWayland crashed,
+    /// or was killed): Smithay's window manager code for it would then ask for a window manager that is gone (and panic), or
+    /// after a restart for the new one, where its window number means another window.
+    pub fn has_x11(&self, x: &X11Surface) -> bool {
+        self.xwm.as_ref().is_some_and(|wm| x.xwm_id() == Some(wm.id()))
     }
 
     /// Did the compositor give this window its place and size (tiled, maximized, full screen, snapped)? Then it keeps them.
@@ -424,6 +438,14 @@ impl App {
         use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as S;
         let Some(s) = state::surface_of(w) else { return false };
         state::win_has(w, S::Maximized) || state::win_has(w, S::Fullscreen) || self.x11_snapped_has(&s) || self.is_tiled(w, &s)
+    }
+}
+
+/// With YGGDRASIL_COMPOSITOR_DEBUG set, an X11 window's steps go to the log: a menu that is never drawn (seen in CI only,
+/// YGG-115) then shows which step did not come.
+fn debug(what: impl FnOnce() -> String) {
+    if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+        eprintln!("x11: {}", what());
     }
 }
 
@@ -435,6 +457,7 @@ impl XWaylandShellHandler for App {
     /// XWayland has made the surface of an X11 window: from now on it is a window like any other (listed for the panel, tiled,
     /// given the keyboard). Menus and tooltips are not windows here; they are drawn from `overlays`.
     fn surface_associated(&mut self, _xwm: XwmId, surface: WlSurface, window: X11Surface) {
+        debug(|| format!("window {} has its surface", window.window_id()));
         self.wake();
         let Some(w) = self.x11_window(&window) else { return };
         // window controls for an X11 window that does not draw its own (Steam and most games say they draw their own, or none)
@@ -443,7 +466,6 @@ impl XWaylandShellHandler for App {
         self.mark_active(&w);
     }
 }
-smithay::delegate_xwayland_shell!(App);
 
 impl XwmHandler for App {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
@@ -451,19 +473,28 @@ impl XwmHandler for App {
     }
 
     // a new window or menu is placed when it is shown (map_window_request, mapped_override_redirect_window); Smithay converts
-    // its first geometry at the client scale as it is (our fork; 0.7.0 rounded 1.25 down to 1)
+    // its first geometry at the client scale as it is (0.7.0 rounded 1.25 down to 1)
     fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
-    fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
+    fn new_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        debug(|| format!("menu or tooltip {} made", window.window_id()));
+    }
 
     /// A program shows a window: it is placed like a Wayland window (one after another, a little offset; tiled on a tiling
-    /// workspace once its surface exists).
+    /// workspace once its surface exists), or full screen or maximized when it asked for that before it was shown.
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
         self.wake();
+        // A window that asks to start minimized (WM_HINTS' initial state Iconic, which Smithay marks hidden before this) is shown
+        // like any other, so it is told it is shown: not hidden, WM_STATE Normal (Wine keeps a window minimized while its
+        // WM_STATE says Iconic).
+        if window.is_hidden() {
+            let _ = window.set_hidden(false);
+        }
         if window.set_mapped(true).is_err() {
             return;
         }
-        let geo = window.geometry();
+        // the X window as the program made it (with the shadow it draws, if any)
+        let geo = window.last_configure();
         if is_helper(&window) {
             let _ = window.configure(geo);
             if !self.overlays.iter().any(|x| same(x, &window)) {
@@ -480,27 +511,40 @@ impl XwmHandler for App {
         let game_full = is_game(&window) && screen.w > 0 && geo.size.w >= screen.w && geo.size.h >= screen.h;
         let start = o.current_location() + self.cascade();
         let w = Window::new_x11_window(window.clone());
-        // back where the program's last window closed (places.rs), as a Wayland window
+        // The X window goes where any would, its client-side shadow (_GTK_FRAME_EXTENTS) inside; the compositor keeps the window
+        // less that shadow, as a Wayland window's geometry. Or back where the program's last window closed (places.rs).
+        let shadow = state::shadow(&window);
         let place = if game_full {
-            Rectangle::new(start, geo.size)
+            Rectangle::new(start, geo.size) - shadow
         } else {
-            self.remembered_place(&w).unwrap_or_else(|| fit_in(zone, Rectangle::new(start, geo.size)))
+            self.remembered_place(&w).unwrap_or_else(|| fit_in(zone, Rectangle::new(start, geo.size)) - shadow)
         };
-        let _ = window.configure(place);
+        state::x11_place(&w, place.loc, place.size);
         self.space.map_element(w.clone(), place.loc, true);
-        // What it asked for before it was shown (full screen, maximized) is read on another thread: x11_asked acts on it.
+        // its own icon, for the dock (x11asked.rs)
         if let Some(r) = &self.x11_reader {
-            r.ask(window.window_id());
-            // its own icon, for the dock (x11asked.rs)
             r.icon(window.window_id(), &window.class());
         }
-        // A game the size of the screen that did not say so is taken as going full screen (a guess, so only for games).
-        if game_full {
-            self.fullscreen(&w);
+        // What it asked for before it was shown (`_NET_WM_STATE`, which Smithay reads before this), from its first frame: full
+        // screen or maximized. A game the size of the screen that did not say so is taken as going full screen (a guess, so only
+        // for games). Steam's maximize is ignored, as its maximize requests are, and it is told so: a window marked maximized is
+        // held at its place and size. Leaving full screen or maximized, it goes back to `place` (adopt keeps it for that, once
+        // XWayland has made the surface the compositor keeps places by).
+        let full = game_full || window.is_fullscreen();
+        if !full && window.is_maximized() && crate::state::ignores_maximize(&w) {
+            let _ = window.set_maximized(false);
+        } else if full || window.is_maximized() {
+            w.user_data().insert_if_missing(|| PlaceBefore(place));
+            if full {
+                self.fullscreen(&w);
+            } else {
+                self.maximize(&w);
+            }
         }
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        debug(|| format!("menu or tooltip {} shown at {:?}", window.window_id(), window.last_configure()));
         self.wake();
         if !self.overlays.iter().any(|x| same(x, &window)) {
             self.overlays.push(window);
@@ -544,9 +588,10 @@ impl XwmHandler for App {
         _reorder: Option<Reorder>,
     ) {
         self.wake();
-        let mut geo = window.geometry();
-        match self.x11_window(&window) {
-            Some(win) if self.placed_by_layout(&win) => {
+        let mut geo = window.last_configure();
+        let shown = self.x11_window(&window);
+        match &shown {
+            Some(win) if self.placed_by_layout(win) => {
                 let _ = window.configure(None);
                 return;
             }
@@ -563,12 +608,22 @@ impl XwmHandler for App {
             geo.size.h = h as i32;
         }
         // a shown window may grow only as far as the free space (a full screen one was answered above)
-        if self.x11_window(&window).is_some() {
+        if shown.is_some() {
             let zone = smithay::desktop::layer_map_for_output(&self.output).non_exclusive_zone();
             geo.size.w = geo.size.w.min(zone.size.w.max(1));
             geo.size.h = geo.size.h.min(zone.size.h.max(1));
         }
+        let at = state::x11_rect(&window).loc;
         let _ = window.configure(geo);
+        // The shadow is taken again for the new size: an X window made smaller than its shadow is all window (a shadow that
+        // leaves nothing of it is not believed), one made big enough for it has it again. Either way the window keeps its
+        // place, and its X window is placed around it anew.
+        if let Some(win) = shown {
+            let s = state::shadow(&window);
+            if s != state::placed_shadow(&window) {
+                state::x11_place(&win, at, (geo - s).size);
+            }
+        }
     }
 
     /// Something moved or changed size in the X server. Managed windows are placed by the compositor and already known; menus
@@ -589,6 +644,15 @@ impl XwmHandler for App {
         if property == WmWindowProperty::MotifHints && !self.decorates_all() {
             if let Some(s) = window.wl_surface() {
                 self.set_decorated(&s, !window.is_decorated());
+            }
+        }
+        // its client-side shadow changed (GTK and Chromium drop it when maximized, draw it again when restored): the window keeps
+        // its place and size, the X window is placed around it anew, so the picture stays where the X server has it. Only on a
+        // change: GTK sets the same shadow again each time it lays its window out.
+        if property == WmWindowProperty::FrameExtents && state::placed_shadow(&window) != state::shadow(&window) {
+            if let Some(w) = self.x11_window(&window) {
+                let r = state::x11_rect(&window);
+                state::x11_place(&w, r.loc, r.size);
             }
         }
     }
@@ -632,17 +696,22 @@ impl XwmHandler for App {
         }
     }
 
-    /// The program's own title bar or edge is dragged (it holds the button down): the same grabs as for Wayland windows.
+    /// The program's own title bar or edge is dragged (it holds the button down on that window): the same grabs as for Wayland
+    /// windows. Any X11 program may ask this for any window at any time; without a press on the window it is ignored.
     fn move_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32) {
         let pointer = self.pointer.clone();
-        let (Some(start), Some(w)) = (pointer.grab_start_data(), self.x11_window(&window)) else { return };
+        let (Some(start), Some(w)) = (pointer.grab_start_data().filter(|s| pressed_on(s, &window)), self.x11_window(&window)) else {
+            return;
+        };
         let Some(origin) = self.space.element_location(&w) else { return };
         pointer.set_grab(self, MoveGrab { start, window: w, origin }, SERIAL_COUNTER.next_serial(), Focus::Clear);
     }
 
     fn resize_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32, edge: X11Edge) {
         let pointer = self.pointer.clone();
-        let (Some(start), Some(w)) = (pointer.grab_start_data(), self.x11_window(&window)) else { return };
+        let (Some(start), Some(w)) = (pointer.grab_start_data().filter(|s| pressed_on(s, &window)), self.x11_window(&window)) else {
+            return;
+        };
         let Some(origin) = self.space.element_location(&w) else { return };
         let edges = match edge {
             X11Edge::Top => ResizeEdge::Top,
@@ -654,7 +723,7 @@ impl XwmHandler for App {
             X11Edge::BottomLeft => ResizeEdge::BottomLeft,
             X11Edge::BottomRight => ResizeEdge::BottomRight,
         };
-        let size = w.geometry().size;
+        let size = state::window_size(&w);
         pointer.set_grab(self, ResizeGrab { start, window: w, edges, origin, size }, SERIAL_COUNTER.next_serial(), Focus::Clear);
     }
 
@@ -713,6 +782,9 @@ impl XwmHandler for App {
             let s = state::surface_of(&w);
             self.window_gone(s.as_ref(), |x| *x == w);
         }
+        // what is under the pointer now has it: a drag over an X11 window leaves it (a drop there would wait for ever for
+        // the X11 program to finish it), and an X11 program's own drag ends
+        self.pointer_moved_to(self.pointer_location);
         // the old XWayland let go: its display's lock and socket files go with it, so the display can be bound again
         if let Some(t) = self.xwayland_source.take() {
             self.loop_handle.remove(t);
@@ -817,9 +889,10 @@ impl RenderElement<GlesRenderer> for OpaqueElement {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), GlesError> {
         frame.override_default_tex_program(self.program.clone(), vec![]);
-        let r = RenderElement::<GlesRenderer>::draw(&self.inner, frame, src, dst, damage, opaque_regions);
+        let r = RenderElement::<GlesRenderer>::draw(&self.inner, frame, src, dst, damage, opaque_regions, cache);
         frame.clear_tex_program_override();
         r
     }
@@ -874,23 +947,6 @@ mod tests {
             ]
         );
         assert!(gtk_xsettings("").is_empty());
-    }
-
-    #[test]
-    fn xsettings_are_laid_out_as_the_spec_says() {
-        let b = xsettings_blob(7, &[("Xft/DPI".into(), XVal::Int(122880)), ("Net/ThemeName".into(), XVal::Str("Adw".into()))]);
-        let mut want = vec![0u8, 0, 0, 0, 7, 0, 0, 0, 2, 0, 0, 0];
-        // an integer: type 0, name length 7, the name padded to 8, serial, value
-        want.extend([0, 0, 7, 0]);
-        want.extend(b"Xft/DPI\0");
-        want.extend([7, 0, 0, 0]);
-        want.extend(122880i32.to_le_bytes());
-        // a string: type 1, name length 13 padded to 16, serial, length 3, the text padded to 4
-        want.extend([1, 0, 13, 0]);
-        want.extend(b"Net/ThemeName\0\0\0");
-        want.extend([7, 0, 0, 0, 3, 0, 0, 0]);
-        want.extend(b"Adw\0");
-        assert_eq!(b, want);
     }
 
     #[test]

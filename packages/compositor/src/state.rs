@@ -1,6 +1,7 @@
 //! The compositor's state and the protocol handlers: windows (xdg-shell), panels and backgrounds (layer-shell), the screen locker
 //! (ext-session-lock), idle detection (ext-idle-notify), and the usual seat, output and clipboard parts.
 
+use smithay::backend::input::InputTime;
 use std::time::Duration;
 
 use crate::deco::{self, Bar, Hit, Key as BarKey};
@@ -20,22 +21,29 @@ use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
-use smithay::delegate_xdg_decoration;
 use smithay::desktop::{layer_map_for_output, LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType};
+use smithay::input::dnd::{DnDGrab, DndFocus, DndGrabHandler, DndTarget, GrabType, OfferData, Source};
 use smithay::input::keyboard::{keysyms, FilterResult, KeyboardHandle};
 use smithay::input::pointer::Focus;
-use smithay::input::pointer::{ButtonEvent, CursorImageStatus, MotionEvent, PointerHandle};
+use smithay::input::pointer::{
+    AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
+    GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent, PointerHandle,
+    PointerTarget, RelativeMotionEvent,
+};
+use smithay::input::touch::{FrameMarker, TouchTarget};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::Output;
 use smithay::reexports::calloop::{LoopHandle, LoopSignal};
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecoMode;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
-use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
-use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_output::WlOutput, wl_seat, wl_surface::WlSurface};
+use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason, ObjectId};
+use smithay::reexports::wayland_server::protocol::{
+    wl_buffer, wl_data_source::WlDataSource, wl_output::WlOutput, wl_seat, wl_surface::WlSurface,
+};
 use smithay::reexports::wayland_server::{Client, DisplayHandle, Resource};
 use smithay::utils::Rectangle;
-use smithay::utils::{IsAlive, Scale};
+use smithay::utils::{FrameExtents, IsAlive, Scale};
 use smithay::utils::{Logical, Point, Serial, SERIAL_COUNTER};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
@@ -44,14 +52,16 @@ use smithay::wayland::compositor::{
 use smithay::wayland::idle_notify::{IdleNotifierHandler, IdleNotifierState};
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::seat::WaylandFocus;
-use smithay::wayland::selection::data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler};
+use smithay::wayland::selection::data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, WlOfferData};
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker};
 use smithay::wayland::shell::wlr_layer::{Layer, LayerSurface as WlrLayerSurface, WlrLayerShellHandler, WlrLayerShellState};
 use smithay::wayland::shell::xdg::decoration::{XdgDecorationHandler, XdgDecorationState};
 use smithay::wayland::shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState};
+use smithay::xwayland::xwm::XwmOfferData;
 use smithay::xwayland::X11Surface;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 mod stacking;
 use stacking::Under;
@@ -146,10 +156,9 @@ use smithay::backend::input::KeyState;
 use smithay::input::keyboard::ModifiersState;
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::viewporter::ViewporterState;
-use smithay::{
-    delegate_compositor, delegate_data_device, delegate_idle_notify, delegate_layer_shell, delegate_output, delegate_seat,
-    delegate_session_lock, delegate_shm, delegate_viewporter, delegate_xdg_shell,
-};
+
+// every Smithay protocol state dispatches through its user data (Dispatch2)
+smithay::delegate_dispatch2!(App);
 
 /// How the renderer takes in a program's GPU picture (true when it could).
 pub type DmabufImport = Box<dyn FnMut(&smithay::backend::allocator::dmabuf::Dmabuf) -> bool>;
@@ -288,11 +297,10 @@ pub struct App {
     pub x11_sockets: Option<smithay::xwayland::X11Sockets>,
     /// The running XWayland's event source: removed when XWayland has gone away, which lets its display go (xwayland.rs).
     pub xwayland_source: Option<smithay::reexports::calloop::RegistrationToken>,
-    /// The XSETTINGS serial: one more each time they are published (xwayland.rs, x11_resources).
-    pub xsettings_serial: std::sync::atomic::AtomicU32,
     /// When GTK's settings.ini last changed: XSETTINGS are published again when it does (reload_config).
     gtk_ini_time: Option<std::time::SystemTime>,
-    /// Reads what an X11 window asked for before it was shown (x11asked.rs).
+    /// The second connection to XWayland, on a thread of its own: the active X11 window, programs' own icons and WM_STATE
+    /// (x11asked.rs).
     pub x11_reader: Option<crate::x11asked::Reader>,
     /// the X11 window last marked active (_NET_ACTIVE_WINDOW), while one has the keyboard
     pub x11_active: Option<u32>,
@@ -379,6 +387,8 @@ impl ClientData for ClientState {
 /// Who has the keyboard: a Wayland surface (a window, a panel, the locker), or an X11 window. An X11 window needs more than its
 /// surface: the X server must also be told which of its windows has the focus, or XWayland passes the keys to none of them
 /// (Smithay's X11Surface does that, then hands the keys to its surface).
+// X11Surface is large on Smithay main (432 bytes); there is one focus per seat, so boxing it would buy nothing
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum KbFocus {
     Wl(WlSurface),
@@ -448,7 +458,7 @@ impl smithay::input::keyboard::KeyboardTarget<App> for KbFocus {
         key: smithay::input::keyboard::KeysymHandle<'_>,
         state: KeyState,
         serial: Serial,
-        time: u32,
+        time: InputTime,
     ) {
         match self {
             KbFocus::Wl(s) => smithay::input::keyboard::KeyboardTarget::key(s, seat, data, key, state, serial, time),
@@ -460,6 +470,118 @@ impl smithay::input::keyboard::KeyboardTarget<App> for KbFocus {
             KbFocus::Wl(s) => smithay::input::keyboard::KeyboardTarget::modifiers(s, seat, data, modifiers, serial),
             KbFocus::X11(x) => smithay::input::keyboard::KeyboardTarget::modifiers(x, seat, data, modifiers, serial),
         }
+    }
+}
+
+/// What the pointer or a finger is over: a Wayland surface, or an X11 window (a window, a menu) and its surface. The events go to
+/// the surface either way (XWayland reads an X11 window's on its surface); a drag needs the X11 window itself, to speak XDND to
+/// the program.
+// large for the same reason as KbFocus; it is made on every motion, and boxing it would add an allocation there
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum PtrFocus {
+    Wl(WlSurface),
+    /// The surface is part of what the focus is: an X11 window shown again gets a new surface from XWayland, which must be
+    /// entered (XWayland ignores motion on a surface it was not told the pointer is in).
+    X11(X11Surface, WlSurface),
+}
+
+impl PtrFocus {
+    /// The surface that receives the events (an X11 window's own surface).
+    pub fn surface(&self) -> &WlSurface {
+        match self {
+            PtrFocus::Wl(s) | PtrFocus::X11(_, s) => s,
+        }
+    }
+}
+
+impl IsAlive for PtrFocus {
+    fn alive(&self) -> bool {
+        match self {
+            PtrFocus::Wl(s) => s.alive(),
+            PtrFocus::X11(x, s) => x.alive() && s.alive(),
+        }
+    }
+}
+
+impl WaylandFocus for PtrFocus {
+    fn wl_surface(&self) -> Option<std::borrow::Cow<'_, WlSurface>> {
+        Some(std::borrow::Cow::Borrowed(self.surface()))
+    }
+}
+
+impl PointerTarget<App> for PtrFocus {
+    fn enter(&self, seat: &Seat<App>, data: &mut App, event: &MotionEvent) {
+        PointerTarget::enter(self.surface(), seat, data, event)
+    }
+    fn motion(&self, seat: &Seat<App>, data: &mut App, event: &MotionEvent) {
+        PointerTarget::motion(self.surface(), seat, data, event)
+    }
+    fn relative_motion(&self, seat: &Seat<App>, data: &mut App, event: &RelativeMotionEvent) {
+        PointerTarget::relative_motion(self.surface(), seat, data, event)
+    }
+    fn button(&self, seat: &Seat<App>, data: &mut App, event: &ButtonEvent) {
+        PointerTarget::button(self.surface(), seat, data, event)
+    }
+    fn axis(&self, seat: &Seat<App>, data: &mut App, frame: AxisFrame) {
+        PointerTarget::axis(self.surface(), seat, data, frame)
+    }
+    fn frame(&self, seat: &Seat<App>, data: &mut App) {
+        PointerTarget::frame(self.surface(), seat, data)
+    }
+    fn gesture_swipe_begin(&self, seat: &Seat<App>, data: &mut App, event: &GestureSwipeBeginEvent) {
+        PointerTarget::gesture_swipe_begin(self.surface(), seat, data, event)
+    }
+    fn gesture_swipe_update(&self, seat: &Seat<App>, data: &mut App, event: &GestureSwipeUpdateEvent) {
+        PointerTarget::gesture_swipe_update(self.surface(), seat, data, event)
+    }
+    fn gesture_swipe_end(&self, seat: &Seat<App>, data: &mut App, event: &GestureSwipeEndEvent) {
+        PointerTarget::gesture_swipe_end(self.surface(), seat, data, event)
+    }
+    fn gesture_pinch_begin(&self, seat: &Seat<App>, data: &mut App, event: &GesturePinchBeginEvent) {
+        PointerTarget::gesture_pinch_begin(self.surface(), seat, data, event)
+    }
+    fn gesture_pinch_update(&self, seat: &Seat<App>, data: &mut App, event: &GesturePinchUpdateEvent) {
+        PointerTarget::gesture_pinch_update(self.surface(), seat, data, event)
+    }
+    fn gesture_pinch_end(&self, seat: &Seat<App>, data: &mut App, event: &GesturePinchEndEvent) {
+        PointerTarget::gesture_pinch_end(self.surface(), seat, data, event)
+    }
+    fn gesture_hold_begin(&self, seat: &Seat<App>, data: &mut App, event: &GestureHoldBeginEvent) {
+        PointerTarget::gesture_hold_begin(self.surface(), seat, data, event)
+    }
+    fn gesture_hold_end(&self, seat: &Seat<App>, data: &mut App, event: &GestureHoldEndEvent) {
+        PointerTarget::gesture_hold_end(self.surface(), seat, data, event)
+    }
+    fn leave(&self, seat: &Seat<App>, data: &mut App, serial: Serial, time: InputTime) {
+        PointerTarget::leave(self.surface(), seat, data, serial, time)
+    }
+}
+
+impl TouchTarget<App> for PtrFocus {
+    fn down(&self, seat: &Seat<App>, data: &mut App, event: &smithay::input::touch::DownEvent) {
+        TouchTarget::down(self.surface(), seat, data, event)
+    }
+    fn up(&self, seat: &Seat<App>, data: &mut App, event: &smithay::input::touch::UpEvent) {
+        TouchTarget::up(self.surface(), seat, data, event)
+    }
+    fn motion(&self, seat: &Seat<App>, data: &mut App, event: &smithay::input::touch::MotionEvent) {
+        TouchTarget::motion(self.surface(), seat, data, event)
+    }
+    fn frame(&self, seat: &Seat<App>, data: &mut App, marker: FrameMarker) {
+        TouchTarget::frame(self.surface(), seat, data, marker)
+    }
+    fn cancel(&self, seat: &Seat<App>, data: &mut App, marker: FrameMarker) {
+        TouchTarget::cancel(self.surface(), seat, data, marker)
+    }
+    fn shape(&self, seat: &Seat<App>, data: &mut App, event: &smithay::input::touch::ShapeEvent) {
+        TouchTarget::shape(self.surface(), seat, data, event)
+    }
+    fn orientation(&self, seat: &Seat<App>, data: &mut App, event: &smithay::input::touch::OrientationEvent) {
+        TouchTarget::orientation(self.surface(), seat, data, event)
+    }
+    fn last_frame(&self, seat: &Seat<App>, data: &mut App) -> Option<FrameMarker> {
+        TouchTarget::last_frame(self.surface(), seat, data)
     }
 }
 
@@ -479,7 +601,7 @@ pub fn is_window_of(w: &Window, s: &WlSurface) -> bool {
 /// Whether a window is maximized or full screen: a Wayland window's xdg state, an X11 window's _NET_WM_STATE.
 pub fn win_has(w: &Window, st: xdg_toplevel::State) -> bool {
     if let Some(t) = w.toplevel() {
-        return t.current_state().states.contains(st);
+        return t.with_committed_state(|c| c.is_some_and(|c| c.states.contains(st)));
     }
     match (w.x11_surface(), st) {
         (Some(x), xdg_toplevel::State::Maximized) => x.is_maximized(),
@@ -515,22 +637,82 @@ pub fn ignores_maximize(w: &Window) -> bool {
     title_app(w).1 == "steam"
 }
 
-/// Tell an X11 window where it is and how big (X11 programs place their menus from it). Wayland windows are left alone.
 /// The size the compositor asked a window for while the program has not drawn it at that size yet.
 pub fn asked_size(w: &Window) -> Option<smithay::utils::Size<i32, Logical>> {
     let t = w.toplevel()?;
     let pending = t.with_pending_state(|p| p.size);
-    pending.filter(|p| p.w > 0 && p.h > 0 && Some(*p) != t.current_state().size)
+    pending.filter(|p| p.w > 0 && p.h > 0 && Some(*p) != t.with_committed_state(|c| c.and_then(|c| c.size)))
 }
 
 /// A window's size as it will be: the one asked for while the program has not drawn it yet, else its own.
 fn size_to_be(w: &Window) -> smithay::utils::Size<i32, Logical> {
-    asked_size(w).unwrap_or_else(|| w.geometry().size)
+    asked_size(w).unwrap_or_else(|| window_size(w))
 }
 
+/// A window's size as the compositor holds it: a Wayland window's own (its geometry), an X11 window's as its X window was last
+/// given, less its shadow (the X server has that size at once; the picture follows).
+pub fn window_size(w: &Window) -> smithay::utils::Size<i32, Logical> {
+    match w.x11_surface() {
+        Some(x) => x11_rect(x).size,
+        None => w.geometry().size,
+    }
+}
+
+/// The widest client-side shadow believed, on any side: GTK's are about 25 pixels. A program may write anything there (our
+/// Smithay fork takes each side as 0 to 65535), and its X window was made that much bigger than the window (before the fork
+/// did, a window's place plus such a side overflowed: a debug build ended).
+const MAX_SHADOW: i32 = 256;
+
+/// An X11 window's client-side shadow: `_GTK_FRAME_EXTENTS`, which GTK and Chromium draw inside their X window once the window
+/// manager says it reads it, as Smithay's does. None when a side is wider than any real shadow (`MAX_SHADOW`), or when it
+/// leaves nothing of the X window as it is now (a 100x100 one that says 60 on each side): no program draws either, and the
+/// window is then all of its X window. Taken when the window is placed and when the program sizes its X window itself.
+pub fn shadow(x: &X11Surface) -> FrameExtents<i32, Logical> {
+    let s = x.frame_extents();
+    let size = x.last_configure().size;
+    let sides = [s.left, s.right, s.top, s.bottom].iter().all(|v| (0..=MAX_SHADOW).contains(v));
+    if sides && s.left + s.right < size.w && s.top + s.bottom < size.h {
+        s
+    } else {
+        FrameExtents::default()
+    }
+}
+
+/// A window's geometry: the part of its surface that is the window, without a client-side shadow, from the surface's origin.
+/// Drawing, hit tests, previews and copies take it from here. For an X11 window it is the surface less the shadow its X window
+/// was placed with (`placed_shadow`), as it is listed (`x11_rect`): whether a shadow is believed depends on the X window's
+/// size, so both take the one decided when it was placed. Smithay's own geometry takes any _GTK_FRAME_EXTENTS: a window whose
+/// shadow was not believed was listed as all of its X window, but drawn and clicked as nothing of it or a strip. Smithay's
+/// `Space` still uses its own to work out which outputs a window is on.
+pub fn window_geometry(w: &Window) -> Rectangle<i32, Logical> {
+    match w.x11_surface() {
+        Some(x) => x.bbox() - placed_shadow(x),
+        None => w.geometry(),
+    }
+}
+
+/// The shadow `x11_place` last placed an X11 window's X window around.
+struct PlacedShadow(std::cell::Cell<FrameExtents<i32, Logical>>);
+
+/// The client-side shadow an X11 window was last placed with (its present one before it was placed).
+pub fn placed_shadow(x: &X11Surface) -> FrameExtents<i32, Logical> {
+    x.user_data().get::<PlacedShadow>().map(|s| s.0.get()).unwrap_or_else(|| shadow(x))
+}
+
+/// An X11 window's place and size as the compositor keeps them: its X window less the shadow it was placed with, as a Wayland
+/// window's geometry leaves its shadow out. Smithay's `Space` holds X11 windows there too (`window_geometry` is the same part).
+pub fn x11_rect(x: &X11Surface) -> Rectangle<i32, Logical> {
+    x.last_configure() - placed_shadow(x)
+}
+
+/// Tell an X11 window where it is and how big (X11 programs place their menus from it). Wayland windows are left alone.
+/// `loc` and `size` are the window's as for any window: the X window is that with its client-side shadow around it (and the
+/// shadow is kept: `placed_shadow`).
 pub fn x11_place(w: &Window, loc: Point<i32, Logical>, size: smithay::utils::Size<i32, Logical>) {
     if let Some(x) = w.x11_surface() {
-        let _ = x.configure(Rectangle::new(loc, size));
+        let s = shadow(x);
+        x.user_data().get_or_insert(|| PlacedShadow(std::cell::Cell::new(s))).0.set(s);
+        let _ = x.configure(Rectangle::new(loc, size) + s);
     }
 }
 
@@ -653,7 +835,6 @@ impl App {
             x11_display: None,
             x11_sockets: None,
             xwayland_source: None,
-            xsettings_serial: Default::default(),
             gtk_ini_time: None,
             x11_reader: None,
             x11_active: None,
@@ -744,7 +925,7 @@ impl App {
         if let Some(s) = &surface {
             if !self.saved.iter().any(|(x, _)| x == s) {
                 let loc = self.space.element_location(window).unwrap_or_default();
-                self.saved.push((s.clone(), Rectangle::new(loc, window.geometry().size)));
+                self.saved.push((s.clone(), Rectangle::new(loc, window_size(window))));
             }
         }
         if let Some(t) = window.toplevel() {
@@ -769,7 +950,7 @@ impl App {
                     }
                 }
             }
-            let _ = x.configure(area);
+            x11_place(window, area.loc, area.size);
         }
         // in place in the stack: a window made full screen or maximized from behind (a game asking again, a tool) stays behind
         self.relocate(window, area.loc);
@@ -806,7 +987,7 @@ impl App {
             let _ = x.set_fullscreen(false);
             self.x11_snapped.retain(|s| Some(s) != surface.as_ref());
             if let Some(r) = back {
-                let _ = x.configure(r);
+                x11_place(window, r.loc, r.size);
             }
         }
         if let Some(r) = back {
@@ -858,7 +1039,7 @@ impl App {
             let _ = x.set_maximized(false);
             let _ = x.set_fullscreen(false);
             self.x11_snapped.retain(|s| s != &surface);
-            let _ = x.configure(rect);
+            x11_place(window, rect.loc, rect.size);
         }
         self.relocate(window, rect.loc);
         self.retile();
@@ -876,7 +1057,7 @@ impl App {
     pub fn window_output(&self, w: &Window) -> Output {
         match self.space.element_location(w) {
             Some(loc) => {
-                let size = w.geometry().size;
+                let size = window_size(w);
                 self.output_at(Point::from(((loc.x + size.w / 2) as f64, (loc.y + size.h / 2) as f64)))
             }
             None => self.output.clone(),
@@ -924,8 +1105,8 @@ impl App {
                 t.with_pending_state(|s| s.size = Some(r.size));
                 t.send_pending_configure();
             }
-        } else if let Some(x) = w.x11_surface() {
-            let _ = x.configure(r);
+        } else {
+            x11_place(w, r.loc, r.size);
         }
         self.relocate(w, r.loc);
     }
@@ -942,7 +1123,7 @@ impl App {
         }
         let o = self.window_output(w);
         let (screen, zone) = (output_rect(&o), self.free_area(&o));
-        let size = w.geometry().size;
+        let size = window_geometry(w).size;
         // centred in the free room; one bigger than the room is made as big as it less the outer gap (keep-clear's open)
         let start = crate::placement::centred((size.w, size.h), zone);
         let opened = crate::placement::open(start, screen, zone, self.look.gaps_out).unwrap_or(start);
@@ -994,7 +1175,7 @@ impl App {
         let Some(loc) = self.space.element_location(w).or_else(|| self.parked.iter().find(|(x, _, _)| x == w).map(|(_, _, at)| *at)) else {
             return;
         };
-        let r = Rectangle::new(loc, w.geometry().size);
+        let r = Rectangle::new(loc, window_size(w));
         if !crate::places::worth_keeping(r) || self.places.get(&class) == Some(&r) {
             return;
         }
@@ -1099,7 +1280,9 @@ impl App {
     }
 
     /// Tells the programs whose windows are on `output` how to allocate their GPU buffers: the scanout feedback for a window
-    /// the screen tried to show directly (or does), the renderer's otherwise (Smithay's choice from the frame's states).
+    /// the screen tried to show directly (or does), the renderer's otherwise (Smithay's choice from the frame's states). No
+    /// window is tried: each is drawn through look::Clipped or xwayland::OpaqueElement, which offer Smithay's DrmCompositor no
+    /// buffer to put on a plane, so every window is told the renderer's.
     pub fn send_dmabuf_feedback(
         &self,
         output: &Output,
@@ -1122,7 +1305,9 @@ impl App {
     /// (udev.rs).
     pub fn fullscreen_on(&self, output: &Output) -> bool {
         self.space.elements().any(|w| {
-            win_has(w, xdg_toplevel::State::Fullscreen) && w.geometry().size.w > 0 && self.space.outputs_for_element(w).contains(output)
+            win_has(w, xdg_toplevel::State::Fullscreen)
+                && window_geometry(w).size.w > 0
+                && self.space.outputs_for_element(w).contains(output)
         })
     }
 
@@ -1137,6 +1322,13 @@ impl App {
     pub fn adopt(&mut self, window: &Window, surface: &WlSurface, decorate: bool) {
         if decorate {
             self.decorated.push(surface.clone());
+        }
+        // an X11 window made full screen or maximized as it was shown goes back to where it would have gone (places are kept by
+        // surface, which it has only now)
+        if let Some(p) = window.user_data().get::<crate::xwayland::PlaceBefore>() {
+            if !self.saved.iter().any(|(s, _)| s == surface) {
+                self.saved.push((surface.clone(), p.0));
+            }
         }
         // opened on a screen set to tile: it tiles (the session's tile-on-SCREEN rule, decided when a window opens)
         if self.tiling_screens.contains(&self.window_output(window).name()) && !self.screen_tiled.contains(surface) {
@@ -1300,12 +1492,12 @@ impl App {
         let surface = surface_of(&w);
         let at = self.saved.iter().find(|(s, _)| Some(s) == surface.as_ref()).map(|(_, r)| r.loc).unwrap_or((80, 80).into());
         if let Some(x) = w.x11_surface() {
-            let _ = x.set_suspended(false);
+            let _ = x.set_hidden(false);
             if let Some(r) = &self.x11_reader {
                 r.iconic(x.window_id(), false);
             }
         }
-        x11_place(&w, at, w.geometry().size);
+        x11_place(&w, at, window_size(&w));
         self.space.map_element(w.clone(), at, true);
         self.retile();
         w
@@ -1380,12 +1572,12 @@ impl App {
         let Some(window) = self.shown_window(surface) else { return };
         let loc = self.space.element_location(&window).unwrap_or_default();
         self.saved.retain(|(s, _)| s != surface);
-        self.saved.push((surface.clone(), Rectangle::new(loc, window.geometry().size)));
+        self.saved.push((surface.clone(), Rectangle::new(loc, window_size(&window))));
         self.space.unmap_elem(&window);
-        // an X11 program is told it is hidden (_NET_WM_STATE_HIDDEN), so a game may stop drawing
+        // an X11 program is told it is hidden (_NET_WM_STATE_HIDDEN, and WM_STATE Iconic from Smithay), so a game may stop drawing
         if let Some(x) = window.x11_surface() {
-            let _ = x.set_suspended(true);
-            // and minimized in ICCCM's WM_STATE, which Wine watches (see x11asked.rs)
+            let _ = x.set_hidden(true);
+            // and WM_STATE Iconic from our own connection, sent at once, which Wine watches (see x11asked.rs)
             if let Some(r) = &self.x11_reader {
                 r.iconic(x.window_id(), true);
             }
@@ -1722,8 +1914,8 @@ impl App {
             if let Some(t) = w.toplevel() {
                 t.with_pending_state(|s| s.size = Some(r.size));
                 t.send_pending_configure();
-            } else if let Some(x) = w.x11_surface() {
-                let _ = x.configure(r);
+            } else if w.x11_surface().is_some() {
+                x11_place(w, r.loc, r.size);
             } else {
                 continue;
             }
@@ -2133,7 +2325,7 @@ impl App {
             return None;
         }
         let loc = self.space.element_location(w)?;
-        let size = w.geometry().size;
+        let size = window_geometry(w).size;
         Some(Rectangle::new(
             (loc.x + size.w - deco::PILL_W - deco::MARGIN_X, loc.y + deco::MARGIN_Y).into(),
             (deco::PILL_W, deco::PILL_H).into(),
@@ -2153,7 +2345,7 @@ impl App {
         let pointer = self.pointer.clone();
         let start = smithay::input::pointer::GrabStartData { focus: None, button, location: pos };
         self.activate_surface(&surface);
-        let size = window.geometry().size;
+        let size = window_size(&window);
         if button == 0x110 {
             pointer.set_grab(self, MoveGrab { start, window, origin: loc }, serial, Focus::Clear);
         } else {
@@ -2182,7 +2374,7 @@ impl App {
             let Some(surface) = surface_of(&window) else { return false };
             self.activate_surface(&surface);
             let origin = self.space.element_location(&window).unwrap_or_default();
-            let size = window.geometry().size;
+            let size = window_size(&window);
             pointer.set_grab(self, ResizeGrab { start, window, edges, origin, size }, serial, Focus::Clear);
             return true;
         }
@@ -2297,9 +2489,10 @@ impl App {
                 out.extend(switcher::elements(renderer, sw, &cards, self.fonts.as_ref()));
             }
         }
-        // X11 menus and tooltips, last shown in front, over everything but the switcher and the profile question
+        // X11 menus and tooltips, last shown in front, over everything but the switcher and the profile question; each where its
+        // X window is (its surface is all of the X window, a shadow drawn into it included)
         for x in self.overlays.iter().rev() {
-            let loc = cam.point(x.geometry().loc.to_f64()).to_i32_round();
+            let loc = cam.point(x.last_configure().loc.to_f64()).to_i32_round();
             out.extend(lift(x.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, loc, scale, 1.0), loc));
         }
         // A full screen window in front (a game, a video) covers the top bar and the dock: the Top layer then goes behind the
@@ -2327,7 +2520,7 @@ impl App {
         let windows: Vec<Window> = self.space.elements().rev().cloned().collect();
         for w in windows {
             let Some(loc) = self.space.element_location(&w) else { continue };
-            let geo = w.geometry();
+            let geo = window_geometry(&w);
             if geo.size.w <= 0 || geo.size.h <= 0 {
                 // nothing drawn yet (a window waiting for its first picture)
                 continue;
@@ -2671,6 +2864,12 @@ impl App {
         self.under(pos).and_then(Under::surface)
     }
 
+    /// What pointer and touch events at a point go to, and where its surface's origin is on screen: as `surface_under`, with an
+    /// X11 window as itself (a drag over it speaks XDND).
+    pub fn target_under(&self, pos: Point<f64, Logical>) -> Option<(PtrFocus, Point<f64, Logical>)> {
+        self.under(pos).and_then(Under::target)
+    }
+
     /// A click gives the keyboard to what is under the pointer (a window, raised, or a panel that asks for the keyboard).
     pub fn focus_under_pointer(&mut self, serial: Serial) {
         self.focus_at(self.pointer_location, serial);
@@ -2723,25 +2922,25 @@ impl App {
             return;
         }
         match event {
-            InputEvent::Keyboard { event } => self.key(event.key_code(), event.state(), event.time_msec()),
+            InputEvent::Keyboard { event } => self.key(event.key_code(), event.state(), event.time()),
             InputEvent::PointerMotionAbsolute { event } => {
                 // a tablet, a touch screen used as a pointer, a virtual machine's pointer: the whole of the screens
                 let area = self.space.outputs().map(output_rect).reduce(|a, b| a.merge(b)).unwrap_or_else(|| output_rect(&self.output));
                 let pos = event.position_transformed(area.size) + area.loc.to_f64();
-                self.pointer_to(pos, event.time_msec());
+                self.pointer_to(pos, event.time());
             }
             InputEvent::PointerMotion { event } => {
                 // a mouse or touchpad: moved by what libinput made of the movement (its speed and acceleration), kept on the
                 // screens, and told as relative motion to a game (constraints.rs: it stays put while a game has locked it)
                 self.pointer_moved_by(event.delta(), event.delta_unaccel(), event.time());
             }
-            InputEvent::PointerButton { event } => self.button(event.button_code(), event.state(), event.time_msec()),
+            InputEvent::PointerButton { event } => self.button(event.button_code(), event.state(), event.time()),
             InputEvent::PointerAxis { event } => {
                 self.input_seen();
                 let pointer = self.pointer.clone();
                 let factor = if own_settings { self.scroll_factor_of(&event.device().name()) } else { 1.0 };
                 let of = |a: Axis| (event.amount(a), event.amount_v120(a));
-                let frame = crate::input::axis_frame(event.time_msec(), event.source(), factor, of(Axis::Horizontal), of(Axis::Vertical));
+                let frame = crate::input::axis_frame(event.time(), event.source(), factor, of(Axis::Horizontal), of(Axis::Vertical));
                 pointer.axis(self, frame);
                 pointer.frame(self);
             }
@@ -2765,7 +2964,7 @@ impl App {
     }
 
     /// A key went down or up (an xkb key code: the kernel's code + 8). Shortcuts are taken here; the rest goes to the focus.
-    pub fn key(&mut self, code: smithay::input::keyboard::Keycode, state: KeyState, time: u32) {
+    pub fn key(&mut self, code: smithay::input::keyboard::Keycode, state: KeyState, time: InputTime) {
         self.input_seen();
         // a panel that went does not take this key (keyboard_check)
         self.keyboard_check();
@@ -2801,7 +3000,7 @@ impl App {
     }
 
     /// The pointer moved to `pos` (in the space's coordinates): input, so it shows again if it was resting.
-    pub fn pointer_to(&mut self, pos: Point<f64, Logical>, time: u32) {
+    pub fn pointer_to(&mut self, pos: Point<f64, Logical>, time: InputTime) {
         self.input_seen();
         self.cursor.last_motion = std::time::Instant::now();
         self.motion(pos, time);
@@ -2810,10 +3009,10 @@ impl App {
     /// The pointer put somewhere by the compositor (its screen went): not input, the idle time and a resting pointer stay.
     pub fn pointer_moved_to(&mut self, pos: Point<f64, Logical>) {
         self.wake();
-        self.motion(pos, crate::wmctl::now_ms());
+        self.motion(pos, InputTime::now());
     }
 
-    fn motion(&mut self, pos: Point<f64, Logical>, time: u32) {
+    fn motion(&mut self, pos: Point<f64, Logical>, time: InputTime) {
         let pointer = self.pointer.clone();
         let from = self.output_at(self.pointer_location);
         self.pointer_location = pos;
@@ -2835,11 +3034,7 @@ impl App {
         if hover != self.bar_hover {
             self.bar_hover = hover;
         }
-        // a drag that ended without its drop reaching us (Smithay always says, but the hand must never stay)
-        if self.dragging && !pointer.is_grabbed() {
-            self.end_drag();
-        }
-        let under = self.surface_under(pos);
+        let under = self.target_under(pos);
         if under.is_none()
             && !self.dragging
             && !matches!(self.cursor.status, CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Default))
@@ -2852,7 +3047,7 @@ impl App {
     }
 
     /// A pointer button went down or up (a kernel button code: 0x110 is the left one).
-    pub fn button(&mut self, button: u32, state: ButtonState, time: u32) {
+    pub fn button(&mut self, button: u32, state: ButtonState, time: InputTime) {
         self.input_seen();
         if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
             eprintln!("button at {:?}, over {:?}", self.pointer_location, self.surface_under(self.pointer_location).map(|x| x.0.id()));
@@ -2991,7 +3186,7 @@ impl App {
 
     /// The lock surfaces: their output and the size the locker drew at (None until it has).
     pub fn lock_infos(&self) -> Vec<(Output, Option<smithay::utils::Size<u32, Logical>>)> {
-        self.lock_surfaces.iter().map(|(o, l)| (o.clone(), l.current_state().size)).collect()
+        self.lock_surfaces.iter().map(|(o, l)| (o.clone(), l.with_committed_state(|c| c.and_then(|c| c.size)))).collect()
     }
 }
 
@@ -3048,8 +3243,11 @@ impl CompositorHandler for App {
             let found = self.space.elements().find(|w| is_window_of(w, &root)).cloned();
             if let Some(w) = found {
                 w.on_commit();
-                if self.unplaced.contains(&root) && w.geometry().size.w > 0 && w.geometry().size.h > 0 {
-                    self.place_new(&w);
+                if self.unplaced.contains(&root) {
+                    let size = window_geometry(&w).size;
+                    if size.w > 0 && size.h > 0 {
+                        self.place_new(&w);
+                    }
                 }
             }
         }
@@ -3087,7 +3285,6 @@ impl CompositorHandler for App {
         }
     }
 }
-delegate_compositor!(App);
 
 impl BufferHandler for App {
     fn buffer_destroyed(&mut self, _: &wl_buffer::WlBuffer) {}
@@ -3097,7 +3294,6 @@ impl ShmHandler for App {
         &self.shm_state
     }
 }
-delegate_shm!(App);
 
 // GPU pictures (linux-dmabuf): a program renders with the GPU (Vulkan, OpenGL) into a buffer and hands it over without a copy.
 // The import is checked against the renderer at once, so a buffer the GPU cannot read is refused when it is made, not when drawn.
@@ -3119,7 +3315,6 @@ impl smithay::wayland::dmabuf::DmabufHandler for App {
         }
     }
 }
-smithay::delegate_dmabuf!(App);
 
 // Keeping the screen awake (idle-inhibit): a video player or game asks while its surface shows; the idle timer stops while any asks.
 impl smithay::wayland::idle_inhibit::IdleInhibitHandler for App {
@@ -3135,15 +3330,13 @@ impl smithay::wayland::idle_inhibit::IdleInhibitHandler for App {
         self.idle_state.set_is_inhibited(!self.inhibitors.is_empty());
     }
 }
-smithay::delegate_idle_inhibit!(App);
 
 // Middle-click paste (primary selection), beside the ordinary clipboard.
 impl smithay::wayland::selection::primary_selection::PrimarySelectionHandler for App {
-    fn primary_selection_state(&self) -> &smithay::wayland::selection::primary_selection::PrimarySelectionState {
-        &self.primary_selection_state
+    fn primary_selection_state(&mut self) -> &mut smithay::wayland::selection::primary_selection::PrimarySelectionState {
+        &mut self.primary_selection_state
     }
 }
-smithay::delegate_primary_selection!(App);
 
 // Fractional scaling: programs are told the output's scale so they draw sharp at 125 % or 150 % (the nested window is always 1.0; headless outputs have the scale
 // they were given). Changes later are sent by apply_scale().
@@ -3155,7 +3348,6 @@ impl smithay::wayland::fractional_scale::FractionalScaleHandler for App {
         });
     }
 }
-smithay::delegate_fractional_scale!(App);
 
 // Focus requests between programs (xdg-activation): a program may bring a window forward only with a token made in answer to
 // the person's own input in the last 10 seconds (a click on a link, a launcher), so nothing can steal the keyboard on its own.
@@ -3176,18 +3368,16 @@ impl smithay::wayland::xdg_activation::XdgActivationHandler for App {
         self.activation_state.remove_token(&token);
     }
 }
-smithay::delegate_xdg_activation!(App);
 
 // Cursor shapes by name (cursor-shape-v1; it needs the tablet protocol's seat part, which costs nothing without a tablet).
-impl smithay::wayland::tablet_manager::TabletSeatHandler for App {}
-smithay::delegate_cursor_shape!(App);
-smithay::delegate_tablet_manager!(App);
+impl smithay::input::tablet::TabletSeatHandler for App {
+    type ToolFocus = WlSurface;
+}
 
 impl SeatHandler for App {
     type KeyboardFocus = KbFocus;
-    // the pointer needs no X11 variant: XWayland reads pointer events on the window's own surface
-    type PointerFocus = WlSurface;
-    type TouchFocus = WlSurface;
+    type PointerFocus = PtrFocus;
+    type TouchFocus = PtrFocus;
     fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.seat_state
     }
@@ -3213,7 +3403,6 @@ impl SeatHandler for App {
         }
     }
 }
-delegate_seat!(App);
 
 impl SelectionHandler for App {
     type SelectionUserData = ();
@@ -3241,27 +3430,57 @@ impl SelectionHandler for App {
         _seat: Seat<Self>,
         _: &(),
     ) {
-        let handle = self.loop_handle.clone();
         if let Some(wm) = self.xwm.as_mut() {
-            if let Err(e) = wm.send_selection(ty, mime_type, fd, handle) {
+            if let Err(e) = wm.send_selection(ty, mime_type, fd) {
                 eprintln!("yggdrasil-compositor: could not paste from an X11 program: {e}");
             }
         }
     }
 }
 impl DataDeviceHandler for App {
-    fn data_device_state(&self) -> &DataDeviceState {
-        &self.data_device_state
+    fn data_device_state(&mut self) -> &mut DataDeviceState {
+        &mut self.data_device_state
     }
 }
-impl ClientDndGrabHandler for App {
-    /// A program started dragging (with the left button held): a closed hand, and its icon under the pointer.
-    fn started(
-        &mut self,
-        _source: Option<smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource>,
-        icon: Option<WlSurface>,
-        _seat: Seat<Self>,
-    ) {
+
+/// Did the button or finger held go down on a surface of the program that owns `asker`? Smithay checks only a request's serial,
+/// and serials are one counter every program sees (a program learns them from its own configures): without this, any program
+/// could take another program's press, or the compositor's own Super+drag (a grab on no surface), for its drag or its move.
+fn pressed_by(focus: Option<&(PtrFocus, Point<f64, Logical>)>, asker: &ObjectId) -> bool {
+    focus.is_some_and(|(f, _)| f.surface().id().same_client_as(asker))
+}
+
+impl WaylandDndGrabHandler for App {
+    /// A program started dragging (with the left button held, or a finger down, on its own window): a closed hand, its icon
+    /// under the pointer, and the drag grab that routes the offer to the window under it. A program asking with a press that is
+    /// not its own is told its drag is cancelled, and nothing changes.
+    fn dnd_requested<S: Source>(&mut self, source: S, icon: Option<WlSurface>, seat: Seat<Self>, serial: Serial, type_: GrabType) {
+        // the program asking: its data source's, or without one (a drag within the program) its origin surface's
+        let any: &dyn std::any::Any = &source;
+        let Some(asker) =
+            any.downcast_ref::<WlDataSource>().map(Resource::id).or_else(|| any.downcast_ref::<WlSurface>().map(Resource::id))
+        else {
+            return source.cancel();
+        };
+        match type_ {
+            GrabType::Pointer => {
+                let pointer = seat.get_pointer().unwrap();
+                let Some(start) = pointer.grab_start_data().filter(|s| pressed_by(s.focus.as_ref(), &asker)) else {
+                    return source.cancel();
+                };
+                let grab = DnDGrab::new_pointer(&self.display_handle, start, source, seat);
+                pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Keep);
+            }
+            GrabType::Touch => {
+                let Some(touch) = seat.get_touch() else { return source.cancel() };
+                let Some(start) = touch.grab_start_data().filter(|s| pressed_by(s.focus.as_ref(), &asker)) else {
+                    return source.cancel();
+                };
+                let grab = DnDGrab::new_touch(&self.display_handle, start, source, seat);
+                touch.set_grab(self, grab, serial);
+            }
+        }
+        // set only now: a drag this one replaced (the program's own earlier one) was cancelled as it went, which ended its look
         self.dragging = true;
         // the offset the icon's first picture was committed with (before the drag began)
         self.dnd_offset = icon
@@ -3272,26 +3491,138 @@ impl ClientDndGrabHandler for App {
         self.cursor.status = CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Grabbing);
         self.wake();
     }
+}
+
+impl DndGrabHandler for App {
     /// The drag ended (dropped on a window, or let go where nothing takes it): the arrow until a window sets its own.
-    fn dropped(&mut self, _target: Option<WlSurface>, _validated: bool, _seat: Seat<Self>) {
+    fn dropped(&mut self, _target: Option<DndTarget<'_, Self>>, _validated: bool, _seat: Seat<Self>, _at: Point<f64, Logical>) {
+        self.end_drag();
+    }
+
+    /// The drag ended without a drop: the touchscreen cancelled the finger, another grab took the button (the program's own
+    /// move), or the program went away. The same as a drop: Smithay main ends these here, not in `dropped`.
+    fn cancelled(&mut self, _seat: Seat<Self>, _at: Point<f64, Logical>) {
         self.end_drag();
     }
 }
 
+/// What a drag offers the program under the pointer: a Wayland program a wl_data_offer, an X11 program XDND's messages (sent by
+/// Smithay's window manager, which also stands in for Wayland windows when an X11 program drags).
+pub enum DragOffer<S: Source> {
+    Wl(WlOfferData<S>),
+    X11(XwmOfferData<S>),
+}
+
+impl<S: Source> DragOffer<S> {
+    // each target is only ever given back the offer it made
+    fn wl(&mut self) -> Option<&mut WlOfferData<S>> {
+        match self {
+            DragOffer::Wl(o) => Some(o),
+            DragOffer::X11(_) => None,
+        }
+    }
+
+    fn x11(&mut self) -> Option<&mut XwmOfferData<S>> {
+        match self {
+            DragOffer::X11(o) => Some(o),
+            DragOffer::Wl(_) => None,
+        }
+    }
+}
+
+impl<S: Source> OfferData for DragOffer<S> {
+    fn disable(&self) {
+        match self {
+            DragOffer::Wl(o) => o.disable(),
+            DragOffer::X11(o) => o.disable(),
+        }
+    }
+    fn drop(&self) {
+        match self {
+            DragOffer::Wl(o) => OfferData::drop(o),
+            DragOffer::X11(o) => OfferData::drop(o),
+        }
+    }
+    fn validated(&self) -> bool {
+        match self {
+            DragOffer::Wl(o) => o.validated(),
+            DragOffer::X11(o) => o.validated(),
+        }
+    }
+}
+
+/// A drag (a Wayland program's or an X11 program's) over a Wayland surface or an X11 window: Smithay's own handling of each. An
+/// X11 window whose XWayland went away (`App::has_x11`) takes nothing, and nothing is said to it.
+impl DndFocus<App> for PtrFocus {
+    type OfferData<S: Source> = DragOffer<S>;
+
+    fn enter<S: Source>(
+        &self,
+        data: &mut App,
+        dh: &DisplayHandle,
+        source: Arc<S>,
+        seat: &Seat<App>,
+        at: Point<f64, Logical>,
+        serial: &Serial,
+    ) -> Option<DragOffer<S>> {
+        match self {
+            PtrFocus::Wl(s) => DndFocus::enter(s, data, dh, source, seat, at, serial).map(DragOffer::Wl),
+            PtrFocus::X11(x, _) if data.has_x11(x) => DndFocus::enter(x, data, dh, source, seat, at, serial).map(DragOffer::X11),
+            PtrFocus::X11(..) => None,
+        }
+    }
+
+    fn motion<S: Source>(
+        &self,
+        data: &mut App,
+        offer: Option<&mut DragOffer<S>>,
+        seat: &Seat<App>,
+        at: Point<f64, Logical>,
+        time: InputTime,
+    ) {
+        match self {
+            PtrFocus::Wl(s) => DndFocus::motion(s, data, offer.and_then(DragOffer::wl), seat, at, time),
+            PtrFocus::X11(x, _) if data.has_x11(x) => DndFocus::motion(x, data, offer.and_then(DragOffer::x11), seat, at, time),
+            PtrFocus::X11(..) => {}
+        }
+    }
+
+    fn leave<S: Source>(&self, data: &mut App, offer: Option<&mut DragOffer<S>>, seat: &Seat<App>) {
+        match self {
+            PtrFocus::Wl(s) => DndFocus::leave(s, data, offer.and_then(DragOffer::wl), seat),
+            PtrFocus::X11(x, _) if data.has_x11(x) => DndFocus::leave(x, data, offer.and_then(DragOffer::x11), seat),
+            PtrFocus::X11(..) => {}
+        }
+    }
+
+    fn drop<S: Source>(&self, data: &mut App, offer: Option<&mut DragOffer<S>>, seat: &Seat<App>) {
+        match self {
+            PtrFocus::Wl(s) => DndFocus::drop(s, data, offer.and_then(DragOffer::wl), seat),
+            PtrFocus::X11(x, _) if data.has_x11(x) => DndFocus::drop(x, data, offer.and_then(DragOffer::x11), seat),
+            PtrFocus::X11(..) => {}
+        }
+    }
+}
+
 impl App {
+    /// A drag's look (the closed hand, its icon) ends with its grab: Smithay reports every end of a drag's grab, the pointer's
+    /// or a finger's, to `dropped` or `cancelled`. Pointer motion must not end it: a finger's drag goes on while the mouse moves.
     fn end_drag(&mut self) {
         self.dragging = false;
         self.dnd_icon = None;
         self.cursor.status = CursorImageStatus::default_named();
         self.wake();
     }
+
+    /// What a program may move or resize its window with: the pointer's grab under `serial`, if the button went down on one of
+    /// the program's own surfaces (`pressed_by`).
+    fn own_press(&self, surface: &ToplevelSurface, serial: Serial) -> Option<smithay::input::pointer::GrabStartData<App>> {
+        let start = self.pointer.with_grab(|s, g| (s == serial).then(|| g.start_data().clone())).flatten()?;
+        pressed_by(start.focus.as_ref(), &surface.wl_surface().id()).then_some(start)
+    }
 }
-impl ServerDndGrabHandler for App {}
-delegate_data_device!(App);
 
 impl OutputHandler for App {}
-delegate_output!(App);
-delegate_viewporter!(App);
 
 impl XdgShellHandler for App {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -3320,11 +3651,12 @@ impl XdgShellHandler for App {
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, serial: Serial) {
+        let start = self.own_press(&surface, serial);
         if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
-            eprintln!("move request, serial {:?}, grab ok: {}", serial, self.pointer.has_grab(serial));
+            eprintln!("move request, serial {:?}, grab ok: {}", serial, start.is_some());
         }
         let pointer = self.pointer.clone();
-        let (Some(start), Some(window)) = (pointer.grab_start_data().filter(|_| pointer.has_grab(serial)), self.window_of(&surface)) else {
+        let (Some(start), Some(window)) = (start, self.window_of(&surface)) else {
             return;
         };
         let origin = self.space.element_location(&window).unwrap_or_default();
@@ -3333,11 +3665,11 @@ impl XdgShellHandler for App {
 
     fn resize_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, serial: Serial, edges: ResizeEdge) {
         let pointer = self.pointer.clone();
-        let (Some(start), Some(window)) = (pointer.grab_start_data().filter(|_| pointer.has_grab(serial)), self.window_of(&surface)) else {
+        let (Some(start), Some(window)) = (self.own_press(&surface, serial), self.window_of(&surface)) else {
             return;
         };
         let origin = self.space.element_location(&window).unwrap_or_default();
-        let size = window.geometry().size;
+        let size = window_geometry(&window).size;
         pointer.set_grab(self, ResizeGrab { start, window, edges, origin, size }, serial, Focus::Clear);
     }
 
@@ -3385,7 +3717,6 @@ impl XdgShellHandler for App {
         surface.send_repositioned(token);
     }
 }
-delegate_xdg_shell!(App);
 
 impl WlrLayerShellHandler for App {
     fn shell_state(&mut self) -> &mut WlrLayerShellState {
@@ -3413,7 +3744,6 @@ impl WlrLayerShellHandler for App {
         self.keep_clear();
     }
 }
-delegate_layer_shell!(App);
 
 impl SessionLockHandler for App {
     fn lock_state(&mut self) -> &mut SessionLockManagerState {
@@ -3435,7 +3765,7 @@ impl SessionLockHandler for App {
         let kb = self.keyboard.clone();
         kb.set_focus(self, None, SERIAL_COUNTER.next_serial());
         let (pointer, location) = (self.pointer.clone(), self.pointer_location);
-        pointer.motion(self, None, &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: 0 });
+        pointer.motion(self, None, &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: InputTime::now() });
     }
 
     fn unlock(&mut self) {
@@ -3448,10 +3778,11 @@ impl SessionLockHandler for App {
     }
 
     /// One lock surface per output, as big as it; the keyboard goes to the one on the first output. Only the surfaces of the
-    /// lock that holds the session are taken: a program refused as a second locker may still make lock surfaces (for a lock of
-    /// its own), and showing one would put up its lock screen in place of the real one, with the keyboard and so the password.
+    /// lock that holds the session are taken: showing another program's would put up its lock screen in place of the real one,
+    /// with the keyboard and so the password. Smithay passes on no surface of a lock it refused (sent `finished`), but it does
+    /// pass on those of every lock still waiting for an answer and leaves the match to us; `lock` answers at once today.
     fn new_surface(&mut self, surface: LockSurface, output: WlOutput) {
-        if surface.lock().is_none() || surface.lock() != self.lock_owner {
+        if self.lock_owner.as_ref() != Some(surface.ext_session_lock()) {
             return;
         }
         let output = Output::from_resource(&output).unwrap_or_else(|| self.output.clone());
@@ -3466,14 +3797,12 @@ impl SessionLockHandler for App {
         self.lock_surfaces.push((output, surface));
     }
 }
-delegate_session_lock!(App);
 
 impl IdleNotifierHandler for App {
     fn idle_notifier_state(&mut self) -> &mut IdleNotifierState<Self> {
         &mut self.idle_state
     }
 }
-delegate_idle_notify!(App);
 
 impl XdgDecorationHandler for App {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
@@ -3491,8 +3820,14 @@ impl XdgDecorationHandler for App {
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
         self.use_server_side(&toplevel);
     }
+    /// The program withdrew its decoration object: the protocol says no server-side decoration from then on, so our bar goes
+    /// (its mode is already back to none; nothing is configured).
+    fn decoration_destroyed(&mut self, toplevel: ToplevelSurface) {
+        self.decorated.retain(|s| s != toplevel.wl_surface());
+        self.bars.remove(toplevel.wl_surface());
+        self.retile();
+    }
 }
-delegate_xdg_decoration!(App);
 
 impl App {
     fn use_client_side(&mut self, t: &ToplevelSurface) {

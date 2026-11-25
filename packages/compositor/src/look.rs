@@ -481,8 +481,9 @@ where
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         _: &[Rectangle<i32, Physical>],
+        cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), R::Error> {
-        self.inner.draw(frame, src, dst, damage, &[])
+        self.inner.draw(frame, src, dst, damage, &[], cache)
     }
 }
 
@@ -557,6 +558,7 @@ impl<R: Renderer> RenderElement<R> for Strip {
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         _: &[Rectangle<i32, Physical>],
+        _cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), R::Error> {
         frame.draw_solid(dst, damage, self.color)
     }
@@ -850,9 +852,10 @@ where
         dst: Rectangle<i32, Physical>,
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&smithay::utils::user_data::UserDataMap>,
     ) -> Result<(), R::Error> {
         let Some((c, r, corner)) = &self.clip else {
-            return self.inner.draw(frame, src, dst, damage, opaque_regions);
+            return self.inner.draw(frame, src, dst, damage, opaque_regions, cache);
         };
         let damaged = |p: Point<i32, Physical>| damage.iter().any(|d| Rectangle::new(d.loc + dst.loc, d.size).contains(p));
         // a picture without alpha cannot be drawn at a share (pixman copies it): its curve pixels go whole or not at all
@@ -885,7 +888,7 @@ where
             }
         }
         if !kept.is_empty() {
-            self.inner.draw(frame, src, dst, &kept, opaque_regions)?;
+            self.inner.draw(frame, src, dst, &kept, opaque_regions, cache)?;
         }
         let alpha = self.inner.alpha();
         for (one, cov) in shares {

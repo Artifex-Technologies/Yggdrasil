@@ -21,7 +21,8 @@
 //! tests/apps-podman.sh runs these in a container with no devices and no network.
 //!
 //! Each program runs with nothing of the running desktop: an empty environment but for PATH=/usr/bin, the compositor's private
-//! runtime folder and home, its Wayland socket, and a session bus of the test's own (no service activation). It dies with the test.
+//! runtime folder and home, its Wayland socket, a session bus of the test's own (no service activation), and an empty folder in
+//! place of /dev/input (YGGDRASIL_PANEL_INPUT: the panel never reads the computer's mice). It dies with the test.
 
 mod common;
 
@@ -134,6 +135,10 @@ impl App {
         let name = bin.file_name().unwrap().to_string_lossy().into_owned();
         let log = comp.dir.join(format!("{name}.log"));
         let home = comp.dir.join("home");
+        // the panel follows the mouse buttons of the input devices: given the computer's own, every click and drag at the running
+        // desktop woke the panel under test
+        let input = comp.dir.join("input");
+        std::fs::create_dir_all(&input).unwrap();
         let mut cmd = Command::new(bin);
         cmd.args(args)
             .env_clear()
@@ -143,6 +148,7 @@ impl App {
             .env("LANG", "C.UTF-8")
             .env("RUST_BACKTRACE", "1")
             .env("XDG_RUNTIME_DIR", comp.dir.join("run"))
+            .env("YGGDRASIL_PANEL_INPUT", &input)
             .env("WAYLAND_DISPLAY", comp.wayland.file_name().unwrap())
             // no bus at all unless the test gives its own: never the desktop's
             .env(

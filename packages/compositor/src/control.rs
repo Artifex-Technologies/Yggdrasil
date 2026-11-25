@@ -140,7 +140,7 @@ fn command(words: &[&str], app: &mut App, extra: Extra, usage: &str) -> Result<V
             .into_iter()
             .map(|i| {
                 let (title, app_id) = state::title_app(&i.window);
-                let size = i.window.geometry().size;
+                let size = state::window_size(&i.window);
                 let (title, app_id) = (crate::wmctl::field(&title), crate::wmctl::field(&app_id));
                 format!("{app_id}\t{title}\t{},{}\t{}x{}\t{}\t{}", i.at.x, i.at.y, size.w, size.h, i.workspace + 1, i.states.join(","))
             })

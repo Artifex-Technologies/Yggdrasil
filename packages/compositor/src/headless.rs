@@ -54,6 +54,7 @@
 //!   input                        the mouse and keyboard settings in force (input.rs: Settings > Peripherals' input.conf)
 //!   touch-down ID X Y, touch-move ID X Y, touch-up ID
 //!                                a finger (ID 0 to 15) on a touchscreen, at X,Y of the touchscreen's screen (touch.rs)
+//!   touch-cancel                 the touchscreen cancels its fingers, as libinput's touch cancel does
 //!   power NAME on|off            switch an output on or off (as wlr-output-power does)
 //!   clock [stop|run|+MS]         the clock the animations run on: stop it, move a stopped one on, let it run again; without
 //!                                a word: "running" or "stopped" and its time (ms). For tests: a frame in an animation
@@ -213,7 +214,13 @@ fn runtime_ok(dir: &Path, uid: u32, allow_shared: bool) -> Result<(), String> {
 pub fn make_output(name: String, s: &OutputSpec) -> Output {
     let o = Output::new(
         name,
-        PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "headless".into() },
+        PhysicalProperties {
+            size: (0, 0).into(),
+            subpixel: Subpixel::Unknown,
+            make: "Yggdrasil".into(),
+            model: "headless".into(),
+            serial_number: String::new(),
+        },
     );
     let mode = Mode { size: (s.w, s.h).into(), refresh: 60_000 };
     o.change_current_state(Some(mode), Some(Transform::Normal), Some(Scale::Fractional(s.scale)), None);
@@ -255,7 +262,7 @@ pub struct Headless {
 }
 
 /// The commands, for an unknown one's answer.
-const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, switcher, frames, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, touch-down ID X Y, touch-move ID X Y, touch-up ID, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
+const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, switcher, frames, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, touch-down ID X Y, touch-move ID X Y, touch-up ID, touch-cancel, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
 
 /// About 60 frames a second at most, however often programs commit.
 const FRAME: Duration = Duration::from_millis(16);
@@ -481,7 +488,7 @@ impl Headless {
         use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
         use smithay::backend::renderer::element::AsRenderElements;
         let mut image = self.renderer.create_buffer(Fourcc::Argb8888, (size.0 as i32, size.1 as i32).into()).ok()?;
-        let geo = w.geometry();
+        let geo = state::window_geometry(w);
         let at = smithay::utils::Point::<i32, smithay::utils::Physical>::from((
             -(geo.loc.x as f64 * scale).round() as i32,
             -(geo.loc.y as f64 * scale).round() as i32,
@@ -535,11 +542,6 @@ impl Headless {
             h: p.size.h as f64 / scale,
         };
         Some((covered, (buffer, s.output.name())))
-    }
-
-    /// Milliseconds since the start (the time stamp of input made here).
-    fn ms(&self) -> u32 {
-        self.start.elapsed().as_millis() as u32
     }
 
     fn screen(&self, name: &str) -> Option<&Screen> {
@@ -641,7 +643,7 @@ pub fn run(
 
 /// The headless backend's own commands (the rest are control.rs's): None for a command that is not one of them.
 fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec<String>, String>> {
-    if let Some(r) = touch_command(words, app, h) {
+    if let Some(r) = touch_command(words, app) {
         return Some(r);
     }
     const OWN: [&str; 19] = [
@@ -672,22 +674,23 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec
 }
 
 /// A finger on a touchscreen, made here (touch.rs): `touch-down ID X Y`, `touch-move ID X Y` (X, Y in the touchscreen's own
-/// logical size, as libinput gives a touch: the laptop's screen, else the main one) and `touch-up ID`, each a frame of its own.
-fn touch_command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec<String>, String>> {
+/// logical size, as libinput gives a touch: the laptop's screen, else the main one) and `touch-up ID`, each a frame of its own;
+/// `touch-cancel` ends every finger without a lift.
+fn touch_command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, String>> {
     let slot = |id: &str| id.parse::<u32>().ok().filter(|n| *n < 16).map(|n| smithay::backend::input::TouchSlot::from(Some(n)));
     let at = |app: &App, x: &str, y: &str| -> Option<smithay::utils::Point<f64, smithay::utils::Logical>> {
         let (x, y) = (x.parse::<f64>().ok().filter(|v| v.is_finite())?, y.parse::<f64>().ok().filter(|v| v.is_finite())?);
         let r = state::output_rect(&app.touch_output());
         Some((r.loc.x as f64 + x.clamp(0.0, r.size.w as f64), r.loc.y as f64 + y.clamp(0.0, r.size.h as f64)).into())
     };
-    let usage = || Err("touch-down ID X Y, touch-move ID X Y, touch-up ID (ID 0 to 15)".to_string());
+    let usage = || Err("touch-down ID X Y, touch-move ID X Y, touch-up ID (ID 0 to 15), touch-cancel".to_string());
     let r = match words {
         [w @ ("touch-down" | "touch-move"), id, x, y] => match (slot(id), at(app, x, y)) {
             (Some(s), Some(p)) => {
                 if *w == "touch-down" {
-                    app.touch_down(s, p, h.ms());
+                    app.touch_down(s, p, smithay::backend::input::InputTime::now());
                 } else {
-                    app.touch_motion(s, p, h.ms());
+                    app.touch_motion(s, p, smithay::backend::input::InputTime::now());
                 }
                 app.touch_frame();
                 Ok(vec![])
@@ -696,12 +699,16 @@ fn touch_command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Resu
         },
         ["touch-up", id] => match slot(id) {
             Some(s) => {
-                app.touch_up(s, h.ms());
+                app.touch_up(s, smithay::backend::input::InputTime::now());
                 app.touch_frame();
                 Ok(vec![])
             }
             None => usage(),
         },
+        ["touch-cancel"] => {
+            app.touch_cancel();
+            Ok(vec![])
+        }
         [w, ..] if w.starts_with("touch-") => usage(),
         _ => return None,
     };
@@ -780,10 +787,10 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             }
             for keys in all {
                 for k in &keys {
-                    press(app, h, *k, true);
+                    press(app, *k, true);
                 }
                 for k in keys.iter().rev() {
-                    press(app, h, *k, false);
+                    press(app, *k, false);
                 }
             }
             Ok(vec![])
@@ -793,11 +800,11 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             let down = words[0] == "key-down";
             if down {
                 for k in &keys {
-                    press(app, h, *k, true);
+                    press(app, *k, true);
                 }
             } else {
                 for k in keys.iter().rev() {
-                    press(app, h, *k, false);
+                    press(app, *k, false);
                 }
             }
             Ok(vec![])
@@ -810,19 +817,19 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             }
             for (code, shift) in all {
                 if shift {
-                    press(app, h, KEY_LEFTSHIFT, true);
+                    press(app, KEY_LEFTSHIFT, true);
                 }
-                press(app, h, code, true);
-                press(app, h, code, false);
+                press(app, code, true);
+                press(app, code, false);
                 if shift {
-                    press(app, h, KEY_LEFTSHIFT, false);
+                    press(app, KEY_LEFTSHIFT, false);
                 }
             }
             Ok(vec![])
         }
         ["pointer", x, y] => {
             let (x, y) = (x.parse::<f64>().map_err(|_| "pointer X Y: numbers")?, y.parse::<f64>().map_err(|_| "pointer X Y: numbers")?);
-            let t = h.ms();
+            let t = smithay::backend::input::InputTime::now();
             app.pointer_to((x, y).into(), t);
             Ok(vec![])
         }
@@ -840,7 +847,7 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             } else {
                 smithay::backend::input::ButtonState::Released
             };
-            app.button(button, state, h.ms());
+            app.button(button, state, smithay::backend::input::InputTime::now());
             Ok(vec![])
         }
         ["click", rest @ ..] if rest.len() <= 1 => {
@@ -852,9 +859,13 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             };
             // a press of the virtual mouse's button: left-handed, its left one is the right button
             let button = crate::input::button(&crate::input::mouse(&app.input, crate::input::HEADLESS_MOUSE), button);
-            let t = h.ms();
+            let t = smithay::backend::input::InputTime::now();
             app.button(button, smithay::backend::input::ButtonState::Pressed, t);
-            app.button(button, smithay::backend::input::ButtonState::Released, t + 1);
+            app.button(
+                button,
+                smithay::backend::input::ButtonState::Released,
+                smithay::backend::input::InputTime::from_micros(t.micros() + 1000),
+            );
             Ok(vec![])
         }
         ["pointer-move", dx, dy] => {
@@ -863,7 +874,7 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             let raw = (num(dx)?, num(dy)?);
             let (mx, my) = crate::input::motion(&m, raw);
             // as a mouse's motion: told to a game as relative motion, held by its pointer lock (constraints.rs)
-            let t = h.ms() as u64 * 1000;
+            let t = smithay::backend::input::InputTime::now();
             app.pointer_moved_by((mx, my).into(), raw.into(), t);
             Ok(vec![])
         }
@@ -873,7 +884,7 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             let m = crate::input::mouse(&app.input, crate::input::HEADLESS_MOUSE);
             let (vy, vx) =
                 (crate::input::scroll(&m, num(dy)?), crate::input::scroll(&m, rest.first().map(|v| num(v)).transpose()?.unwrap_or(0.0)));
-            let t = h.ms();
+            let t = smithay::backend::input::InputTime::now();
             app.wake();
             let pointer = app.pointer.clone();
             let mut frame = smithay::input::pointer::AxisFrame::new(t).source(AxisSource::Wheel);
@@ -1002,10 +1013,10 @@ fn combo(s: &str) -> Option<Vec<u32>> {
 }
 
 /// One key down or up, as if from a keyboard.
-fn press(app: &mut App, h: &Headless, code: u32, down: bool) {
+fn press(app: &mut App, code: u32, down: bool) {
     use smithay::backend::input::KeyState;
     let state = if down { KeyState::Pressed } else { KeyState::Released };
-    app.key((code + 8).into(), state, h.ms());
+    app.key((code + 8).into(), state, smithay::backend::input::InputTime::now());
 }
 
 #[cfg(test)]

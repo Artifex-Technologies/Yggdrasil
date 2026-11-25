@@ -1,12 +1,10 @@
-//! What an X11 window asked for before it was shown: `_NET_WM_STATE` set on the window before it is mapped (a game that wants
-//! to start full screen, a program that wants to start maximized). EWMH says the window manager reads it when the window is
-//! mapped; Smithay's window manager does not, so a game that asked would open as an ordinary window.
+//! The compositor's second connection to XWayland, for what an X11 window manager does and Smithay's does not, or not at
+//! once. It runs on a thread of its own, so the compositor never waits for the X server (XWayland is also a client of the
+//! compositor: a blocking read here could wait on a server that waits on us); the compositor hands it jobs and waits for no
+//! answer. (What a window asks for before it is shown, `_NET_WM_STATE`, which gave this file its name, Smithay's window
+//! manager reads itself: xwayland.rs, map_window_request.)
 //!
-//! The property is read on a thread of its own, over its own connection to XWayland, so the compositor never waits for the X
-//! server (XWayland is also a client of the compositor: a blocking read here could wait on a server that waits on us). The
-//! answer comes back to the event loop through a channel and is acted on then, a moment after the window is shown.
-//!
-//! It also says which X11 window is active, as EWMH window managers do: `_NET_ACTIVE_WINDOW` on the root, and the X input
+//! It says which X11 window is active, as EWMH window managers do: `_NET_ACTIVE_WINDOW` on the root, and the X input
 //! focus on the window. Smithay sets the property only when the focus has moved, and for a "globally active" window (input
 //! hint False with WM_TAKE_FOCUS: every Wine window) it only sends WM_TAKE_FOCUS and waits for the program to take the focus.
 //! Wine waits for the window manager to mark its window active first, so neither moved: Fallout 4 through Proton got no keys
@@ -18,52 +16,22 @@
 //! icon its theme does not have. The first window of a class gives it; it is read when the window is shown and again when its
 //! title changes (a program that sets its icon after its window shows).
 //!
-//! It also is the X11 display's XSETTINGS manager (the freedesktop XSETTINGS spec): it owns `_XSETTINGS_S0` with a window of
-//! its own and keeps the settings in its `_XSETTINGS_SETTINGS`, which the compositor sends it (xwayland.rs, x11_resources: the
-//! DPI, the pointer, GTK's theme, icons and font). GTK programs under X11 read them there and follow a change at once.
-//!
-//! It also keeps ICCCM's WM_STATE in step with minimizing: Iconic when a window is minimized, Normal when it is shown again.
-//! Smithay only writes it when a window is mapped or unmapped. Wine watches it: a game that minimized itself (old DirectX 9
-//! games do when they lose the focus) is restored only when WM_STATE goes back to Normal. Without that Wine kept the game at
-//! its minimized size, and on the dock's restore only a strip of the picture showed (Dead Space 2, found 2026-11-05).
+//! It also keeps ICCCM's WM_STATE in step with minimizing: Iconic when a window is minimized, Normal when it is shown again,
+//! sent at once. Wine watches it: a game that minimized itself (old DirectX 9 games do when they lose the focus) is restored
+//! only when WM_STATE goes back to Normal. Smithay 0.7 wrote it only when a window was mapped or unmapped, so Wine kept the
+//! game at its minimized size, and on the dock's restore only a strip of the picture showed (Dead Space 2, found 2026-11-05).
+//! Smithay main's set_hidden, called beside this, writes the same value on the window manager's connection, sent with its
+//! next flush; the write here is the one that was tried with Wine.
 
 use std::sync::mpsc::{channel, Sender};
 
-use smithay::reexports::calloop::channel::{channel as loop_channel, Event};
-use smithay::reexports::calloop::LoopHandle;
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt, EventMask, InputFocus, PropMode};
+use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, EventMask, InputFocus, PropMode};
 use x11rb::wrapper::ConnectionExt as _;
 
-use crate::state::App;
-
-/// One window's answer: what it asked for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Asked {
-    pub window: u32,
-    pub fullscreen: bool,
-    pub maximized: bool,
-}
-
-/// The atoms of `_NET_WM_STATE` that matter here.
-#[derive(Clone, Copy, Debug)]
-pub struct Atoms {
-    pub fullscreen: u32,
-    pub max_vert: u32,
-    pub max_horz: u32,
-}
-
-/// What a `_NET_WM_STATE` list says (maximized needs both directions, as EWMH has it).
-pub fn read(window: u32, states: &[u32], a: &Atoms) -> Asked {
-    Asked { window, fullscreen: states.contains(&a.fullscreen), maximized: states.contains(&a.max_vert) && states.contains(&a.max_horz) }
-}
-
 enum Job {
-    Ask(u32),
     /// this window's own icon, kept for its class (unless the class has one already)
     Icon(u32, String),
-    /// the XSETTINGS to publish now (the `_XSETTINGS_SETTINGS` property's bytes)
-    Settings(Vec<u8>),
     /// this X11 window has the keyboard now (0: none has: a Wayland window or nothing has it)
     Activate(u32),
     /// WM_STATE: Iconic (minimized) or Normal
@@ -120,7 +88,7 @@ pub fn wm_state(iconic: bool) -> [u32; 2] {
     [if iconic { ICONIC_STATE } else { NORMAL_STATE }, 0]
 }
 
-/// The thread that reads the property; dropped with the compositor.
+/// The thread on the second connection, which does the jobs; dropped with the compositor.
 pub struct Reader {
     tx: Sender<Job>,
     /// a byte written here wakes the thread for the job just sent
@@ -128,17 +96,9 @@ pub struct Reader {
 }
 
 impl Reader {
-    /// Connects to XWayland's display `:n` on a new thread. None when the event loop refused the channel.
-    pub fn start(display: u32, handle: &LoopHandle<'static, App>) -> Option<Reader> {
+    /// Connects to XWayland's display `:n` on a new thread. None when the thread could not be started.
+    pub fn start(display: u32) -> Option<Reader> {
         let (tx, rx) = channel::<Job>();
-        let (back, from_thread) = loop_channel::<Asked>();
-        handle
-            .insert_source(from_thread, |event, _, app| {
-                if let Event::Msg(asked) = event {
-                    app.x11_asked(asked);
-                }
-            })
-            .ok()?;
         // the thread sleeps until a job comes (a byte on this pair says so) or XWayland has an event for it
         let (wake, woken) = std::os::unix::net::UnixStream::pair().ok()?;
         woken.set_nonblocking(true).ok()?;
@@ -150,27 +110,16 @@ impl Reader {
                 use x11rb::protocol::xproto::ChangeWindowAttributesAux;
                 use x11rb::protocol::Event as XEvent;
                 let Ok((conn, screen)) = x11rb::rust_connection::RustConnection::connect(Some(&format!(":{display}"))) else {
-                    eprintln!("yggdrasil-compositor: cannot read what X11 windows ask for before they show (no connection to :{display})");
+                    eprintln!("yggdrasil-compositor: no second connection to XWayland's :{display} (x11asked.rs: the active X11 window, icons, WM_STATE)");
                     return;
                 };
                 let root = conn.setup().roots.get(screen).map(|r| r.root).unwrap_or(0);
                 let atom = |name: &str| conn.intern_atom(false, name.as_bytes()).ok().and_then(|c| c.reply().ok()).map(|r| r.atom);
-                let (Some(state), Some(fullscreen), Some(max_vert), Some(max_horz), Some(wm_state_atom), Some(active)) = (
-                    atom("_NET_WM_STATE"),
-                    atom("_NET_WM_STATE_FULLSCREEN"),
-                    atom("_NET_WM_STATE_MAXIMIZED_VERT"),
-                    atom("_NET_WM_STATE_MAXIMIZED_HORZ"),
-                    atom("WM_STATE"),
-                    atom("_NET_ACTIVE_WINDOW"),
-                ) else {
+                let (Some(wm_state_atom), Some(active)) = (atom("WM_STATE"), atom("_NET_ACTIVE_WINDOW")) else {
                     return;
                 };
-                let atoms = Atoms { fullscreen, max_vert, max_horz };
                 let net_wm_icon = atom("_NET_WM_ICON");
                 let icons = yggdrasil_conf::dirs::window_icons();
-                let xsettings = (atom(&format!("_XSETTINGS_S{screen}")), atom("_XSETTINGS_SETTINGS"), atom("MANAGER"));
-                // the window that owns the XSETTINGS selection, once the first settings came
-                let mut xs_owner: Option<u32> = None;
                 // the root's properties are watched: Smithay rewrites _NET_ACTIVE_WINDOW on every focus event, with the window
                 // the event was reported on (the root, for a focus set on a window), so the right one is written again
                 let _ = conn.change_window_attributes(root, &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE));
@@ -214,32 +163,7 @@ impl Reader {
                             Err(std::sync::mpsc::TryRecvError::Empty) => break,
                             Err(std::sync::mpsc::TryRecvError::Disconnected) => return,
                         };
-                        let window = match job {
-                            Job::Ask(w) => w,
-                            Job::Settings(blob) => {
-                                let (Some(selection), Some(prop), Some(manager)) = xsettings else { continue };
-                                let newly = xs_owner.is_none();
-                                let owner = match xs_owner {
-                                    Some(w) => w,
-                                    None => {
-                                        use x11rb::protocol::xproto::{CreateWindowAux, WindowClass};
-                                        let Ok(w) = conn.generate_id() else { continue };
-                                        let aux = CreateWindowAux::new();
-                                        let _ = conn.create_window(0, w, root, -1, -1, 1, 1, 0, WindowClass::INPUT_ONLY, 0, &aux);
-                                        let _ = conn.set_selection_owner(w, selection, x11rb::CURRENT_TIME);
-                                        xs_owner = Some(w);
-                                        w
-                                    }
-                                };
-                                let _ = conn.change_property8(PropMode::REPLACE, owner, prop, prop, &blob);
-                                if newly {
-                                    // programs that started first are told a manager is there (the MANAGER client message)
-                                    let event = ClientMessageEvent::new(32, root, manager, [x11rb::CURRENT_TIME, selection, owner, 0, 0]);
-                                    let _ = conn.send_event(false, root, EventMask::STRUCTURE_NOTIFY, event);
-                                }
-                                let _ = conn.flush();
-                                continue;
-                            }
+                        match job {
                             Job::Icon(w, class) => {
                                 let (Some(dir), Some(file), Some(prop)) =
                                     (&icons, yggdrasil_conf::dirs::window_icon_file(&class), net_wm_icon)
@@ -260,7 +184,6 @@ impl Reader {
                                         eprintln!("yggdrasil-compositor: {class}'s icon could not be kept: {e}");
                                     }
                                 }
-                                continue;
                             }
                             Job::Activate(w) => {
                                 want = Some(w);
@@ -268,22 +191,11 @@ impl Reader {
                                     let _ = conn.set_input_focus(InputFocus::POINTER_ROOT, w, x11rb::CURRENT_TIME);
                                 }
                                 set_active(w);
-                                continue;
                             }
                             Job::Iconic(w, iconic) => {
                                 let _ = conn.change_property32(PropMode::REPLACE, w, wm_state_atom, wm_state_atom, &wm_state(iconic));
                                 let _ = conn.flush();
-                                continue;
                             }
-                        };
-                        let Ok(cookie) = conn.get_property(false, window, state, AtomEnum::ATOM, 0, 32) else { return };
-                        let states: Vec<u32> = match cookie.reply() {
-                            Ok(r) => r.value32().map(|v| v.collect()).unwrap_or_default(),
-                            Err(_) => continue, // the window is already gone
-                        };
-                        let asked = read(window, &states, &atoms);
-                        if (asked.fullscreen || asked.maximized) && back.send(asked).is_err() {
-                            return;
                         }
                     }
                     // events a reply brought in, before sleeping
@@ -315,16 +227,6 @@ impl Reader {
         }
     }
 
-    /// Ask what this window asked for (answered later, only when it asked for something).
-    pub fn ask(&self, window: u32) {
-        self.send(Job::Ask(window));
-    }
-
-    /// Publish these XSETTINGS (the property's bytes: xwayland.rs, xsettings_blob).
-    pub fn settings(&self, blob: Vec<u8>) {
-        self.send(Job::Settings(blob));
-    }
-
     /// Keep this window's own icon for its class (`class`), unless the class has one already.
     pub fn icon(&self, window: u32, class: &str) {
         self.send(Job::Icon(window, class.to_string()));
@@ -344,15 +246,6 @@ impl Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_states_are_read() {
-        let a = Atoms { fullscreen: 10, max_vert: 11, max_horz: 12 };
-        assert_eq!(read(5, &[10], &a), Asked { window: 5, fullscreen: true, maximized: false });
-        assert_eq!(read(5, &[11, 12], &a), Asked { window: 5, fullscreen: false, maximized: true });
-        assert_eq!(read(5, &[11], &a), Asked { window: 5, fullscreen: false, maximized: false }, "one direction is not maximized");
-        assert_eq!(read(5, &[], &a), Asked { window: 5, fullscreen: false, maximized: false });
-    }
 
     #[test]
     fn the_best_icon_is_picked_from_the_list() {

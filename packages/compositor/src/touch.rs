@@ -14,8 +14,9 @@
 //! locked. Both taps are the gesture and reach no program. A suspend is different: the touchscreen wakes the laptop by itself.
 //!
 //! The hardware backend gives these from libinput (udev.rs); the headless backend from its control socket (`touch-down`,
-//! `touch-move`, `touch-up`), for the tests.
+//! `touch-move`, `touch-up`, `touch-cancel`), for the tests.
 
+use smithay::backend::input::InputTime;
 use smithay::backend::input::{
     AbsolutePositionEvent, ButtonState, Event, InputBackend, InputEvent, ProximityState, TabletToolButtonEvent, TabletToolProximityEvent,
     TabletToolTipEvent, TabletToolTipState, TouchEvent,
@@ -65,7 +66,7 @@ impl App {
     }
 
     /// A finger went down at `pos` (in the space of all screens).
-    pub fn touch_down(&mut self, slot: smithay::backend::input::TouchSlot, pos: Point<f64, Logical>, time: u32) {
+    pub fn touch_down(&mut self, slot: smithay::backend::input::TouchSlot, pos: Point<f64, Logical>, time: InputTime) {
         self.wake();
         if !self.power.is_on(&self.touch_output()) {
             self.tap_on_dark_screen(slot, std::time::Instant::now());
@@ -78,24 +79,24 @@ impl App {
         };
         let serial = SERIAL_COUNTER.next_serial();
         self.focus_at(pos, serial);
-        let under = self.surface_under(pos);
+        let under = self.target_under(pos);
         if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
             eprintln!("touch down {slot:?} at {:.0},{:.0}", pos.x, pos.y);
         }
         touch.down(self, under, &DownEvent { slot, location: pos, serial, time });
     }
 
-    pub fn touch_motion(&mut self, slot: smithay::backend::input::TouchSlot, pos: Point<f64, Logical>, time: u32) {
+    pub fn touch_motion(&mut self, slot: smithay::backend::input::TouchSlot, pos: Point<f64, Logical>, time: InputTime) {
         self.wake();
         if self.touch_swallowed.contains(&slot) {
             return;
         }
         let Some(touch) = self.seat.get_touch() else { return };
-        let under = self.surface_under(pos);
+        let under = self.target_under(pos);
         touch.motion(self, under, &MotionEvent { slot, location: pos, time });
     }
 
-    pub fn touch_up(&mut self, slot: smithay::backend::input::TouchSlot, time: u32) {
+    pub fn touch_up(&mut self, slot: smithay::backend::input::TouchSlot, time: InputTime) {
         self.wake();
         if let Some(i) = self.touch_swallowed.iter().position(|s| *s == slot) {
             self.touch_swallowed.remove(i);
@@ -148,26 +149,26 @@ impl App {
         // libinput gives a point scaled to a size: 1 by 1 gives it from 0 to 1, as the glass is built
         let glass: Size<i32, Logical> = (1, 1).into();
         match event {
-            InputEvent::TouchDown { event } => self.touch_down(event.slot(), at(event.position_transformed(glass)), event.time_msec()),
-            InputEvent::TouchMotion { event } => self.touch_motion(event.slot(), at(event.position_transformed(glass)), event.time_msec()),
-            InputEvent::TouchUp { event } => self.touch_up(event.slot(), event.time_msec()),
+            InputEvent::TouchDown { event } => self.touch_down(event.slot(), at(event.position_transformed(glass)), event.time()),
+            InputEvent::TouchMotion { event } => self.touch_motion(event.slot(), at(event.position_transformed(glass)), event.time()),
+            InputEvent::TouchUp { event } => self.touch_up(event.slot(), event.time()),
             InputEvent::TouchFrame { .. } => self.touch_frame(),
             InputEvent::TouchCancel { .. } => self.touch_cancel(),
-            InputEvent::TabletToolAxis { event } => self.pointer_to(at(event.position_transformed(glass)), event.time_msec()),
+            InputEvent::TabletToolAxis { event } => self.pointer_to(at(event.position_transformed(glass)), event.time()),
             InputEvent::TabletToolProximity { event } => {
                 if event.state() == ProximityState::In {
-                    self.pointer_to(at(event.position_transformed(glass)), event.time_msec());
+                    self.pointer_to(at(event.position_transformed(glass)), event.time());
                 }
             }
             InputEvent::TabletToolTip { event } => {
-                self.pointer_to(at(event.position_transformed(glass)), event.time_msec());
+                self.pointer_to(at(event.position_transformed(glass)), event.time());
                 let state = match event.tip_state() {
                     TabletToolTipState::Down => ButtonState::Pressed,
                     TabletToolTipState::Up => ButtonState::Released,
                 };
-                self.button(0x110, state, event.time_msec());
+                self.button(0x110, state, event.time());
             }
-            InputEvent::TabletToolButton { event } => self.button(pen_button(event.button()), event.button_state(), event.time_msec()),
+            InputEvent::TabletToolButton { event } => self.button(pen_button(event.button()), event.button_state(), event.time()),
             _ => return false,
         }
         true

@@ -11,8 +11,9 @@
 #   drm-vm.sh provision        once, with the guest's network: mesa, seatd (libseat), libinput, polkit (logind's VT switch),
 #                              foot, XWayland, fonts, wlr-randr; tty1 logs `ygg` in by itself and starts ~/drm-start
 #   drm-vm.sh deploy           copy the release builds (compositor, panel, Settings) into the guest's ~/bin
-#   drm-vm.sh start [ARGS]     start the compositor on tty1 through logind: --drm ARGS (default: the panel and Settings);
-#                              YGG_DRM_ENV="VAR=value ..." is set for it (YGGDRASIL_COMPOSITOR_RENDERER=pixman, ..._DEBUG=1)
+#   drm-vm.sh start [ARGS]     start the compositor on tty1 through logind: --drm ARGS (default: the panel and Settings), with
+#                              the session's environment (session/yggdrasil-compositor-session's exports), then
+#                              YGG_DRM_ENV="VAR=value ..." (YGGDRASIL_COMPOSITOR_RENDERER=pixman, ..._DEBUG=1)
 #   drm-vm.sh ctl COMMAND      the running compositor's control socket (outputs, windows, quit, ...)
 #   drm-vm.sh shot NAME [KEYS [WAIT]]   press KEYS (QEMU names: ctrl-alt-f2), wait, and save the screen as $YGG_DRM_VM/shots/NAME.png
 #   drm-vm.sh type TEXT | click X Y | move X Y   keyboard and tablet input, as a person gives it
@@ -71,13 +72,19 @@ provision)
     chmod +x ~/drm-start; mkdir -p ~/bin; sudo systemctl daemon-reload; echo provisioned'
   ;;
 deploy)
+  # beside the ones in ~/bin, then moved over them: a running program's file cannot be written (tty1 starts one at boot)
+  ssh_ 'mkdir -p bin/.new'
   scp -q -i "$VM/key" -P 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    "$TARGET/yggdrasil-compositor" "$TARGET/yggdrasil-panel" "$TARGET/yggdrasil-settings" ygg@127.0.0.1:bin/
+    "$TARGET/yggdrasil-compositor" "$TARGET/yggdrasil-panel" "$TARGET/yggdrasil-settings" ygg@127.0.0.1:bin/.new/
+  ssh_ 'mv bin/.new/* bin/'
   ;;
 start)
   shift
   args=${*:---run dbus-run-session -- yggdrasil-panel --run yggdrasil-settings}
-  env=""
+  # the session's own environment first, so the panel and programs act as they do there (the panel takes the bar and the dock
+  # away over a full screen window only in Yggdrasil's own session, XDG_CURRENT_DESKTOP); its quotes made double ones for ssh
+  env="$(grep '^export ' "$HERE/../session/yggdrasil-compositor-session" | tr "'" '"')
+"
   for kv in ${YGG_DRM_ENV:-}; do env="${env}export $kv
 "; done
   ssh_ "XDG_RUNTIME_DIR=/run/user/1000 bin/yggdrasil-compositor ctl quit 2>/dev/null; sleep 1
@@ -114,7 +121,7 @@ stop)
   python3 -I "$HERE/drm-vm.py" "$VM" powerdown
   ;;
 *)
-  sed -n '2,22p' "$0" >&2
+  sed -n '2,21p' "$0" >&2
   exit 2
   ;;
 esac
