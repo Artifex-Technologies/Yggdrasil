@@ -48,8 +48,8 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 opt-level = 2
 lto = "thin"
 
-# Smithay's main branch (54cf9c10; its version is still 0.7.0, so it stands in for the 0.7 above) with fifteen commits of ours:
-# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit (2f436c2f).
+# Smithay's main branch (54cf9c10; its version is still 0.7.0, so it stands in for the 0.7 above) with sixteen commits of ours:
+# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit (ad803e0f).
 #   514b9ae1  the X11 sockets bound apart from starting XWayland (X11Sockets, XWayland::spawn_with_sockets), so XWayland
 #             starts on the first X11 program (xwayland.rs)
 #   3c8ca3a4  two X11 window manager fixes: every event was dropped after set_randr_primary_output until the next request;
@@ -78,5 +78,7 @@ lto = "thin"
 #             until the Wayland target let go of its offer, and took their presses unless the compositor's raise came first)
 #   2f436c2f  a touch cancel in a frame of its own sent to the clients (wl_touch.cancel), and a finger drag's cancel passed on
 #             to the dragging client (before, nobody was told, and XWayland kept an X11 program's finger down)
+#   ad803e0f  a window that starts Iconic (WM_HINTS) has _NET_WM_STATE_HIDDEN in its property from the map (before, only in
+#             Smithay's own copy of the state, so a later set_hidden(true) wrote nothing)
 [patch.crates-io]
-smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "2f436c2f281cf50a7b202c4268dc3722f55a7f67" }
+smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "ad803e0fecc88056282f6604c39978eda6fbac53" }

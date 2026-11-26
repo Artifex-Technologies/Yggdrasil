@@ -154,7 +154,8 @@ fn an_x11_window_opens_as_it_asked_before_it_was_shown() {
             std::thread::sleep(Duration::from_millis(50));
         }
     };
-    until("told it is minimized", &|_, wm| wm == Some(3));
+    // and hidden from the start (_NET_WM_STATE_HIDDEN): Smithay marked it so only in its own copy of the state (YGG-176)
+    until("told it is minimized and hidden", &|states, wm| states.contains(&hidden) && wm == Some(3));
     // brought back (the dock): shown, told so, with the keyboard; minimized again: told Iconic and hidden
     comp.must(&format!("activate {}", client_of(&comp, "Iconic")));
     comp.wait(10, "the window shown", |c| c.window("Iconic").is_some_and(|w| !w.has("minimized")));
