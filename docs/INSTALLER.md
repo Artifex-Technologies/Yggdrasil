@@ -32,7 +32,7 @@ only, in one call (`mount --rbind --make-rslave`), and the cleanup makes everyth
 | Key | What it is | Without it |
 | --- | --- | --- |
 | `name` | the OS's name in messages, the boot menu, the EFI entry and the disk labels | `NAME` in os-release, less " OS" |
-| `medium` | the squashfs to copy | `/run/archiso/bootmnt/<ID>/x86_64/airootfs.sfs` (`ID` from os-release, archiso's `install_dir`) |
+| `medium` | the squashfs to copy | `/run/archiso/bootmnt/<ID>/x86_64/airootfs.sfs` (`ID` from os-release, archiso's `install_dir`); when archiso copied it into memory at boot (`copytoram`) and unmounted the stick, `/run/archiso/copytoram/airootfs.sfs`, and the stick is still kept off the disk list (found by `archisosearchuuid`) |
 | `cleanup` | a program run inside the new system first, taking away what belongs to the live medium (its account, its automatic sign-in, its no-password rules) | a warning: the new system keeps them |
 | `finish` | a program run inside the new system last; a failure stops the install, a `WARNING:` line in its output becomes a note | nothing |
 | `boot_menu_theme` | a program run inside after the plain boot menu is written | the plain menu |

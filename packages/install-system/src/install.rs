@@ -47,6 +47,10 @@ pub struct Host {
     /// the live system's pacman database (/var/lib/pacman) and pacman.conf, which --prefetch reads
     pub pacman_db: String,
     pub pacman_conf: String,
+    /// where archiso keeps the image it copied into memory at boot (/run/archiso/copytoram)
+    pub copytoram: String,
+    /// the live system's kernel command line (/proc/cmdline), with the stick's archisosearchuuid
+    pub cmdline: String,
 }
 
 impl Host {
@@ -61,6 +65,8 @@ impl Host {
             prefetch: crate::prefetch::DIR.into(),
             pacman_db: "/var/lib/pacman".into(),
             pacman_conf: "/etc/pacman.conf".into(),
+            copytoram: "/run/archiso/copytoram".into(),
+            cmdline: "/proc/cmdline".into(),
         }
     }
 }
@@ -377,7 +383,12 @@ impl Ctx<'_> {
             return stop(format!("this computer started without UEFI; {name} installs on UEFI computers only (turn off Legacy/CSM)"));
         }
         if !py::isfile(&self.os.sfs) {
-            return stop(format!("the system to copy was not found ({}); start the installer from the {name} USB", self.os.sfs));
+            match ram_copy(&self.os.sfs, &self.host.copytoram).filter(|r| py::isfile(r)) {
+                Some(copy) => self.os.sfs = copy,
+                None => {
+                    return stop(format!("the system to copy was not found ({}); start the installer from the {name} USB", self.os.sfs))
+                }
+            }
         }
         let disk = p.at("disk").as_str().unwrap_or("").to_string();
         let choice = self.disks()?.into_iter().find(|d| d.path.as_str() == Some(disk.as_str()));
@@ -1311,6 +1322,15 @@ pub fn manual_fits(p: &Py, d: &Disk) -> R<Option<String>> {
         }
     }
     Ok(None)
+}
+
+/// The image archiso copied into memory at boot for one that was on the stick (`/run/archiso/bootmnt/<dir>/x86_64/airootfs.sfs`
+/// becomes `<copytoram>/airootfs.sfs`): with copytoram, which archiso does by itself for an image under 4 GiB when memory
+/// allows, it then unmounts the stick, so the stick's path is gone. None for an image named some other way (an OS's own
+/// medium, YGGDRASIL_INSTALL_SFS): that one is never swapped for another.
+pub fn ram_copy(sfs: &str, copytoram: &str) -> Option<String> {
+    let name = sfs.strip_prefix("/run/archiso/bootmnt/")?.rsplit('/').next()?;
+    (!name.is_empty()).then(|| format!("{copytoram}/{name}"))
 }
 
 #[cfg(test)]

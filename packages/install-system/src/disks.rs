@@ -167,6 +167,14 @@ pub fn free_space(used: &[(i128, i128)], first: i128, last: i128) -> Vec<(i128, 
     gaps
 }
 
+/// archisosearchuuid= from a kernel command line: the medium's UUID (an ISO's is its build time, 2026-11-26-10-00-00-00).
+pub fn search_uuid(cmdline: &str) -> Option<&str> {
+    cmdline
+        .split_whitespace()
+        .find_map(|w| w.strip_prefix("archisosearchuuid="))
+        .filter(|u| !u.is_empty() && u.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+}
+
 /// Partition n of a disk: /dev/sda2, /dev/nvme0n1p2, /dev/vda2.
 pub fn part(disk: &str, n: u32) -> String {
     if disk.chars().last().is_some_and(|c| c.is_ascii_digit()) {
@@ -179,7 +187,15 @@ pub fn part(disk: &str, n: u32) -> String {
 impl Ctx<'_> {
     /// The disk the live system runs from (never offered).
     pub fn live_disk(&mut self) -> R<Option<String>> {
-        let src = pycompat::strip(&self.capture(&["findmnt", "-no", "SOURCE", "/run/archiso/bootmnt"], false)?).to_string();
+        let mut src = pycompat::strip(&self.capture(&["findmnt", "-no", "SOURCE", "/run/archiso/bootmnt"], false)?).to_string();
+        if src.is_empty() {
+            // archiso copied the image into memory at boot (copytoram) and unmounted the stick: the stick is the device with
+            // the UUID it was started from, as archiso's own boot hook finds it
+            if let Some(uuid) = search_uuid(&std::fs::read_to_string(&self.host.cmdline).unwrap_or_default()) {
+                let found = self.capture(&["blkid", "-o", "device", "-t", &format!("UUID={uuid}")], false)?;
+                src = found.lines().next().map(|l| l.trim().to_string()).unwrap_or_default();
+            }
+        }
         if src.is_empty() {
             return Ok(None);
         }
@@ -315,6 +331,15 @@ mod tests {
         assert_eq!(free_space(&[], MIB, 100 * MIB), vec![(MIB, 99 * MIB)]);
         assert_eq!(free_space(&[(2 * MIB, 10 * MIB)], MIB, 12 * MIB), vec![], "a 1 MiB sliver is not free space");
         assert_eq!(free_space(&[(5 * MIB + 7, 3)], MIB, 100 * MIB), vec![(6 * MIB, 94 * MIB)], "a gap starts on a MiB");
+    }
+
+    #[test]
+    fn the_sticks_uuid_from_the_command_line() {
+        let line = "BOOT_IMAGE=/arch/boot/x86_64/vmlinuz archisobasedir=arch archisosearchuuid=2026-11-26-10-00-00-00 quiet\n";
+        assert_eq!(search_uuid(line), Some("2026-11-26-10-00-00-00"));
+        assert_eq!(search_uuid("quiet splash"), None);
+        assert_eq!(search_uuid("archisosearchuuid="), None);
+        assert_eq!(search_uuid("archisosearchuuid=a,b"), None, "only what a UUID is made of");
     }
 
     #[test]

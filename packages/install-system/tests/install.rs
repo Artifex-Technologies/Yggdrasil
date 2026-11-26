@@ -207,6 +207,43 @@ fn the_disks_it_offers() {
     assert!(f.out[0].starts_with("[{\"path\": \"/dev/vdz\", \"size\": 536870912000, \"model\": \"TEST DISK 0001\""), "{}", f.out[0]);
 }
 
+/// archiso's copytoram (by itself for an image under 4 GiB when memory allows): the image in /run/archiso/copytoram and the
+/// stick unmounted, so its path on the stick is gone (LAB-63).
+fn copied_into_memory() -> (Live, fake::Fake) {
+    let mut live = Live::new();
+    live.env.sfs = Some("/run/archiso/bootmnt/example/x86_64/airootfs.sfs".into());
+    live.dir.write("copytoram/airootfs.sfs", "squashfs\n");
+    live.dir.write("cmdline", &format!("BOOT_IMAGE=/arch/boot/x86_64/vmlinuz archisosearchuuid={} quiet\n", fake::STICK_UUID));
+    let mut f = live.fake();
+    f.in_ram = true;
+    (live, f)
+}
+
+#[test]
+fn the_image_copied_into_memory_at_boot_is_installed() {
+    let (live, mut f) = copied_into_memory();
+    assert_eq!(live.run(&mut f, &[], &plan().dumps()), 0, "{:?}", f.out);
+    assert_eq!(f.out.last().unwrap(), "DONE");
+    assert_eq!(f.program_calls("unsquashfs")[0].0.last(), Some(&live.dir.path("copytoram/airootfs.sfs")));
+}
+
+#[test]
+fn the_stick_stays_off_the_list_when_the_image_is_in_memory() {
+    let (live, mut f) = copied_into_memory();
+    assert_eq!(live.run(&mut f, &["--disks"], ""), 0);
+    let v = install_system::pyjson::loads(&f.out[0], 20).unwrap();
+    let paths: Vec<&str> = v.as_list().unwrap().iter().map(|d| d.at("path").as_str().unwrap()).collect();
+    assert_eq!(paths, ["/dev/vdz"], "found by its UUID although it is not mounted");
+}
+
+#[test]
+fn an_image_named_by_the_os_is_never_swapped_for_the_copy_in_memory() {
+    let (mut live, mut f) = copied_into_memory();
+    live.env.sfs = Some(live.dir.path("medium/gone.sfs"));
+    assert_eq!(live.run(&mut f, &[], &plan().dumps()), 1);
+    assert!(f.out.iter().any(|l| l.starts_with("ERROR the system to copy was not found")), "{:?}", f.out);
+}
+
 #[test]
 fn a_failure_stops_and_unmounts() {
     let live = Live::new();

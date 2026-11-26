@@ -98,6 +98,9 @@ impl Disk {
     }
 }
 
+/// The made-up stick's UUID (an ISO's is its build time).
+pub const STICK_UUID: &str = "2026-11-26-10-00-00-00";
+
 /// The made-up computer.
 pub struct Fake {
     pub calls: Vec<(Vec<String>, Option<String>)>,
@@ -107,6 +110,8 @@ pub struct Fake {
     pub accounts: Vec<String>,
     pub disks: Vec<Disk>,
     pub live: Option<(String, String)>,
+    /// archiso copied the image into memory at boot: the stick (live) is unmounted, found only by its UUID
+    pub in_ram: bool,
     pub fs: HashMap<String, String>,
     pub installed: Vec<String>,
     pub groups: Vec<String>,
@@ -171,6 +176,7 @@ impl Fake {
             accounts: ["root", "nobody", "taken"].iter().map(|s| s.to_string()).collect(),
             disks: vec![Disk::empty("/dev/vdz", 500 * GB), Disk::empty("/dev/sdy", 16 * GB)],
             live: Some(("/dev/sdy1".into(), "sdy".into())),
+            in_ram: false,
             fs: HashMap::new(),
             installed: ["vivaldi", "firefox"].iter().map(|s| s.to_string()).collect(),
             groups: ["users", "wheel", "audio"].iter().map(|s| s.to_string()).collect(),
@@ -427,8 +433,8 @@ impl System for Fake {
         Ok(match argv[0].as_str() {
             "lsblk" => self.lsblk(rest),
             "findmnt" => match &self.live {
-                Some((src, _)) => out(0, &format!("{src}\n"), ""),
-                None => out(1, "", ""),
+                Some((src, _)) if !self.in_ram => out(0, &format!("{src}\n"), ""),
+                _ => out(1, "", ""),
             },
             "sfdisk" => self.sfdisk(rest, stdin),
             "wipefs" => {
@@ -438,6 +444,10 @@ impl System for Fake {
                 }
                 out(0, "", "")
             }
+            "blkid" if argv[1..3] == ["-o", "device"] => match &self.live {
+                Some((src, _)) if self.in_ram && argv[4] == format!("UUID={STICK_UUID}") => out(0, &format!("{src}\n"), ""),
+                _ => out(2, "", ""),
+            },
             "blkid" => {
                 let dev = argv.last().unwrap().clone();
                 if argv[2] == "TYPE" {
@@ -550,6 +560,8 @@ impl Live {
             prefetch: dir.path("prefetch"),
             pacman_db: dir.path("pacman"),
             pacman_conf: dir.path("pacman.conf"),
+            copytoram: dir.path("copytoram"),
+            cmdline: dir.path("cmdline"),
         };
         let env = Env { sfs: Some(dir.path("medium/airootfs.sfs")), target: Some(dir.path("target")) };
         Live { dir, host, env }
