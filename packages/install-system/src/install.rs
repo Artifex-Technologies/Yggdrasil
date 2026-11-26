@@ -51,6 +51,8 @@ pub struct Host {
     pub copytoram: String,
     /// the live system's kernel command line (/proc/cmdline), with the stick's archisosearchuuid
     pub cmdline: String,
+    /// the live system's package keyring (/etc/pacman.d/gnupg), which archiso's pacman-init.service makes at each start
+    pub pacman_gnupg: String,
 }
 
 impl Host {
@@ -67,6 +69,7 @@ impl Host {
             pacman_conf: "/etc/pacman.conf".into(),
             copytoram: "/run/archiso/copytoram".into(),
             cmdline: "/proc/cmdline".into(),
+            pacman_gnupg: "/etc/pacman.d/gnupg".into(),
         }
     }
 }
@@ -373,6 +376,48 @@ impl Ctx<'_> {
 
     fn t(&self, rest: &str) -> String {
         format!("{}{rest}", self.os.target)
+    }
+
+    /// The new system's pacman before its first download (Labyrinth LAB-64). The image has neither package lists (mkarchiso
+    /// removes them) nor a keyring (archiso makes one at each start), so `pacman -S` found nothing and its `-Syu` fallback
+    /// planned a full upgrade that then failed its signature checks. The lists: the live system's (an OS puts its build's
+    /// lists there; Labyrinth copies them in at start). The keyring: the live system's once its pacman-init.service has
+    /// finished (made at this start, on this computer); else one made in the new system now.
+    fn ready_pacman(&mut self) -> R<()> {
+        let sync = self.t("/var/lib/pacman/sync");
+        let host_sync = py::join(&self.host.pacman_db, "sync");
+        let has_lists = |d: &str| py::isdir(d) && py::listdir(d).is_ok_and(|l| l.iter().any(|f| f.ends_with(".db")));
+        if !has_lists(&sync) && has_lists(&host_sync) {
+            py::makedirs(&sync)?;
+            for f in py::listdir(&host_sync)? {
+                if f.ends_with(".db") || f.ends_with(".db.sig") {
+                    std::fs::copy(py::join(&host_sync, &f), py::join(&sync, &f)).map_err(|e| py::oserror(&e, &f))?;
+                }
+            }
+            self.say("INFO", "package lists: the medium's")?;
+        }
+        let gnupg = self.t("/etc/pacman.d/gnupg");
+        if py::isfile(&py::join(&gnupg, "pubring.gpg")) {
+            return Ok(());
+        }
+        let live = self.host.pacman_gnupg.clone();
+        let ready = py::isfile(&py::join(&live, "trustdb.gpg"))
+            && pycompat::strip(&self.capture(&["systemctl", "is-active", "pacman-init.service"], false)?) == "active";
+        if ready {
+            let part = format!("{gnupg}.part");
+            let _ = std::fs::remove_dir_all(&part);
+            py::makedirs(&py::dirname(&gnupg))?;
+            copy_keyring(std::path::Path::new(&live), std::path::Path::new(&part))
+                .and_then(|()| std::fs::rename(&part, &gnupg))
+                .map_err(|e| py::oserror(&e, &gnupg))?;
+            self.say("INFO", "package keyring: the live system's")?;
+        } else {
+            self.say("INFO", "making the package keyring")?;
+            if self.inside(&strings(&["pacman-key", "--init"]), None, false)?.code == 0 {
+                self.inside(&strings(&["pacman-key", "--populate"]), None, false)?;
+            }
+        }
+        Ok(())
     }
 
     // ------------------------------------------------------------ the steps
@@ -891,6 +936,7 @@ impl Ctx<'_> {
             self.with_dns(&mut |me: &mut Self| {
                 if !missing.is_empty() {
                     me.say("INFO", &format!("installing {} (from the internet)", missing.join(", ")))?;
+                    me.ready_pacman()?;
                     let mut argv = strings(&["pacman", "-S", "--needed", "--noconfirm"]);
                     argv.extend(missing.iter().cloned());
                     let mut code = me.inside(&argv, None, false)?.code;
@@ -1322,6 +1368,24 @@ pub fn manual_fits(p: &Py, d: &Disk) -> R<Option<String>> {
         }
     }
     Ok(None)
+}
+
+/// A keyring folder copied with its modes (gnupg's private-keys-v1.d is 700, its keys 600): folders and files only, never the
+/// agent's sockets or a link.
+fn copy_keyring(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir(dst)?;
+    for e in std::fs::read_dir(src)? {
+        let e = e?;
+        let kind = e.file_type()?;
+        let to = dst.join(e.file_name());
+        if kind.is_dir() {
+            copy_keyring(&e.path(), &to)?;
+        } else if kind.is_file() {
+            std::fs::copy(e.path(), &to)?;
+        }
+    }
+    std::fs::set_permissions(dst, std::fs::Permissions::from_mode(std::fs::metadata(src)?.permissions().mode() & 0o7777))
 }
 
 /// The image archiso copied into memory at boot for one that was on the stick (`/run/archiso/bootmnt/<dir>/x86_64/airootfs.sfs`

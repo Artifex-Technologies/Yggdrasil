@@ -172,6 +172,13 @@ page with made-up networks and joins nothing.
   The install copies what is there (plain package and signature files only, never a link or a half download) into the new
   system's `/var/cache/pacman/pkg` before its own pacman runs, which takes them (checking each signature, as always) instead
   of downloading them again.
+- Before the install's first download (a chosen browser the medium lacks), the new system's pacman gets the live system's
+  package lists (`/var/lib/pacman/sync`, where an OS puts the lists its image was built from; mkarchiso removes them from the
+  image) unless it has its own, and the live system's keyring (`/etc/pacman.d/gnupg`, folders and files with their modes,
+  never the agent's sockets) once archiso's `pacman-init.service` is active, as it is minutes after the live start. Without
+  it, a keyring is made in the new system (`pacman-key --init`, `--populate`). So `pacman -S` installs the browser from the
+  medium's lists, with every signature checked, and the `pacman -Syu` fallback runs only when the mirrors have moved on.
+  With nothing to download, the new system's pacman stays as the image has it (its keyring is made at its first start).
 - `COMMAND --disks` prints the disks it could install onto, as JSON: `[{"path", "size", "model", "removable", "big_enough",
   "table", "partitions": [{"path", "number", "start", "size", "fstype", "label", "efi", "mounted"}], "free": [{"start", "size"}]}]`
   (bytes). It runs as the live user (no root needed) and never offers the live medium itself.

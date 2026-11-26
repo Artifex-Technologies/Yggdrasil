@@ -112,6 +112,8 @@ pub struct Fake {
     pub live: Option<(String, String)>,
     /// archiso copied the image into memory at boot: the stick (live) is unmounted, found only by its UUID
     pub in_ram: bool,
+    /// the live system's pacman-init.service has finished (its keyring is whole)
+    pub live_keyring: bool,
     pub fs: HashMap<String, String>,
     pub installed: Vec<String>,
     pub groups: Vec<String>,
@@ -177,6 +179,7 @@ impl Fake {
             disks: vec![Disk::empty("/dev/vdz", 500 * GB), Disk::empty("/dev/sdy", 16 * GB)],
             live: Some(("/dev/sdy1".into(), "sdy".into())),
             in_ram: false,
+            live_keyring: false,
             fs: HashMap::new(),
             installed: ["vivaldi", "firefox"].iter().map(|s| s.to_string()).collect(),
             groups: ["users", "wheel", "audio"].iter().map(|s| s.to_string()).collect(),
@@ -436,6 +439,13 @@ impl System for Fake {
                 Some((src, _)) if !self.in_ram => out(0, &format!("{src}\n"), ""),
                 _ => out(1, "", ""),
             },
+            "systemctl" if rest == ["is-active", "pacman-init.service"] => {
+                if self.live_keyring {
+                    out(0, "active\n", "")
+                } else {
+                    out(3, "inactive\n", "")
+                }
+            }
             "sfdisk" => self.sfdisk(rest, stdin),
             "wipefs" => {
                 if let Some(d) = self.disk(&argv[2]) {
@@ -545,6 +555,15 @@ impl Live {
         dir.write("pacman/local/ALPM_DB_VERSION", "9\n");
         dir.write("pacman/sync/core.db", "the medium's core list");
         dir.write("pacman/sync/extra.db", "the medium's extra list");
+        // the live system's keyring (archiso's pacman-init.service at each start)
+        dir.write("gnupg/pubring.gpg", "the live keys");
+        dir.write("gnupg/trustdb.gpg", "the live trust");
+        dir.write("gnupg/private-keys-v1.d/local.key", "the local key");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir.path("gnupg/private-keys-v1.d"), std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::fs::set_permissions(dir.path("gnupg/private-keys-v1.d/local.key"), std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
         dir.write(
             "pacman.conf",
             "[options]\nParallelDownloads = 5\nSigLevel = Required DatabaseOptional\n[core]\nInclude = /etc/pacman.d/mirrorlist\n",
@@ -562,6 +581,7 @@ impl Live {
             pacman_conf: dir.path("pacman.conf"),
             copytoram: dir.path("copytoram"),
             cmdline: dir.path("cmdline"),
+            pacman_gnupg: dir.path("gnupg"),
         };
         let env = Env { sfs: Some(dir.path("medium/airootfs.sfs")), target: Some(dir.path("target")) };
         Live { dir, host, env }

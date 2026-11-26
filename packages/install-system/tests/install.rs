@@ -290,6 +290,54 @@ fn browsers_and_extras() {
     assert_eq!(f.installed, ["firefox"]);
 }
 
+/// A browser the medium lacks (LAB-64): the new system's pacman gets the medium's package lists and the live system's keyring
+/// (modes kept, never the agent's socket) before it downloads, so `pacman -S` alone installs it.
+#[test]
+fn a_download_gets_the_package_lists_and_the_live_keyring() {
+    use std::os::unix::fs::PermissionsExt;
+    let live = Live::new();
+    let _agent = std::os::unix::net::UnixListener::bind(live.dir.path("gnupg/S.gpg-agent")).unwrap();
+    let mut f = live.fake();
+    f.installed = vec!["vivaldi".into()];
+    f.live_keyring = true;
+    let p = plan_with(&[("browsers", r#"["firefox"]"#), ("default_browser", "\"firefox\""), ("extras", "[]")]);
+    assert_eq!(live.run(&mut f, &[], &p), 0, "{:?}", f.out);
+    assert_eq!(live.read("var/lib/pacman/sync/core.db"), "the medium's core list");
+    assert_eq!(live.read("etc/pacman.d/gnupg/pubring.gpg"), "the live keys");
+    let key = format!("{}/etc/pacman.d/gnupg/private-keys-v1.d", live.target());
+    assert_eq!(std::fs::metadata(&key).unwrap().permissions().mode() & 0o777, 0o700);
+    assert_eq!(std::fs::metadata(format!("{key}/local.key")).unwrap().permissions().mode() & 0o777, 0o600);
+    assert!(!std::path::Path::new(&format!("{}/etc/pacman.d/gnupg/S.gpg-agent", live.target())).exists());
+    assert!(f.program_calls("pacman-key").is_empty());
+    let pacman: Vec<&[String]> = f.program_calls("pacman").iter().map(|(a, _)| &a[5..]).collect();
+    assert!(pacman.contains(&&["-S".to_string(), "--needed".into(), "--noconfirm".into(), "firefox".into()][..]), "{pacman:?}");
+    assert!(pacman.iter().all(|a| a[0] != "-Syu"), "no full upgrade");
+}
+
+#[test]
+fn without_the_live_keyring_one_is_made_in_the_new_system() {
+    let live = Live::new();
+    let mut f = live.fake();
+    f.installed = vec!["vivaldi".into()];
+    let p = plan_with(&[("browsers", r#"["firefox"]"#), ("default_browser", "\"firefox\""), ("extras", "[]")]);
+    assert_eq!(live.run(&mut f, &[], &p), 0, "{:?}", f.out);
+    let keys: Vec<&[String]> = f.program_calls("pacman-key").iter().map(|(a, _)| &a[4..]).collect();
+    assert_eq!(keys, [&["pacman-key", "--init"][..], &["pacman-key", "--populate"]]);
+    let at = |what: &[&str]| f.calls.iter().position(|(a, _)| a.len() >= 4 + what.len() && a[4..4 + what.len()] == *what).unwrap();
+    assert!(at(&["pacman-key", "--populate"]) < at(&["pacman", "-S"]), "the keyring before the download");
+}
+
+#[test]
+fn nothing_to_download_leaves_pacman_as_the_image_has_it() {
+    let live = Live::new();
+    let mut f = live.fake();
+    f.live_keyring = true;
+    let p = plan_with(&[("browsers", r#"["vivaldi"]"#), ("default_browser", "\"vivaldi\""), ("extras", "[]")]);
+    assert_eq!(live.run(&mut f, &[], &p), 0, "{:?}", f.out);
+    assert!(!std::path::Path::new(&format!("{}/var/lib/pacman/sync", live.target())).exists());
+    assert!(!std::path::Path::new(&format!("{}/etc/pacman.d/gnupg", live.target())).exists());
+}
+
 /// No internet at all (every download fails): the install still finishes from the medium alone. A browser that is not on it is
 /// left for Agora with a warning; device software that is not on it waits in the first-login list for the new user, who gets it
 /// once online (Labyrinth's labyrinth-first-components, Yggdrasil's yggdrasil-device-offers).
