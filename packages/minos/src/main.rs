@@ -5,8 +5,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use yggdrasil_ui::dnd;
 
+mod cloudside;
 mod icons;
 mod statusbar;
+mod topbar;
 mod transfers;
 
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Rect, RichText, Sense, UiBuilder};
@@ -14,7 +16,9 @@ use egui_extras::{Column, TableBuilder};
 use icons::Icon;
 use minos_core::archive::{self, Format};
 use minos_core::cloud::{self, Badge, Link, Report};
+use minos_core::commandbar;
 use minos_core::devices;
+use minos_core::grouping::{self, GroupBy};
 use minos_core::listing::{self, Entry, Sort, SortKey};
 use minos_core::places::{self, CloudPlace, CloudState};
 use minos_core::preview::{self, Body, PreviewData};
@@ -299,6 +303,17 @@ enum Action {
     Launch(String, String),
     /// Install a package in a terminal (it asks for the password there).
     Install(String),
+    /// The command bar's Properties (Alt+Enter): what is selected in the pane, or its folder.
+    Properties(usize),
+    /// The command bar's Group menu.
+    SetGroup(GroupBy),
+    /// The navigation row's sidebar button.
+    ToggleSidebar,
+    /// A cloud drive under Cloud Storage: mount it (and open it once mounted, when the bool says so), or unmount it.
+    CloudMount(String, bool),
+    CloudUnmount(String),
+    /// Settings > Apps > Minos > Cloud drives.
+    ManageCloud,
 }
 
 /// What the drive watcher and drive jobs report back.
@@ -344,6 +359,10 @@ struct TabView {
     /// The search box under the magnifier is showing, and should take the keyboard when it opens.
     search_open: bool,
     search_focus: bool,
+    /// The command bar's quick filter: only names with these letters in them are shown (cleared on leaving the folder).
+    filter: String,
+    filter_open: bool,
+    filter_focus: bool,
     search: Option<Search>,
     results: Option<Vec<Entry>>,
     /// The address bar is showing an editable path instead of clickable segments.
@@ -380,6 +399,9 @@ impl TabView {
             search_root: PathBuf::new(),
             search_open: false,
             search_focus: false,
+            filter: String::new(),
+            filter_open: false,
+            filter_focus: false,
             search: None,
             results: None,
             editing: false,
@@ -396,14 +418,26 @@ impl TabView {
         self.results.as_deref().unwrap_or(&self.entries)
     }
 
-    /// Indices into `shown()` in the order they are drawn.
-    fn order(&self, hidden: bool) -> Vec<usize> {
+    /// Indices into `shown()` in the order they are drawn: what the search words, the quick filter and the hidden-items setting
+    /// let through, in their groups when the list is grouped (Group by). This PC and a disk's partitions are shown as they are.
+    fn arranged(&self, hidden: bool, group: GroupBy) -> grouping::Arranged {
         let shown = self.shown();
-        if self.results.is_some() || places::is_virtual(&self.dir()) {
-            (0..shown.len()).collect()
-        } else {
-            listing::visible(shown, &self.query, hidden).into_iter().filter(|&i| !pick_hides(&shown[i])).collect()
+        if self.results.is_none() && places::is_virtual(&self.dir()) {
+            return grouping::Arranged { order: (0..shown.len()).collect(), heads: vec![] };
         }
+        let filter = self.filter.to_lowercase();
+        let keep = |i: &usize| commandbar::filter_matches(&shown[*i].name, &filter);
+        let base: Vec<usize> = if self.results.is_some() {
+            (0..shown.len()).filter(keep).collect()
+        } else {
+            listing::visible(shown, &self.query, hidden).into_iter().filter(|&i| !pick_hides(&shown[i])).filter(keep).collect()
+        };
+        let offset = if group == GroupBy::Modified { grouping::utc_offset() } else { 0 };
+        grouping::arrange(shown, &base, group, std::time::SystemTime::now(), offset)
+    }
+
+    fn order(&self, hidden: bool, group: GroupBy) -> Vec<usize> {
+        self.arranged(hidden, group).order
     }
 
     fn dir(&self) -> PathBuf {
@@ -507,6 +541,8 @@ impl TabView {
     fn navigate(&mut self, path: PathBuf, sort: Sort, hidden: bool) {
         self.tab.history.visit(path);
         self.query.clear();
+        self.filter.clear();
+        self.filter_open = false;
         self.selected.clear();
         self.anchor = None;
         self.search = None;
@@ -882,6 +918,10 @@ fn entry_interact(
         }
         if ui.button("Copy path").clicked() {
             actions.push(Action::CopyPath(e.path.clone()));
+            ui.close();
+        }
+        if e.usage.is_none() && !archive::inside(&e.path) && ui.button("Properties").clicked() {
+            actions.push(Action::Properties(cx.pi));
             ui.close();
         }
         let avail = drive_avail(cx.st, e);
@@ -1488,138 +1528,16 @@ fn breadcrumb(ui: &mut egui::Ui, pal: &Palette, t: &mut TabView, pi: usize, widt
     }
 }
 
-fn toolbar(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, pal: &Palette, st: &State, clip_has: bool, actions: &mut Vec<Action>) {
-    let sort = pane.sort;
-    let hidden = st.show_hidden;
-    let active = pane.active;
-    let t = &mut pane.tabs[active];
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        if icon_button(ui, pal, Icon::Back, "Back (Alt+Left)", t.tab.history.can_back(), false).clicked() && t.tab.history.back().is_some()
-        {
-            t.search = None;
-            t.results = None;
-            t.reload(sort, hidden);
-        }
-        if icon_button(ui, pal, Icon::Forward, "Forward (Alt+Right)", t.tab.history.can_forward(), false).clicked()
-            && t.tab.history.forward().is_some()
-        {
-            t.search = None;
-            t.results = None;
-            t.reload(sort, hidden);
-        }
-        let can_up = !places::is_this_pc(&t.dir());
-        if icon_button(ui, pal, Icon::Up, "Up (Alt+Up / Backspace)", can_up, false).clicked() {
-            actions.push(Action::Up(pi));
-        }
-        if icon_button(ui, pal, Icon::Refresh, "Refresh (F5)", true, false).clicked() {
-            actions.push(Action::Reload);
-        }
-        ui.add_space(6.0);
-        let in_pc = places::is_virtual(&t.dir());
-        let dir = t.dir();
-        let fav = st.favorites.contains(&dir);
-        // A narrow pane (split view, a small window) keeps the essentials and puts the rest under "..."
-        let compact = ui.available_width() < 640.0;
-        if !compact {
-            if icon_button(ui, pal, Icon::NewFolder, "New folder (Ctrl+Shift+N)", !in_pc, false).clicked() {
-                actions.push(Action::NewFolder(pi));
-            }
-            if icon_button(ui, pal, Icon::NewFile, "New file", !in_pc, false).clicked() {
-                actions.push(Action::NewFile(pi));
-            }
-            if icon_button(
-                ui,
-                pal,
-                if fav { Icon::StarFilled } else { Icon::Star },
-                if fav { "Remove from favorites" } else { "Add to favorites" },
-                !in_pc,
-                fav,
-            )
-            .clicked()
-            {
-                actions.push(Action::ToggleFav(dir.clone()));
-            }
-            if clip_has && !in_pc && icon_button(ui, pal, Icon::NewFile, "Paste (Ctrl+V)", true, false).clicked() {
-                actions.push(Action::Paste(pi));
-            }
-            ui.add_space(6.0);
-        }
-        let w = ui.available_width() - 34.0 - if compact { 34.0 } else { 3.0 * 32.0 + 4.0 };
-        breadcrumb(ui, pal, t, pi, w, actions);
-        let magnifier = icon_button(ui, pal, Icon::Search, "Search (Ctrl+F)", true, t.search_open || !t.query.is_empty());
-        if magnifier.clicked() {
-            t.search_open = !t.search_open;
-            t.search_focus = t.search_open;
-        }
-        if t.search_open {
-            let ctx = ui.ctx().clone();
-            let area = egui::Area::new(egui::Id::new(("minos-search", pi)))
-                .order(egui::Order::Foreground)
-                .fixed_pos(pos2(magnifier.rect.right() - 250.0, magnifier.rect.bottom() + 4.0))
-                .show(&ctx, |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        let te = ui.add(egui::TextEdit::singleline(&mut t.query).hint_text("Search").desired_width(230.0));
-                        if t.search_focus {
-                            te.request_focus();
-                            t.search_focus = false;
-                        }
-                        if te.changed() {
-                            t.restart_search(&ctx, hidden);
-                        }
-                    });
-                });
-            let (esc, pressed) = ctx.input(|i| (i.key_pressed(egui::Key::Escape), i.pointer.any_pressed()));
-            if esc {
-                t.search_open = false;
-                t.query.clear();
-                t.restart_search(&ctx, hidden);
-            } else if pressed && !area.response.contains_pointer() && !magnifier.contains_pointer() {
-                t.search_open = false; // the words stay, so the results do
-            }
-        }
-        if compact {
-            let more = icon_button(ui, pal, Icon::Menu, "More", true, false);
-            egui::Popup::menu(&more).show(|ui| {
-                if ui.add_enabled(!in_pc, egui::Button::new("New folder")).clicked() {
-                    actions.push(Action::NewFolder(pi));
-                    ui.close();
-                }
-                if ui.add_enabled(!in_pc, egui::Button::new("New file")).clicked() {
-                    actions.push(Action::NewFile(pi));
-                    ui.close();
-                }
-                if ui.add_enabled(!in_pc, egui::Button::new(if fav { "Remove from favorites" } else { "Add to favorites" })).clicked() {
-                    actions.push(Action::ToggleFav(dir.clone()));
-                    ui.close();
-                }
-                if ui.add_enabled(clip_has && !in_pc, egui::Button::new("Paste")).clicked() {
-                    actions.push(Action::Paste(pi));
-                    ui.close();
-                }
-                ui.separator();
-                if ui.selectable_label(st.view == ViewMode::Details, "Details view").clicked() {
-                    actions.push(Action::SetView(ViewMode::Details));
-                }
-                if ui.selectable_label(st.view == ViewMode::Gallery, "Gallery view").clicked() {
-                    actions.push(Action::SetView(ViewMode::Gallery));
-                }
-                if ui.selectable_label(st.preview, "Preview pane (F3)").clicked() {
-                    actions.push(Action::TogglePreview);
-                }
-            });
-            return;
-        }
-        if icon_button(ui, pal, Icon::List, "Details view", true, st.view == ViewMode::Details).clicked() {
-            actions.push(Action::SetView(ViewMode::Details));
-        }
-        if icon_button(ui, pal, Icon::Grid, "Gallery view", true, st.view == ViewMode::Gallery).clicked() {
-            actions.push(Action::SetView(ViewMode::Gallery));
-        }
-        if icon_button(ui, pal, Icon::Preview, "Preview pane (F3)", true, st.preview).clicked() {
-            actions.push(Action::TogglePreview);
-        }
-    });
+/// A group's heading in the list (Group by): its name, and a line to the right.
+fn group_heading(ui: &mut egui::Ui, pal: &Palette, title: &str) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
+    let g = ui.painter().layout_no_wrap(title.to_string(), FontId::proportional(13.0), pal.accent);
+    let y = rect.center().y;
+    let end = rect.left() + 4.0 + g.size().x;
+    ui.painter().galley(pos2(rect.left() + 4.0, y - g.size().y / 2.0), g, pal.accent);
+    if end + 10.0 < rect.right() {
+        ui.painter().hline(end + 10.0..=rect.right() - 4.0, y, egui::Stroke::new(1.0, pal.border));
+    }
 }
 
 fn header_cell(ui: &mut egui::Ui, pal: &Palette, label: &str, key: Option<SortKey>, sort: Sort, new_sort: &mut Sort) {
@@ -1671,9 +1589,15 @@ fn draw_pane(
     let pal = palette_for(st.dark, st.accent()).translucent(st.opacity);
     let cx = Ctx { st, links: cloud_ctx.0, reports: cloud_ctx.1, clip_has, pi };
 
-    tab_strip(ui, pane, pi, &pal, actions);
-    ui.add_space(2.0);
-    toolbar(ui, pane, pi, &pal, st, clip_has, actions);
+    // with one pane the tabs are in the title strip and the navigation row runs across the window (App::ui); in split view
+    // each pane has its own
+    if st.split {
+        tab_strip(ui, pane, pi, &pal, actions);
+        ui.add_space(2.0);
+        topbar::nav_bar(ui, pane, pi, &pal, st, pi == 0, actions);
+        ui.add_space(4.0);
+    }
+    topbar::command_bar(ui, pane, pi, &pal, st, clip_has, actions);
     ui.add_space(4.0);
 
     let sort = pane.sort;
@@ -1692,13 +1616,9 @@ fn draw_pane(
     let in_pc = places::is_virtual(&t.dir());
     let in_archive = archive::split(&t.dir()).is_some();
     let dir = t.dir();
-    let TabView { entries, results, query, selected, anchor, .. } = t;
+    let grouping::Arranged { order, heads } = t.arranged(hidden, st.group);
+    let TabView { entries, results, selected, anchor, .. } = t;
     let shown: &[Entry] = results.as_deref().unwrap_or(entries);
-    let order: Vec<usize> = if searching || in_pc {
-        (0..shown.len()).collect()
-    } else {
-        listing::visible(shown, query, hidden).into_iter().filter(|&i| !pick_hides(&shown[i])).collect()
-    };
     let mut new_sort = sort;
     // a keyboard move asks for its row to be scrolled into view
     let want_row: Option<usize> = ui.ctx().data_mut(|d| {
@@ -1848,9 +1768,14 @@ fn draw_pane(
                 // In a narrow pane only the name and the size are kept, so the table never outgrows the pane.
                 let avail_w = ui.available_width();
                 let narrow = avail_w < 560.0;
+                // the table's rows: each item (its place in `order`), with a group's heading before its first item (Group by)
+                let rows: Vec<(usize, bool)> = (0..order.len())
+                    .flat_map(|pos| heads.iter().any(|(p, _)| *p == pos).then_some((pos, true)).into_iter().chain([(pos, false)]))
+                    .collect();
+                let columns = 2 + usize::from(status_col) + if narrow { 0 } else { 2 };
                 let mut tb =
                     TableBuilder::new(ui).striped(true).resizable(!narrow).sense(Sense::click_and_drag()).drag_to_scroll(drag_scroll);
-                if let Some(r) = want_row {
+                if let Some(r) = want_row.and_then(|w| rows.iter().position(|&(p, head)| p == w && !head)) {
                     tb = tb.scroll_to_row(r, None);
                 }
                 if narrow {
@@ -1878,8 +1803,16 @@ fn draw_pane(
                     h.col(|ui| header_cell(ui, &pal, "Size", Some(SortKey::Size), sort, &mut new_sort));
                 })
                 .body(|body| {
-                    body.rows(28.0, order.len(), |mut row| {
-                        let pos = row.index();
+                    body.rows(28.0, rows.len(), |mut row| {
+                        let (pos, head) = rows[row.index()];
+                        if head {
+                            let title = heads.iter().find(|(p, _)| *p == pos).map(|(_, h)| h.as_str()).unwrap_or_default();
+                            row.col(|ui| group_heading(ui, &pal, title));
+                            for _ in 1..columns {
+                                row.col(|_| {});
+                            }
+                            return;
+                        }
                         let e = &shown[order[pos]];
                         row.set_selected(selected.contains(&e.path));
                         row.col(|ui| name_cell(ui, e));
@@ -1928,6 +1861,14 @@ fn draw_pane(
                 .show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         for (pos, &i) in order.iter().enumerate() {
+                            if let Some((_, title)) = heads.iter().find(|(p, _)| *p == pos) {
+                                // a group starts on a line of its own, under its heading
+                                if pos > 0 {
+                                    ui.end_row();
+                                }
+                                ui.allocate_ui(vec2(ui.max_rect().width(), 28.0), |ui| group_heading(ui, &pal, title));
+                                ui.end_row();
+                            }
                             let e = &shown[i];
                             let cell = vec2(size + 12.0, size + 34.0);
                             let (rect, _) = ui.allocate_exact_size(cell, Sense::hover());
@@ -2291,6 +2232,10 @@ struct App {
     dnd_tried: bool,
     /// Where a drag from another window is hovering (logical pixels).
     ext_hover: Option<(f32, f32)>,
+    /// The Properties dialog (YGG-169).
+    props: Option<topbar::PropsDlg>,
+    /// Cloud Storage's drives from Settings (YGG-170).
+    cloud_drives: cloudside::CloudDrives,
 }
 
 impl App {
@@ -2425,6 +2370,8 @@ impl App {
             dnd: None,
             dnd_tried: false,
             ext_hover: None,
+            props: None,
+            cloud_drives: cloudside::CloudDrives::new(),
         }
     }
 
@@ -3014,6 +2961,7 @@ impl App {
 
     fn apply(&mut self, ctx: &egui::Context, actions: Vec<Action>) {
         let hidden = self.st.show_hidden;
+        let group = self.st.group;
         let mut queue: std::collections::VecDeque<Action> = actions.into();
         while let Some(a) = queue.pop_front() {
             match a {
@@ -3156,7 +3104,7 @@ impl App {
                         continue;
                     }
                     let t = self.panes[p].cur();
-                    let order = t.order(hidden);
+                    let order = t.order(hidden, group);
                     if order.is_empty() {
                         continue;
                     }
@@ -3204,7 +3152,7 @@ impl App {
                     buf.push_str(&typed);
                     ctx.data_mut(|d| d.insert_temp(id, (buf.clone(), now)));
                     let t = self.panes[p].cur();
-                    let order = t.order(hidden);
+                    let order = t.order(hidden, group);
                     let lower = buf.to_lowercase();
                     // typing the same letter again cycles through the names that start with it
                     let start = t
@@ -3274,6 +3222,44 @@ impl App {
                     }
                     Err(e) => self.status = e,
                 },
+                Action::Properties(p) => {
+                    let t = &self.panes[p].tabs[self.panes[p].active];
+                    let dir = t.dir();
+                    if places::is_virtual(&dir) || archive::split(&dir).is_some() {
+                        continue;
+                    }
+                    let paths = if t.selected.is_empty() { vec![dir] } else { t.selected.iter().cloned().collect() };
+                    self.props = Some(topbar::PropsDlg::open(ctx, paths));
+                }
+                Action::SetGroup(g) => {
+                    self.st.group = g;
+                    self.dirty = true;
+                }
+                Action::ToggleSidebar => {
+                    self.st.sidebar_hidden = !self.st.sidebar_hidden;
+                    self.dirty = true;
+                }
+                Action::CloudMount(name, open) => self.cloud_drives.mount(ctx, &name, true, open),
+                Action::CloudUnmount(name) => {
+                    // tabs in the drive step out first (to home), or they would show an empty folder
+                    if let Some(at) = self.cloud_drives.list.iter().find(|d| d.name == name).map(|d| d.path().to_path_buf()) {
+                        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+                        for pane in &mut self.panes {
+                            let sort = pane.sort;
+                            for t in &mut pane.tabs {
+                                if t.dir().starts_with(&at) {
+                                    t.navigate(home.clone(), sort, hidden);
+                                }
+                            }
+                        }
+                    }
+                    self.cloud_drives.mount(ctx, &name, false, false);
+                }
+                Action::ManageCloud => {
+                    if let Err(e) = cloudside::open_settings() {
+                        self.status = e;
+                    }
+                }
                 Action::Install(pkg) => {
                     if let Err(e) = run::install_in_terminal(&pkg) {
                         self.status = format!("Could not install {pkg}: {e}");
@@ -3939,8 +3925,8 @@ impl App {
                 }
             }
 
-            if self.cloud.is_some() || !self.links.is_empty() {
-                section_heading(ui, pal, "Cloud");
+            if self.cloud.is_some() || !self.links.is_empty() || !self.cloud_drives.list.is_empty() {
+                section_heading(ui, pal, "Cloud Storage");
             }
             if let Some(c) = &self.cloud {
                 match c.state {
@@ -3975,6 +3961,7 @@ impl App {
                     }
                 }
             }
+            self.cloud_drive_rows(ui, pal, actions);
             for l in &self.links {
                 let badge = if self.verifying.contains(&l.name) {
                     None
@@ -4004,6 +3991,9 @@ impl App {
                         ui.close();
                     }
                 });
+            }
+            if ui.small_button("Manage cloud drives").on_hover_text("Settings > Apps > Minos > Cloud drives").clicked() {
+                actions.push(Action::ManageCloud);
             }
         });
     }
@@ -4046,6 +4036,8 @@ impl eframe::App for App {
                 self.st.show_hidden = show;
                 self.reload_all();
             }
+            // Settings > Apps > Minos > Cloud drives writes its list into the same folder
+            self.cloud_drives.reload_list();
         }
         let want = (self.st.dark, self.st.accent(), self.st.opacity);
         if self.applied_theme != Some(want) {
@@ -4121,6 +4113,14 @@ impl eframe::App for App {
         }
         if let Some(t) = self.download_status.lock().ok().and_then(|mut g| g.take()) {
             self.status = t;
+        }
+        let (open, say) = self.cloud_drives.poll(&ctx);
+        if let Some(path) = open {
+            let (f, sort) = (self.focus, self.panes[self.focus].sort);
+            self.panes[f].cur().navigate(path, sort, self.st.show_hidden);
+        }
+        if let Some(s) = say {
+            self.status = s;
         }
         while let Ok((name, res)) = self.verify_rx.try_recv() {
             self.verifying.retain(|n| *n != name);
@@ -4204,6 +4204,10 @@ impl eframe::App for App {
                     } else if i.consume_key(Modifiers::SHIFT, key) {
                         actions.push(Action::KeyNav(f, nav, true));
                     }
+                }
+                // Alt+Enter first: the plain Enter below would take it too (egui matches Enter with Alt held as Enter)
+                if i.consume_key(Modifiers::ALT, Key::Enter) {
+                    actions.push(Action::Properties(f));
                 }
                 if i.consume_key(Modifiers::NONE, Key::Enter) {
                     actions.push(Action::KeyOpen(f));
@@ -4292,10 +4296,7 @@ impl eframe::App for App {
             // Ctrl+A selects everything visible in the focused tab.
             if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
                 let t = self.panes[self.focus].cur();
-                let all: Vec<PathBuf> = match &t.results {
-                    Some(r) => r.iter().map(|e| e.path.clone()).collect(),
-                    None => listing::visible(&t.entries, &t.query, hidden).into_iter().map(|i| t.entries[i].path.clone()).collect(),
-                };
+                let all: Vec<PathBuf> = t.order(hidden, GroupBy::None).into_iter().map(|i| t.shown()[i].path.clone()).collect();
                 t.selected = all.into_iter().collect();
             }
         }
@@ -4332,13 +4333,32 @@ impl eframe::App for App {
                     if ui.checkbox(&mut sp, "Split pane").changed() {
                         actions.push(Action::ToggleSplit);
                     }
+                    let mut side = !self.st.sidebar_hidden;
+                    if ui.checkbox(&mut side, "Sidebar").changed() {
+                        actions.push(Action::ToggleSidebar);
+                    }
                 });
                 ui.add_space(6.0);
+                // the tabs, as the Files app has them in its title bar (in split view each pane keeps its own above it)
+                if !split {
+                    tab_strip(ui, &self.panes[0], 0, &pal, &mut actions);
+                    ui.add_space(6.0);
+                }
                 // The strip is the title bar: empty space moves the window, buttons at the end.
                 chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
                 chrome::window_controls(ui, &pal);
             });
         });
+
+        // the navigation row across the window, under the tabs (split view: one in each pane, draw_pane)
+        if !split {
+            egui::Panel::top("nav").frame(egui::Frame::new().fill(pal.tab_active).inner_margin(egui::Margin::symmetric(8, 5))).show(
+                ui,
+                |ui| {
+                    topbar::nav_bar(ui, &mut self.panes[0], 0, &pal, &self.st, true, &mut actions);
+                },
+            );
+        }
 
         // the bottom bar (statusbar.rs, transfers.rs): across the whole window, under the sidebar too, as in Windows Explorer
         // (in the open and save dialog only while it has a message or a transfer, and without the counts: the dialog's
@@ -4352,7 +4372,8 @@ impl eframe::App for App {
                 dir: t.tab.history.current(),
                 entries: &t.entries,
                 results: t.results.as_deref(),
-                query: &t.query,
+                // the command bar's quick filter counts as the filter while it is set (YGG-169)
+                query: if t.filter.is_empty() { &t.query } else { &t.filter },
                 hidden: self.st.show_hidden,
                 selected: &t.selected,
                 loading: t.pending.is_some(),
@@ -4369,12 +4390,14 @@ impl eframe::App for App {
             }
         }
 
-        egui::Panel::left("sidebar")
-            .default_size(230.0)
-            .frame(egui::Frame::new().fill(pal.sidebar).inner_margin(egui::Margin::symmetric(8, 6)))
-            .show(ui, |ui| {
-                self.sidebar(ui, &pal, &mut actions);
-            });
+        if !self.st.sidebar_hidden {
+            egui::Panel::left("sidebar")
+                .default_size(230.0)
+                .frame(egui::Frame::new().fill(pal.sidebar).inner_margin(egui::Margin::symmetric(8, 6)))
+                .show(ui, |ui| {
+                    self.sidebar(ui, &pal, &mut actions);
+                });
+        }
 
         if self.st.preview {
             let want: Vec<PathBuf> = {
@@ -4596,6 +4619,11 @@ impl eframe::App for App {
         }
 
         self.format_dialog(&ctx);
+        if let Some(d) = &mut self.props {
+            if !d.show(&ctx, &pal) {
+                self.props = None;
+            }
+        }
 
         let mut proton_go = false;
         let mut proton_cancel = false;

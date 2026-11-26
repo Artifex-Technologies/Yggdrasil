@@ -32,6 +32,8 @@ optdepends=('ufw: firewall page'
             'iio-sensor-proxy: a 2-in-1 turns its screen with the device (tablet mode)'
             'wvkbd: the on-screen keyboard in tablet mode, from Agora'
             'fprintd: Users > Fingerprint, from Agora'
+            'rclone: Apps > Minos > Cloud drives: signing in to a cloud drive and mounting it'
+            'fuse3: Apps > Minos > Cloud drives: mounting a cloud drive (rclone mount)'
             "heimdall-private-mic-git: Appearance > Fonts: Heimdall's file guard, which checks every font before it is added")
 makedepends=('cargo')
 options=('!lto')

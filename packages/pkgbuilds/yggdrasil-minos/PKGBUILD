@@ -15,7 +15,8 @@ url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
 depends=('adwaita-icon-theme' 'gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'xdg-utils' '7zip' 'udisks2' 'polkit' 'dosfstools' 'exfatprogs')
 makedepends=('cargo')
-optdepends=('rclone: Proton Drive links and verification (minos-cloud)'
+optdepends=('rclone: Proton Drive links and verification (minos-cloud), and the cloud drives under Cloud Storage'
+            'fuse3: mounting Proton Drive and the cloud drives (rclone mount)'
             'poppler: PDF page previews (pdftoppm)'
             'ffmpegthumbnailer: video previews'
             'unrar: opening RAR archives with 7z'

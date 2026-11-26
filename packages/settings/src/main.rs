@@ -10,6 +10,7 @@ mod appmgr;
 mod apps_ui;
 mod battery;
 mod bluetooth_ui;
+mod clouddrives_ui;
 mod controls;
 mod cpu;
 mod curve;
@@ -576,6 +577,8 @@ struct App {
     fans_panel: Option<fans::Panel>,
     /// Security > Limbo (`security:limbo`): dropped when the page is left.
     limbo_panel: Option<limbo_ui::Panel>,
+    /// Apps > Minos > Cloud drives (`apps:cloud-drives`): dropped when the page is left.
+    cloud_panel: Option<clouddrives_ui::Panel>,
     /// Power > Graphics card: the unlock's confirmation while open (with the date of Sarina's last backup), and its checkbox.
     unlock_confirm: Option<Option<String>>,
     unlock_read: bool,
@@ -709,7 +712,8 @@ impl App {
             font_lib: Default::default(),
             dnd: None,
             dnd_tried: false,
-            app_tab: 0,
+            // `yggdrasil-settings apps:cloud-drives` opens Apps > Minos > Cloud drives (Minos's sidebar does)
+            app_tab: if start_page() == Page::Apps && start_sub() == "cloud-drives" { 3 } else { 0 },
             bar_addons: None,
             app_sub: match start_sub().as_str() {
                 "icons" => AppSub::Icons,
@@ -777,6 +781,7 @@ impl App {
             power_fans: matches!(start_sub().as_str(), "cooling" | "fans"),
             fans_panel: None,
             limbo_panel: None,
+            cloud_panel: None,
             unlock_confirm: None,
             unlock_read: false,
             app_filter: String::new(),
@@ -794,9 +799,12 @@ impl App {
             displays_ui: Default::default(),
             last_path: Vec::new(),
         };
-        // `yggdrasil-settings apps:ID` opens that app's own page (links from the dock or the notch)
+        // `yggdrasil-settings apps:ID` opens that app's own page (links from the dock or the notch); `apps:cloud-drives` is
+        // Minos's Cloud drives page (app_tab above)
         if let Some(id) = std::env::args().nth(1).and_then(|a| a.strip_prefix("apps:").map(String::from)).filter(|s| !s.is_empty()) {
-            app.app_sel = Some(id);
+            if app.app_tab == 0 {
+                app.app_sel = Some(id);
+            }
         }
         app
     }
@@ -1163,6 +1171,9 @@ impl eframe::App for App {
         }
         if !(self.page == Page::Security && self.sec_sub == SecSub::Limbo) {
             self.limbo_panel = None;
+        }
+        if !(self.page == Page::Apps && self.app_tab == 3) {
+            self.cloud_panel = None;
         }
         // a look belongs to its network's page: it goes when the page does
         if self.lan_look.as_ref().is_some_and(|(u, _)| self.page != Page::Network || self.net_open.as_deref() != Some(u.as_str())) {
@@ -4922,6 +4933,18 @@ impl App {
                     minos_changed = true;
                 }
             });
+        });
+        ui::group(ui, pal, Some("Cloud Storage"), |ui| {
+            if ui::nav_row(
+                ui,
+                pal,
+                true,
+                "Cloud drives",
+                Some("Google Drive, OneDrive, Dropbox, Proton Drive and more, in Minos's sidebar"),
+                |_| {},
+            ) {
+                self.app_tab = 3;
+            }
         });
         ui::group(ui, pal, Some("Minos"), |ui| {
             ui::row(

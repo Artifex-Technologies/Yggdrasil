@@ -58,6 +58,10 @@ pub struct State {
     pub preview: bool,
     /// The preview pane's width as it was last dragged to; it starts at the narrowest (PREVIEW_MIN).
     pub preview_width: f32,
+    /// The command bar's Group menu: the list in groups by type, date or size.
+    pub group: crate::grouping::GroupBy,
+    /// The sidebar folded away (the navigation row's sidebar button).
+    pub sidebar_hidden: bool,
     /// Use the desktop's accent color (Settings > Appearance) for Minos's highlights. On by default.
     pub follow_accent: bool,
     /// The system accent last read; not saved. Set by the app while it runs.
@@ -104,6 +108,8 @@ impl Default for State {
             gallery_size: 1,
             preview: true,
             preview_width: PREVIEW_MIN,
+            group: crate::grouping::GroupBy::None,
+            sidebar_hidden: false,
             follow_accent: true,
             system_accent: None,
             opacity: 100,

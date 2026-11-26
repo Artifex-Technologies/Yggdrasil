@@ -34,7 +34,7 @@ pub enum Icon {
     Failed,
     Skipped,
     Waiting,
-    /// Collapse (down) and expand (up), for the transfer panel.
+    /// Collapse (down) and expand (up), for the transfer panel; down also after a command bar button that opens a menu.
     ChevronDown,
     ChevronUp,
     Pin,
@@ -42,6 +42,20 @@ pub enum Icon {
     SortDown,
     Archive,
     Preview,
+    /// The command bar (YGG-169): New (a plus in a circle), and the commands after it.
+    NewItem,
+    Cut,
+    Copy,
+    Paste,
+    Rename,
+    Share,
+    Trash,
+    Properties,
+    Filter,
+    Sort,
+    Group,
+    /// The navigation row's button that folds the sidebar away.
+    Sidebar,
 }
 
 struct Frame {
@@ -267,6 +281,76 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Pin => {
             p.circle_filled(f.p(0.5, 0.4), f.size * 0.2, color);
             line(p, &f, &[(0.5, 0.55), (0.5, 0.9)], color);
+        }
+        Icon::NewItem => {
+            p.circle_stroke(f.p(0.5, 0.5), f.size * 0.38, s);
+            line(p, &f, &[(0.5, 0.32), (0.5, 0.68)], color);
+            line(p, &f, &[(0.32, 0.5), (0.68, 0.5)], color);
+        }
+        Icon::Cut => {
+            // two rings for the handles, the blades crossing above them
+            p.circle_stroke(f.p(0.3, 0.74), f.size * 0.13, s);
+            p.circle_stroke(f.p(0.7, 0.74), f.size * 0.13, s);
+            line(p, &f, &[(0.38, 0.63), (0.72, 0.1)], color);
+            line(p, &f, &[(0.62, 0.63), (0.28, 0.1)], color);
+        }
+        Icon::Copy => {
+            p.rect_stroke(f.rect(0.34, 0.1, 0.86, 0.7), CornerRadius::same(2), s, StrokeKind::Inside);
+            line(p, &f, &[(0.24, 0.3), (0.14, 0.3), (0.14, 0.9), (0.66, 0.9), (0.66, 0.8)], color);
+        }
+        Icon::Paste => {
+            p.rect_stroke(f.rect(0.16, 0.16, 0.84, 0.92), CornerRadius::same(2), s, StrokeKind::Inside);
+            p.rect_filled(f.rect(0.34, 0.07, 0.66, 0.25), CornerRadius::same(2), color);
+            line(p, &f, &[(0.32, 0.5), (0.68, 0.5)], color);
+            line(p, &f, &[(0.32, 0.68), (0.58, 0.68)], color);
+        }
+        Icon::Rename => {
+            // a text box with the typing cursor in it
+            p.rect_stroke(f.rect(0.06, 0.3, 0.94, 0.7), CornerRadius::same(2), s, StrokeKind::Inside);
+            line(p, &f, &[(0.62, 0.14), (0.62, 0.86)], color);
+            line(p, &f, &[(0.52, 0.14), (0.72, 0.14)], color);
+            line(p, &f, &[(0.52, 0.86), (0.72, 0.86)], color);
+            line(p, &f, &[(0.2, 0.5), (0.44, 0.5)], color);
+        }
+        Icon::Share => {
+            line(p, &f, &[(0.36, 0.4), (0.16, 0.4), (0.16, 0.88), (0.84, 0.88), (0.84, 0.4), (0.64, 0.4)], color);
+            line(p, &f, &[(0.5, 0.64), (0.5, 0.1)], color);
+            line(p, &f, &[(0.32, 0.28), (0.5, 0.1), (0.68, 0.28)], color);
+        }
+        Icon::Trash => {
+            line(p, &f, &[(0.12, 0.24), (0.88, 0.24)], color);
+            line(p, &f, &[(0.38, 0.24), (0.38, 0.12), (0.62, 0.12), (0.62, 0.24)], color);
+            line(p, &f, &[(0.2, 0.24), (0.26, 0.9), (0.74, 0.9), (0.8, 0.24)], color);
+            line(p, &f, &[(0.42, 0.4), (0.42, 0.74)], color);
+            line(p, &f, &[(0.58, 0.4), (0.58, 0.74)], color);
+        }
+        Icon::Properties => {
+            // a wrench
+            line(p, &f, &[(0.18, 0.82), (0.56, 0.44)], color);
+            p.add(Shape::line(arc(0.66, 0.34, 0.2, 100.0, 350.0, 16).into_iter().map(|(x, y)| f.p(x, y)).collect(), s));
+            line(p, &f, &[(0.86, 0.3), (0.7, 0.3), (0.7, 0.14)], color);
+        }
+        Icon::Filter => {
+            line(p, &f, &[(0.14, 0.28), (0.86, 0.28)], color);
+            line(p, &f, &[(0.28, 0.5), (0.72, 0.5)], color);
+            line(p, &f, &[(0.42, 0.72), (0.58, 0.72)], color);
+        }
+        Icon::Sort => {
+            line(p, &f, &[(0.32, 0.86), (0.32, 0.14)], color);
+            line(p, &f, &[(0.16, 0.3), (0.32, 0.14), (0.48, 0.3)], color);
+            line(p, &f, &[(0.68, 0.14), (0.68, 0.86)], color);
+            line(p, &f, &[(0.52, 0.7), (0.68, 0.86), (0.84, 0.7)], color);
+        }
+        Icon::Group => {
+            for y in [0.14, 0.56] {
+                p.rect_filled(f.rect(0.1, y, 0.3, y + 0.2), CornerRadius::same(1), color);
+                line(p, &f, &[(0.42, y + 0.06), (0.9, y + 0.06)], color);
+                line(p, &f, &[(0.42, y + 0.2), (0.74, y + 0.2)], color);
+            }
+        }
+        Icon::Sidebar => {
+            p.rect_stroke(f.rect(0.1, 0.18, 0.9, 0.82), CornerRadius::same(3), s, StrokeKind::Inside);
+            p.rect_filled(f.rect(0.1, 0.18, 0.38, 0.82), CornerRadius { nw: 3, ne: 0, sw: 3, se: 0 }, color.gamma_multiply(0.6));
         }
     }
 }

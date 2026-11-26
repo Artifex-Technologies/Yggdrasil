@@ -15,7 +15,30 @@ dragging scrolls, as before). A drag that starts on a file still moves or copies
 
 **Finding:** just start typing a name to jump to it (the same letter again cycles); Ctrl+F searches, Ctrl+L edits the address.
 
-**Files:** Ctrl+C / X / V, Ctrl+A, F2 rename, Delete trash, Ctrl+Shift+N new folder, F3 preview, F5 reload, F11 full screen.
+**Files:** Ctrl+C / X / V, Ctrl+A, F2 rename, Delete trash, Ctrl+Shift+N new folder, Alt+Enter properties, F3 preview, F5 reload, F11 full screen.
+
+**The top of the window** (laid out like the Files app's): the tabs in the title strip (+ for a new tab); under them the
+navigation row: back, forward, up, refresh, the address bar (click it to type a path: Enter goes there, Esc cancels), the
+favorite star, the sidebar button (folds the sidebar away; also Menu > Sidebar) and search. Over the list, the command bar: New
+(a menu: Folder, File), Cut, Copy, Paste, Rename, Share, Delete and Properties on the left; Filter (only names with the letters
+typed are shown, until you leave the folder; Esc clears it), Sort (name, date modified, size; up or down), Group (by type, date
+modified or size, as Windows groups them: Today, Yesterday, Earlier this week ...; or none), the layout (details or gallery) and
+the preview pane on the right. A button that does not apply is greyed (Paste with nothing to paste, Rename unless exactly one
+item is selected, everything that changes files in This PC or inside an archive); every button's tooltip names its shortcut.
+Share is greyed: the system has no file sharing service. In split view each pane has its own tabs, navigation row and command
+bar, and a narrow pane puts Sort, Group, the layout and the preview pane in one menu. Code: `src/topbar.rs`, the rules in
+`src/commandbar.rs`, Group by in `src/grouping.rs`.
+
+**Properties** (Alt+Enter, the wrench, or right-click > Properties): name, type, size, where it is, when it was made and changed, its permissions in
+letters and words, and its owner; with nothing selected, the folder's. A folder's size (and several items') is counted on a
+thread by the status bar's walker (`src/foldersize.rs`); on a network or cloud drive it is not counted (it would fetch every file). Code: `src/props.rs`.
+
+**Cloud Storage** (the sidebar): Proton Drive as before, and every cloud drive added in Settings > Apps > Minos > Cloud drives
+(packages/clouddrives). A mounted drive, or a sync app's folder that is there, opens on a click; a drive that is not mounted is
+greyed and mounts on a click or with right-click > Mount (and opens once it is up); right-click > Unmount, and Manage cloud
+drives opens the Settings page. A green dot is a mounted drive, a red one an error (the tooltip says which). The list follows
+Settings without a restart; whether a drive is mounted is read from the mount table every few seconds on a thread. Code:
+`src/cloudside.rs`.
 
 **Where it opens:** Settings > Apps > Minos sets the first window (Home or where you left off), a window opened while another is open (Home or a copy of that window's folder) and a new tab (Home or a copy of the current tab). Open windows list their folder in $XDG_RUNTIME_DIR/minos/.
 

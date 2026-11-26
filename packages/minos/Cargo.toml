@@ -18,6 +18,8 @@ dirs = "7.0.0"
 eframe = "0.36.2"
 yggdrasil-ui = { path = "../yggdrasil-ui" }
 yggdrasil-conf = { path = "../yggdrasil-conf" }
+# Cloud Storage in the sidebar: the cloud drives Settings > Apps > Minos > Cloud drives keeps, and mounting them
+yggdrasil-clouddrives = { path = "../clouddrives" }
 egui_extras = { version = "0.36.2", features = ["file", "image"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 lofty = "0.25.4"

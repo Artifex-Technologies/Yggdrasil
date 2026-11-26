@@ -102,7 +102,7 @@ Each app's main keys; the link has all of them.
 | App | Main keys | All of them |
 | --- | --- | --- |
 | Top bar, dock, start menu | Esc closes any popup; in the start menu type to search, Enter opens; Win + / any key closes the shortcuts card | [keys/panel.md](keys/panel.md) |
-| Minos (files) | Ctrl + T / W new / close tab, Alt + ← / → back / forward, Ctrl + F search, Ctrl + L address, F2 rename, Delete to the bin, F3 preview | [keys/minos.md](keys/minos.md) |
+| Minos (files) | Ctrl + T / W new / close tab, Alt + ← / → back / forward, Ctrl + F search, Ctrl + L address, F2 rename, Delete to the bin, Alt + Enter properties, F3 preview | [keys/minos.md](keys/minos.md) |
 | Clipboard (Win + V) | ↑ ↓ move, Enter copies, Shift + Enter pastes, Tab history / snippets, Ctrl + P pin, Ctrl + N new snippet | [keys/clipboard.md](keys/clipboard.md) |
 | Color Picker (Win + Shift + C) | arrows move one pixel, wheel zooms, Enter or click picks, Esc cancels | [keys/colorpicker.md](keys/colorpicker.md) |
 | Screenshot, lock and login screens | screenshot: drag an area, click a window, Enter whole screen; lock: Enter unlocks, Esc clears; login: Tab another user, F2 session | [keys/lock-and-login.md](keys/lock-and-login.md) |

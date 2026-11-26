@@ -46,12 +46,16 @@ declare -A ACTIONS=(
     [settings-font]="wait 20"
     [settings-fonts-installed]="wait 20"
     [taskmanager]="tap 474 265; wait 3; tap 735 430; wait 5"
-    [minos-privacy-menu]="pointer 900 300; click right; wait 3"
+    [minos-privacy-menu]="pointer 900 322; click right; wait 3"
     [calculator]="type 1299*12"
     [settings-software-update-available]="tap 816 425; wait 2"
     [settings-software-update-history]="tap 806 567; wait 3; tap 795 300; wait 2"
     [settings-network-heimdall]="tap 1435 364; wait 4; scroll 200; wait 1; scroll 200; wait 1; scroll 200; wait 1; scroll 150; wait 2"
     [agents]="agents-demo; wait 70; tap 1605 14; wait 3"
+    [minos-top]="tap 657 354"
+    [minos-top-light]="tap 657 354; tap 1224 251; wait 1; tap 1225 322; wait 1"
+    [minos-properties]="tap 657 354; key alt+Return; wait 2"
+    [settings-cloud-drives-add]="tap 769 622; wait 2; tap 855 696; wait 1"
 )
 shots() {
     shot desktop                        desktop panel desktop
@@ -95,6 +99,9 @@ shots() {
     shot settings-wallpaper             desktop settings appearance:wallpaper system
     shot settings-assistant             desktop settings assistant system
     shot settings-apps-list             desktop settings apps system
+    shot settings-cloud-drives          desktop settings apps:cloud-drives system
+    shot settings-cloud-drives-light    desktop settings apps:cloud-drives system
+    shot settings-cloud-drives-add      desktop settings apps:cloud-drives system
     shot settings-default-apps          desktop settings default system
     shot settings-games                 desktop settings games system
     shot settings-security              desktop settings security system
@@ -111,6 +118,9 @@ shots() {
     shot settings-about                 desktop settings about system
     shot minos-explorer                 desktop app minos /home/alex/Documents
     shot minos-privacy-menu             desktop app minos /home/alex/Music
+    shot minos-top                      desktop app minos /home/alex/Documents
+    shot minos-top-light                desktop app minos /home/alex/Documents
+    shot minos-properties               desktop app minos /home/alex/Documents
     shot minos-transfers                desktop app minos /home/alex/Documents --demo-transfers
     shot minos-transfers-collapsed      desktop app minos /home/alex/Documents --demo-transfers=collapsed
     shot minos-transfers-failed         desktop app minos /home/alex/Documents --demo-transfers=failed
