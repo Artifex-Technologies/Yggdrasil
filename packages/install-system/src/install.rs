@@ -56,6 +56,8 @@ pub struct Host {
     pub cmdline: String,
     /// the live system's package keyring (/etc/pacman.d/gnupg), which archiso's pacman-init.service makes at each start
     pub pacman_gnupg: String,
+    /// a root-only folder in memory that holds an encrypted disk's key file until the new system has it
+    pub keys: String,
 }
 
 impl Host {
@@ -73,6 +75,7 @@ impl Host {
             copytoram: "/run/archiso/copytoram".into(),
             cmdline: "/proc/cmdline".into(),
             pacman_gnupg: "/etc/pacman.d/gnupg".into(),
+            keys: "/run/yggdrasil-install-keys".into(),
         }
     }
 }
@@ -551,9 +554,13 @@ impl Ctx<'_> {
         } else {
             self.say("INFO", "the drive does not discard: the partition's old contents stay under the encryption")?;
         }
-        // LUKS2 with PBKDF2: GRUB (which reads /boot from inside) opens the disk at every start. GRUB 2.16 can read Argon2id
-        // slots, but it runs Argon2 single-threaded, so a slot calibrated under Linux would take far longer to open there;
-        // PBKDF2 keeps that unlock at about 2 s.
+        // LUKS2, two key slots, the key file's first. Slot 0 opens with a random key file that the start-up image carries, so
+        // the password is typed once (in GRUB): 32768 random bits, so PBKDF2 at its minimum of 1000 rounds (made in 0.05 s,
+        // opened at once at every start; with the password slot first that unlock took 4 s). Slot 1 is the password: PBKDF2,
+        // calibrated by cryptsetup to 2 s while the processor is idle (before the copy). GRUB runs Argon2 single-threaded:
+        // cryptsetup's default Argon2id slot (four threads) took 10.6 s to open in GRUB on my PC, this PBKDF2 one 3.8 s. GRUB
+        // tries the typed password on slot 0 first, which fails in milliseconds.
+        let key = self.new_key_file()?;
         let label = format!("{}-crypt", self.os.name.replace(' ', "_"));
         self.run(
             &strings(&[
@@ -564,16 +571,36 @@ impl Ctx<'_> {
                 "luks2",
                 "--pbkdf",
                 "pbkdf2",
+                "--pbkdf-force-iterations",
+                "1000",
                 "--label",
                 &label,
-                "--key-file=-",
+                "--key-file",
+                &key,
                 dev,
+            ]),
+            None,
+            true,
+        )?;
+        self.run(
+            &strings(&[
+                "cryptsetup",
+                "luksAddKey",
+                "--batch-mode",
+                "--pbkdf",
+                "pbkdf2",
+                "--iter-time",
+                "2000",
+                "--key-file",
+                &key,
+                dev,
+                "-",
             ]),
             Some(password),
             true,
         )?;
         let mapper = self.os.mapper.clone();
-        self.run(&strings(&["cryptsetup", "open", "--key-file=-", dev, &mapper]), Some(password), true)?;
+        self.run(&strings(&["cryptsetup", "open", "--key-file", &key, dev, &mapper]), None, true)?;
         Ok(format!("/dev/mapper/{mapper}"))
     }
 
@@ -1101,13 +1128,31 @@ impl Ctx<'_> {
         Ok(())
     }
 
-    /// Encrypted system: the start-up image opens it with a key file, so the password is typed once (in GRUB).
-    fn encryption_setup(&mut self) -> R<String> {
-        let key = self.t("/crypto_keyfile.bin");
+    /// An encrypted disk's key file, made before the disk: 4096 random bytes in a root-only folder in memory.
+    fn new_key_file(&mut self) -> R<String> {
+        py::makedirs(&self.host.keys)?;
+        py::chmod(&self.host.keys, 0o700)?;
+        let key = py::join(&self.host.keys, "crypto_keyfile.bin");
         let bytes = self.sys.random(4096);
         std::fs::write(&key, bytes).map_err(|e| py::oserror(&e, &key))?;
-        py::chmod(&key, 0o000)?;
+        py::chmod(&key, 0o400)?;
         Ok(key)
+    }
+
+    /// Encrypted system: the start-up image opens it with the key file (key slot 0), so the password is typed once (in GRUB).
+    /// The key moves into the new system, readable by no one (root reads it regardless).
+    fn encryption_setup(&mut self) -> R<()> {
+        let from = py::join(&self.host.keys, "crypto_keyfile.bin");
+        let key = self.t("/crypto_keyfile.bin");
+        std::fs::copy(&from, &key).map_err(|e| py::oserror(&e, &key))?;
+        py::chmod(&key, 0o000)?;
+        self.forget_key_file();
+        Ok(())
+    }
+
+    /// The live system's copy of the key file goes once the new system has it, or the install stopped.
+    fn forget_key_file(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.host.keys);
     }
 
     /// Whether the new system's start-up image is built with systemd (Arch's default since mkinitcpio 39) rather than busybox.
@@ -1221,6 +1266,7 @@ FILES+=(/crypto_keyfile.bin)
         }
         let mapper = self.os.mapper.clone();
         self.run(&strings(&["cryptsetup", "close", &mapper]), None, false)?;
+        self.forget_key_file();
         Ok(true)
     }
 
@@ -1272,12 +1318,7 @@ FILES+=(/crypto_keyfile.bin)
         self.write_fstab(&fstab)?;
         self.set_up_system(p)?;
         if encrypted {
-            let key = self.encryption_setup()?;
-            self.run(
-                &strings(&["cryptsetup", "luksAddKey", "--batch-mode", "--key-file=-", &arg(&root_part)?, &key]),
-                Some(&password),
-                true,
-            )?;
+            self.encryption_setup()?;
         }
         self.step(7)?;
         self.initramfs(encrypted)?;

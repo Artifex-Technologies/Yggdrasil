@@ -222,7 +222,7 @@ page with made-up networks and joins nothing.
   JSON").
 - A two-part plan: the window sends a first line at the Disk page's confirmation, the plan so far (no `user`, `hostname`,
   browsers or extras) with `"stage": "disk"`, checked without the account. Steps 1 to 7 run on it (partitions, encryption with
-  its key slot, formatting, the copy, the system's language, keyboard, font and time zone, the start-up image); then the
+  both key slots, formatting, the copy, the system's language, keyboard, font and time zone, the start-up image); then the
   program says `READY` and reads the second line, the whole plan, checked in full, every value of the first line unchanged
   (otherwise it stops: "the disk's choices changed after it was prepared"). Standard input ending first (the window closed)
   stops it there, unmounted. Without `"stage"`, the plan is the whole of standard input, as before, and the same ten steps run
@@ -255,8 +255,11 @@ to make room automatically ("install alongside"), and partitions on more than on
 
 `yggdrasil-install-system` checks the computer (UEFI, the disk not in use, at least `min_size_gb`), writes a GPT with a 1 GiB EFI
 partition and the rest for the system, optionally LUKS2 (the partition's old contents discarded first with `blkdiscard`, where the drive supports it, since
-neither luksFormat nor mkfs's TRIM inside the encryption clears them; PBKDF2, because GRUB opens the disk at every start to
-read /boot and runs Argon2 single-threaded; a key file in the start-up image so the password is typed once, in GRUB), btrfs with `@`, `@home`, `@cache`, `@log`, copies the system from the
+neither luksFormat nor mkfs's TRIM inside the encryption clears them; two key slots, made before the copy: slot 0 a random
+4096-byte key file that the start-up image carries, so the password is typed once, in GRUB (PBKDF2 at 1000 rounds, opened at
+once), and slot 1 the password, PBKDF2 calibrated to 2 s, because GRUB opens the disk at every start to read /boot and runs
+Argon2 single-threaded: measured in a VM on my PC, GRUB opened this disk in 3.8 s and cryptsetup's default Argon2id slot in
+10.6 s; the key file waits in a root-only folder in `/run` until the new system has it), btrfs with `@`, `@home`, `@cache`, `@log`, copies the system from the
 medium (`unsquashfs`), sets it up inside (the OS's `cleanup` program, language, keyboard, time zone, name, the account in `wheel`
 with sudo; root stays locked; greetd as the login screen), builds the start-up image (`sd-encrypt` or `encrypt`, whichever the
 system's mkinitcpio uses), installs GRUB (plus the firmware's fallback path) with the OS's `boot_menu_theme`, and runs its

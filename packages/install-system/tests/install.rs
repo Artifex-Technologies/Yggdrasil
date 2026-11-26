@@ -92,8 +92,25 @@ fn passwords_only_on_standard_input() {
             }
         }
     }
-    // the key slot in step 6, before the account (step 8): steps 1 to 7 need only the Disk page and those before it
-    assert_eq!(seen, ["luksFormat", "open", "luksAddKey", "chpasswd"]);
+    // the password only for its own key slot (before the copy, steps 1 to 7 need only the Disk page and those before it),
+    // then the account (step 8)
+    assert_eq!(seen, ["luksAddKey", "chpasswd"]);
+    // the key file's slot first (PBKDF2 at 1000 rounds), then the password's (calibrated to 2 s), opened with the key file
+    let key = format!("{}/crypto_keyfile.bin", live.host.keys);
+    let crypt: Vec<&Vec<String>> = f.program_calls("cryptsetup").into_iter().map(|(a, _)| a).collect();
+    assert_eq!(
+        crypt[0].join(" "),
+        format!(
+            "cryptsetup luksFormat --batch-mode --type luks2 --pbkdf pbkdf2 --pbkdf-force-iterations 1000 --label Example-crypt --key-file {key} /dev/vdz2"
+        )
+    );
+    assert_eq!(
+        crypt[1].join(" "),
+        format!("cryptsetup luksAddKey --batch-mode --pbkdf pbkdf2 --iter-time 2000 --key-file {key} /dev/vdz2 -")
+    );
+    assert_eq!(crypt[2].join(" "), format!("cryptsetup open --key-file {key} /dev/vdz2 example-root"));
+    assert!(!crypt.iter().skip(3).any(|a| a[1] == "luksAddKey"), "no key slot added later: {crypt:?}");
+    assert!(!std::path::Path::new(&live.host.keys).exists(), "the live system's copy of the key is gone");
     // the partition's old contents are discarded right before it is encrypted (LAB-67), only that partition
     let discard = f.calls.iter().position(|(a, _)| a[0] == "blkdiscard").expect("blkdiscard");
     assert_eq!(f.calls[discard].0, ["blkdiscard", "-f", "/dev/vdz2"]);
@@ -123,6 +140,18 @@ fn passwords_only_on_standard_input() {
     ));
     assert!(grub.contains("GRUB_ENABLE_CRYPTODISK=y\n"));
     assert!(live.read("etc/mkinitcpio.conf.d/example-encrypt.conf").contains("\"sd-encrypt\" opens it"));
+}
+
+/// An encrypted install that stops (here at formatting) leaves no copy of the disk's key file on the live system.
+#[test]
+fn a_stopped_encrypted_install_forgets_the_key_file() {
+    let live = Live::new();
+    let mut f = live.fake();
+    f.fail.push(vec!["mkfs.btrfs".into()]);
+    let p = plan_with(&[("encrypt", "true"), ("encrypt_password", &format!("\"{DISK_PW}\""))]);
+    assert_ne!(live.run(&mut f, &[], &p), 0, "{:?}", f.out);
+    assert!(f.program_calls("cryptsetup").iter().any(|(a, _)| a[1] == "open"), "it stopped after the disk was opened");
+    assert!(!std::path::Path::new(&live.host.keys).exists());
 }
 
 /// A hard disk has no discard: the encrypted install goes on and says so (LAB-67).

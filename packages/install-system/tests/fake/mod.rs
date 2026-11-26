@@ -582,6 +582,7 @@ impl Live {
             copytoram: dir.path("copytoram"),
             cmdline: dir.path("cmdline"),
             pacman_gnupg: dir.path("gnupg"),
+            keys: dir.path("keys"),
         };
         let env = Env { sfs: Some(dir.path("medium/airootfs.sfs")), target: Some(dir.path("target")) };
         Live { dir, host, env }
