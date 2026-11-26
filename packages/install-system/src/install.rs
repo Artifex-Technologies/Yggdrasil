@@ -11,14 +11,17 @@ use crate::py::{self, read_text, tail_chars, write_text, Fail, R};
 use crate::pyjson::{dict, loads, s, Int, Py, OTHER_NESTING};
 use crate::sys::{Output, System};
 
-pub const STEPS: [&str; 9] = [
+/// Steps 1 to 7 need only what the pages up to the Disk page chose, so a two-part plan runs them while the person answers
+/// the rest (`READY` between them); the account and the apps come in step 8.
+pub const STEPS: [&str; 10] = [
     "Checking the computer",
     "Preparing the disk",
     "Encrypting",
     "Formatting",
     "Copying the system",
-    "Setting it up",
+    "Setting up the system",
     "Making the start-up image",
+    "Setting up your account and apps",
     "Installing the boot menu",
     "Finishing",
 ];
@@ -86,7 +89,7 @@ fn strings(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
 
-fn stop<T>(m: impl Into<String>) -> R<T> {
+pub(crate) fn stop<T>(m: impl Into<String>) -> R<T> {
     Err(Fail::Stop(m.into()))
 }
 
@@ -704,7 +707,8 @@ impl Ctx<'_> {
         write_text(&self.t("/etc/fstab"), &(all.join("\n") + "\n"))
     }
 
-    fn set_up(&mut self, p: &Py) -> R<()> {
+    /// What the pages up to the Disk page chose: the OS's clean-up, the language, the keyboard, the font, the time zone.
+    fn set_up_system(&mut self, p: &Py) -> R<()> {
         // the OS's own clean-up of everything that belongs to the live medium (live account, autologin, no-password rules ...),
         // and its kernels and start-up image presets put back
         match self.os.cleanup.clone() {
@@ -759,6 +763,11 @@ impl Ctx<'_> {
         }
         py::symlink(&format!("/usr/share/zoneinfo/{}", p.at("timezone").as_str().unwrap_or("")), &lt)?;
         self.inside(&strings(&["hwclock", "--systohc", "--utc"]), None, false)?;
+        Ok(())
+    }
+
+    /// What the pages after the Disk page chose: the computer's name and the account, the saved networks, the login screen.
+    fn set_up_account(&mut self, p: &Py) -> R<()> {
         // the computer's name
         let host = p.at("hostname").as_str().unwrap_or("").to_string();
         write_text(&self.t("/etc/hostname"), &format!("{host}\n"))?;
@@ -1215,7 +1224,9 @@ FILES+=(/crypto_keyfile.bin)
         Ok(true)
     }
 
-    pub fn install(&mut self, p: &Py) -> R<()> {
+    /// The install: `p` is the plan, or a two-part plan's first part (the disk and what the pages before it chose); `rest`
+    /// gives the whole plan before step 8.
+    pub fn install(&mut self, p: &Py, rest: &mut dyn FnMut(&mut Self) -> R<Py>) -> R<()> {
         self.step(1)?;
         self.preflight(p)?;
         self.step(2)?;
@@ -1259,10 +1270,7 @@ FILES+=(/crypto_keyfile.bin)
         self.step(6)?;
         self.bind_mounts()?;
         self.write_fstab(&fstab)?;
-        self.set_up(p)?;
-        self.use_prefetched()?;
-        self.set_up_browsers(p)?;
-        self.set_up_extras(p)?;
+        self.set_up_system(p)?;
         if encrypted {
             let key = self.encryption_setup()?;
             self.run(
@@ -1273,13 +1281,20 @@ FILES+=(/crypto_keyfile.bin)
         }
         self.step(7)?;
         self.initramfs(encrypted)?;
+        // the rest of the choices: the same plan, or in a two-part plan the whole plan once the person clicked Install
+        let p = &rest(self)?;
         self.step(8)?;
+        self.set_up_account(p)?;
+        self.use_prefetched()?;
+        self.set_up_browsers(p)?;
+        self.set_up_extras(p)?;
+        self.step(9)?;
         // the firmware's fallback copy only on an EFI partition made for this system (erased or formatted now)
         let esp_formatted = plan.iter().find(|u| u.1 == "/boot/efi").is_some_and(|u| u.2.is_some());
         let crypt_uuid = self.uuid_of(&arg(&root_part)?)?;
         self.uuid_of(&arg(&root)?)?;
         self.bootloader(encrypted, &crypt_uuid, esp_formatted)?;
-        self.step(9)?;
+        self.step(10)?;
         if let Some(finish) = self.os.finish.clone().filter(|f| py::exists(&self.t(f))) {
             let r = self.inside(&[finish], None, false)?;
             for line in pycompat::splitlines(&r.stdout) {

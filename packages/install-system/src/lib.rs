@@ -49,7 +49,7 @@ pub mod sys;
 use std::io::Read;
 
 use install::{Ctx, Host};
-use py::Fail;
+use py::{Fail, R};
 use pyjson::{loads, Py, PLAN_NESTING};
 use sys::System;
 
@@ -124,6 +124,35 @@ pub fn prefetch_with(line: &str, env: &Env, host: Host, sys: &mut dyn System, st
     }
 }
 
+/// A two-part plan's second line, read once steps 1 to 7 are done (`READY` says so): the whole plan, checked, and with every
+/// value of the first part unchanged (the disk is prepared for those). Standard input closing first (the window closed, or
+/// it went back to the Disk page) stops the install there.
+fn rest_of_plan(ctx: &mut Ctx, first: &Py, input: &mut dyn std::io::BufRead) -> R<Py> {
+    ctx.say("READY", "")?;
+    let mut line = String::new();
+    let _ = input.read_line(&mut line);
+    if line.trim().is_empty() {
+        return install::stop("stopped before the rest of the choices came (the disk was prepared and the system copied)");
+    }
+    let Ok(p) = read_plan(line.trim().as_bytes()) else {
+        return install::stop("the rest of the plan is not JSON");
+    };
+    let problem = {
+        let Ctx { os, host, sys, .. } = ctx;
+        let mut exists = |login: &str| sys.account_exists(login);
+        plan::check_plan(&p, os, &mut plan::Ask { zoneinfo: &host.zoneinfo, account_exists: &mut exists })
+    };
+    if let Some(problem) = problem {
+        return install::stop(problem);
+    }
+    if let Some(d) = first.as_dict() {
+        if d.iter().any(|(k, v)| k != "stage" && p.get(k) != Some(v)) {
+            return install::stop("the disk's choices changed after it was prepared");
+        }
+    }
+    Ok(p)
+}
+
 /// The program: its arguments (without its own name), standard input, environment, the live system's places and the
 /// computer. Returns the exit code.
 pub fn main_with(args: &[String], stdin: &mut dyn Read, env: &Env, host: Host, sys: &mut dyn System) -> i32 {
@@ -144,8 +173,13 @@ pub fn main_with(args: &[String], stdin: &mut dyn Read, env: &Env, host: Host, s
             Err(e) => traceback(ctx.sys, e),
         };
     }
+    // the plan: the whole of standard input, or a two-part plan's first line (`"stage": "disk"`) with the rest to come
+    let mut input = std::io::BufReader::new(stdin);
     let mut bytes = vec![];
-    let _ = stdin.read_to_end(&mut bytes);
+    let _ = std::io::BufRead::read_until(&mut input, b'\n', &mut bytes);
+    if read_plan(&bytes).is_err() {
+        let _ = input.read_to_end(&mut bytes);
+    }
     let say = |ctx: &mut Ctx, kind: &str, text: &str, code: i32| match ctx.say(kind, text) {
         Ok(()) => code,
         Err(e) => traceback(ctx.sys, e),
@@ -167,7 +201,16 @@ pub fn main_with(args: &[String], stdin: &mut dyn Read, env: &Env, host: Host, s
     if ctx.sys.euid() != 0 {
         return say(&mut ctx, "ERROR", &format!("{PROG} needs root"), 1);
     }
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctx.install(&plan)));
+    let two_part = plan.at("stage").as_str() == Some("disk");
+    let first = plan.clone();
+    let mut rest = |ctx: &mut Ctx| -> R<Py> {
+        if two_part {
+            rest_of_plan(ctx, &first, &mut input)
+        } else {
+            Ok(first.clone())
+        }
+    };
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ctx.install(&plan, &mut rest)));
     let message = match outcome {
         Ok(Ok(())) => return 0,
         Ok(Err(Fail::Stop(m))) => m,

@@ -62,11 +62,15 @@ layouts of that kind by name, Dvorak and Colemak being variants; the live sessio
 page tries it) → Time zone (a world map with the zone bands, click your part of it, and a short list of about 80 friendly zones
 grouped by UTC offset, searchable by city, country or offset: packages/tzpicker, the same picker as Settings'; the live system's
 zone first, no location service asked) → Disk (the disk, then how: erase all of it, or choose partitions by hand; encryption on by default, with its password
-twice) → Your account (name,
+twice; Next asks "Erase <model> (<size>) and start copying?": confirmed, the disk is prepared, the system copied and the
+start-up image built while the remaining pages are answered, their progress beside the buttons, and there is no way back to
+the Disk page; closing the installer then leaves the disk erased) → Your account (name,
 account name made from it, computer's name, password twice) → Browsers (only when the OS offers a list: choose one or more,
 and which is the default; none is allowed, with a note that Agora has them) → the optional parts (only when the OS offers some,
-e.g. Labyrinth's AI and security: Sarina, Heimdall) → Summary (and a box to tick: the disk is erased) → Installing
+e.g. Labyrinth's AI and security: Sarina, Heimdall) → Summary (the choices; Install finishes from step 8) → Installing
 (progress, notes, errors) → Done (Restart now). Next stays greyed out with the reason beside it until a page is complete.
+
+![The Disk page's question before the disk work starts (a sample disk)](../assets/screenshots/installer-disk-erase.png)
 
 ### Font
 
@@ -216,8 +220,15 @@ page with made-up networks and joins nothing.
   break in it (chpasswd reads one account per line; GRUB ends the disk's password at Enter), a time zone that is not a name under
   /usr/share/zoneinfo, and text that is not Unicode (a lone surrogate) or a plan nested deeper than 20 levels ("the plan is not
   JSON").
+- A two-part plan: the window sends a first line at the Disk page's confirmation, the plan so far (no `user`, `hostname`,
+  browsers or extras) with `"stage": "disk"`, checked without the account. Steps 1 to 7 run on it (partitions, encryption with
+  its key slot, formatting, the copy, the system's language, keyboard, font and time zone, the start-up image); then the
+  program says `READY` and reads the second line, the whole plan, checked in full, every value of the first line unchanged
+  (otherwise it stops: "the disk's choices changed after it was prepared"). Standard input ending first (the window closed)
+  stops it there, unmounted. Without `"stage"`, the plan is the whole of standard input, as before, and the same ten steps run
+  in one go.
 - It reports one line each, and the window shows them: `STEP n N text` (step n of N started), `INFO text`, `WARN text` (shown
-  as a note, the install goes on), `ERROR text` (it stopped), `DONE`.
+  as a note, the install goes on), `ERROR text` (it stopped), `READY` (a two-part plan's first part is done), `DONE`.
 - `COMMAND --check` (with the plan on stdin) checks the plan without changing anything.
 - Browsers: the installer integration may name a list, `browsers = /usr/share/OS/installer-browsers.json`, holding
   `{"browsers": [{"id", "name", "note", "chosen"}, ...]}` (anything else in an entry, how to install it, is the OS's business).

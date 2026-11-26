@@ -23,7 +23,7 @@ use eframe::egui::{self, vec2, Align, CornerRadius, Layout, Margin, RichText};
 use yggdrasil_ui::chrome;
 use yggdrasil_ui::theme::{self, Palette};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Page {
     Welcome,
     Font,
@@ -146,6 +146,8 @@ enum Report {
     Info(String),
     Warn(String),
     Error(String),
+    /// Steps 1 to 7 of a two-part plan are done: the rest of the plan may come.
+    Ready,
     Done,
 }
 
@@ -162,6 +164,7 @@ fn parse_report(line: &str) -> Option<Report> {
         "WARN" => Some(Report::Warn(rest.to_string())),
         "ERROR" => Some(Report::Error(rest.to_string())),
         "DONE" => Some(Report::Done),
+        "READY" => Some(Report::Ready),
         _ => None,
     }
 }
@@ -447,6 +450,14 @@ struct App {
     extras_intro: String,
     chosen_extras: Vec<String>,
     reports: Option<Receiver<Report>>,
+    /// The Disk page was confirmed: the install program prepares the disk and copies the system while the later pages are
+    /// answered (a two-part plan); its standard input, for the rest of the plan at Install.
+    started: bool,
+    rest_to: Option<std::sync::Arc<std::sync::Mutex<Option<std::process::ChildStdin>>>>,
+    /// Steps 1 to 7 are done (READY).
+    ready: bool,
+    /// The Disk page's "Erase and start copying" question is on screen.
+    confirm_erase: bool,
     step: (usize, usize, String),
     log: Vec<Report>,
     failed: Option<String>,
@@ -551,11 +562,13 @@ impl App {
             "keyboard" => Page::Keyboard,
             "font" => Page::Font,
             "timezone" => Page::TimeZone,
-            "disk" | "disk-manual" => Page::Disk,
+            "disk" | "disk-manual" | "disk-erase" => Page::Disk,
             "account" => Page::Account,
             "summary" => Page::Summary,
             _ => Page::Welcome,
         };
+        // the Disk page's question before the disk work starts
+        self.confirm_erase = what == "disk-erase";
     }
 
     fn new() -> App {
@@ -608,6 +621,10 @@ impl App {
             extras_intro: String::new(),
             chosen_extras: vec![],
             reports: None,
+            started: false,
+            rest_to: None,
+            ready: false,
+            confirm_erase: false,
             step: (0, 0, String::new()),
             log: vec![],
             failed: None,
@@ -672,7 +689,8 @@ impl App {
     /// The page before `from` (Back).
     fn prev_page(&self, from: Page) -> Option<Page> {
         let pages = self.pages();
-        pages.iter().position(|p| *p == from).filter(|i| *i > 0).map(|i| pages[i - 1])
+        // once the Disk page is confirmed the disk is being prepared: no way back to it (closing the installer starts over)
+        pages.iter().position(|p| *p == from).filter(|i| *i > 0).map(|i| pages[i - 1]).filter(|p| !self.started || *p > Page::Disk)
     }
 
     fn set_extras(&mut self, (title, intro, list): (String, String, Vec<Extra>)) {
@@ -796,7 +814,7 @@ impl App {
                     None
                 }
             }
-            Page::Summary if !self.agree => Some("Tick the box to confirm the changes to the disk".into()),
+            Page::Summary if !self.agree && !self.started => Some("Tick the box to confirm the changes to the disk".into()),
             _ => None,
         }
     }
@@ -859,18 +877,106 @@ impl App {
         serde_json::Value::Object(c).to_string()
     }
 
+    /// The Disk page confirmed: the install program starts with the first part of the plan (what the pages up to the Disk page
+    /// chose, `"stage": "disk"`), prepares the disk, copies the system and builds the start-up image while the later pages
+    /// are answered; Install then sends the whole plan (`start_install`).
+    fn start_disk_phase(&mut self, ctx: &egui::Context) {
+        if self.demo {
+            return;
+        }
+        let mut first = self.plan();
+        if let Some(obj) = first.as_object_mut() {
+            for k in ["user", "hostname", "browsers", "default_browser", "extras"] {
+                obj.remove(k);
+            }
+            obj.insert("stage".into(), serde_json::json!("disk"));
+        }
+        self.started = true;
+        self.ready = false;
+        self.rest_to = Some(self.spawn_install(ctx, format!("{first}\n"), true));
+    }
+
+    /// The Disk page's point of no return: what is erased now, that the copy runs while the rest is answered, and that
+    /// closing the installer after it leaves the disk so.
+    fn erase_question(&mut self, ctx: &egui::Context, pal: &Palette) {
+        let disk = self
+            .chosen_disk()
+            .map(|d| format!("{} ({})", if d.model.is_empty() { "the disk" } else { &d.model }, size_text(d.size)))
+            .unwrap_or_default();
+        let (title, body) = if self.manual_mode {
+            (
+                "Change the disk and start copying?".to_string(),
+                format!("The changes to {disk} are made now: deleted and formatted partitions lose what is on them. {} is copied onto it while you answer the remaining questions. Closing the installer after this leaves the disk changed.", self.os),
+            )
+        } else {
+            (
+                format!("Erase {disk} and start copying?"),
+                format!("Everything on it is erased now, and {} is copied onto it while you answer the remaining questions. Closing the installer after this leaves the disk erased.", self.os),
+            )
+        };
+        let (mut go, mut cancel) = (false, false);
+        let shown = egui::Modal::new(egui::Id::new("erase-question")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.label(RichText::new(&title).size(18.0).strong());
+            ui.add_space(8.0);
+            ui.add(egui::Label::new(RichText::new(&body).color(pal.amber)).wrap());
+            ui.add_space(14.0);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let label = if self.manual_mode { "Change and start copying" } else { "Erase and start copying" };
+                go = ui
+                    .add(egui::Button::new(RichText::new(label).color(pal.on_accent())).fill(pal.red).min_size(vec2(180.0, 34.0)))
+                    .clicked();
+                cancel = ui.add(egui::Button::new("Cancel").min_size(vec2(90.0, 34.0))).clicked();
+            });
+        });
+        if go {
+            self.confirm_erase = false;
+            self.start_disk_phase(ctx);
+            if let Some(next) = self.next_page(Page::Disk) {
+                self.page = next;
+            }
+        } else if cancel || shown.should_close() {
+            self.confirm_erase = false;
+        }
+    }
+
     fn start_install(&mut self, ctx: &egui::Context) {
         if self.demo {
             return;
         }
         // the install takes over: getting ready stops (what it fetched is used)
         self.prefetch = prefetch::Prefetch::new(None, prefetch::start_with_pkexec);
-        let Some(cmd) = self.command.clone() else { return };
         let plan = self.plan().to_string();
+        self.page = Page::Installing;
+        match self.rest_to.take() {
+            // the disk is being prepared: the rest of the plan, and its standard input closes
+            Some(to) => {
+                let sent =
+                    to.lock().ok().and_then(|mut s| s.take()).is_some_and(|mut s| s.write_all(format!("{plan}\n").as_bytes()).is_ok());
+                if !sent && self.failed.is_none() {
+                    self.failed = Some("the installer stopped before the rest of the choices could be sent".into());
+                }
+            }
+            None => {
+                self.spawn_install(ctx, plan, false);
+            }
+        }
+    }
+
+    /// Runs the install program with `input` on its standard input, its reports into `reports`; with `keep_open` its
+    /// standard input stays open (returned) for the rest of a two-part plan.
+    fn spawn_install(
+        &mut self,
+        ctx: &egui::Context,
+        input: String,
+        keep_open: bool,
+    ) -> std::sync::Arc<std::sync::Mutex<Option<std::process::ChildStdin>>> {
+        let held = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let Some(cmd) = self.command.clone() else { return held };
         let (tx, rx) = channel();
         self.reports = Some(rx);
-        self.page = Page::Installing;
         let c = ctx.clone();
+        let keep = held.clone();
         std::thread::spawn(move || {
             // pkexec asks for the administrator password where there is one (the live medium lets it through)
             let child = Command::new("pkexec").args(&cmd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn();
@@ -878,11 +984,17 @@ impl App {
                 Ok(c) => c,
                 Err(e) => {
                     let _ = tx.send(Report::Error(format!("the installer could not start: {e}")));
+                    c.request_repaint();
                     return;
                 }
             };
             if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(plan.as_bytes());
+                let _ = stdin.write_all(input.as_bytes());
+                if keep_open {
+                    if let Ok(mut k) = keep.lock() {
+                        *k = Some(stdin);
+                    }
+                }
             }
             let mut ended = false;
             if let Some(out) = child.stdout.take() {
@@ -904,6 +1016,7 @@ impl App {
             }
             c.request_repaint();
         });
+        held
     }
 
     fn poll(&mut self) {
@@ -911,7 +1024,12 @@ impl App {
         while let Ok(r) = rx.try_recv() {
             match &r {
                 Report::Step(n, total, text) => self.step = (*n, *total, text.clone()),
-                Report::Error(e) => self.failed = Some(e.clone()),
+                Report::Error(e) => {
+                    self.failed = Some(e.clone());
+                    // a failure while the later pages are answered is shown at once
+                    self.page = Page::Installing;
+                }
+                Report::Ready => self.ready = true,
                 Report::Done => self.page = Page::Done,
                 _ => {}
             }
@@ -1310,7 +1428,8 @@ impl eframe::App for App {
                         }
                     }
                     Page::Summary => {
-                        heading(ui, &pal, "Ready to install", "Check the choices. Nothing has been changed yet.");
+                        let says = if self.started { "Check the choices. The disk is prepared and the system copied while you do." } else { "Check the choices. Nothing has been changed yet." };
+                        heading(ui, &pal, "Ready to install", says);
                         let net_state = self.net.state();
                         let disk = self.chosen_disk();
                         let rows = [
@@ -1371,8 +1490,12 @@ impl eframe::App for App {
                             ui.label(RichText::new(ready).color(pal.dim));
                         }
                         ui.add_space(16.0);
-                        let agree = if self.manual_mode { "I understand that the changes listed above are made to the disk (deleted and formatted partitions lose what is on them)" } else { "I understand that everything on this disk will be erased" };
-                        ui.checkbox(&mut self.agree, RichText::new(agree).color(pal.amber));
+                        let agree = if self.started {
+                            ""
+                        } else if self.manual_mode { "I understand that the changes listed above are made to the disk (deleted and formatted partitions lose what is on them)" } else { "I understand that everything on this disk will be erased" };
+                        if !agree.is_empty() {
+                            ui.checkbox(&mut self.agree, RichText::new(agree).color(pal.amber));
+                        }
                     }
                     Page::Installing => {
                         heading(ui, &pal, "Installing", "This takes a few minutes. Please keep the computer on.");
@@ -1421,7 +1544,14 @@ impl eframe::App for App {
                             self.log.clear();
                             self.step = (0, 0, String::new());
                             self.reports = None;
-                            self.page = Page::Summary;
+                            // a stop after the Disk page's confirmation starts over there (the disk may be half prepared)
+                            self.page = if self.started { Page::Disk } else { Page::Summary };
+                            if self.started {
+                                self.started = false;
+                                self.ready = false;
+                                self.rest_to = None;
+                                self.load_disks();
+                            }
                         }
                     }
                     page => {
@@ -1441,6 +1571,9 @@ impl eframe::App for App {
                                 self.net.start_deciding(&ctx);
                             } else if page == Page::Network && self.return_to.is_some() {
                                 go = self.return_to.take();
+                            } else if page == Page::Disk && !self.started && !self.demo {
+                                // the point of no return: asked here, and the disk work starts at once
+                                self.confirm_erase = true;
                             } else {
                                 go = self.next_page(page);
                             }
@@ -1450,12 +1583,28 @@ impl eframe::App for App {
                                 go = Some(back);
                             }
                         }
+                        let missing_now = missing.is_some();
                         if let Some(m) = missing {
                             ui.label(RichText::new(m).color(pal.dim));
                         }
                         if checking {
                             ui.label(RichText::new("Checking the network…").color(pal.dim));
                             ui.spinner();
+                        }
+                        // the disk work under way while the later pages are answered
+                        if self.started && !missing_now {
+                            let (n, total, text) = self.step.clone();
+                            let line = if self.ready {
+                                "The system is copied: Install finishes it".to_string()
+                            } else if total > 0 {
+                                format!("{text} ({n} of {total})")
+                            } else {
+                                "Preparing the disk…".to_string()
+                            };
+                            ui.label(RichText::new(line).color(pal.dim));
+                            if !self.ready {
+                                ui.spinner();
+                            }
                         }
                     }
                 }
@@ -1469,6 +1618,9 @@ impl eframe::App for App {
         }
         if install {
             self.start_install(&ctx);
+        }
+        if self.confirm_erase {
+            self.erase_question(&ctx, &pal);
         }
         chrome::outline(&ctx, &pal);
     }
@@ -1519,6 +1671,18 @@ mod tests {
 
     use super::*;
     use device_offers::Usb;
+
+    #[test]
+    fn once_the_disk_page_is_confirmed_there_is_no_way_back_to_it() {
+        let mut app = App::new();
+        app.disk = Some("/dev/vdz".into());
+        let after = app.next_page(Page::Disk).unwrap();
+        assert_eq!(app.prev_page(after), Some(Page::Disk));
+        app.started = true;
+        assert_eq!(app.prev_page(after), None, "the disk is being prepared");
+        assert!(app.missing(Page::Summary).is_none(), "the erase was confirmed on the Disk page: no box to tick");
+        assert!(matches!(parse_report("READY"), Some(Report::Ready)));
+    }
 
     #[test]
     fn browsers_come_from_the_os_and_the_default_stays_chosen() {

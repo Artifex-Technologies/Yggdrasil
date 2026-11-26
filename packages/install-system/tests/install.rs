@@ -23,8 +23,8 @@ fn the_whole_disk_unencrypted() {
     let mut f = live.fake();
     assert_eq!(live.run(&mut f, &[], &plan().dumps()), 0, "{:?}", f.out);
     let steps: Vec<&String> = f.out.iter().filter(|l| l.starts_with("STEP")).collect();
-    assert_eq!(steps.len(), 9);
-    assert_eq!(steps[0], "STEP 1 9 Checking the computer");
+    assert_eq!(steps.len(), 10);
+    assert_eq!(steps[0], "STEP 1 10 Checking the computer");
     assert_eq!(f.out.last().unwrap(), "DONE");
     assert!(f.out.contains(&"INFO not encrypted (as chosen)".to_string()));
     assert!(f.out.contains(&"INFO copied 55%".to_string()));
@@ -92,7 +92,8 @@ fn passwords_only_on_standard_input() {
             }
         }
     }
-    assert_eq!(seen, ["luksFormat", "open", "chpasswd", "luksAddKey"]);
+    // the key slot in step 6, before the account (step 8): steps 1 to 7 need only the Disk page and those before it
+    assert_eq!(seen, ["luksFormat", "open", "luksAddKey", "chpasswd"]);
     // the partition's old contents are discarded right before it is encrypted (LAB-67), only that partition
     let discard = f.calls.iter().position(|(a, _)| a[0] == "blkdiscard").expect("blkdiscard");
     assert_eq!(f.calls[discard].0, ["blkdiscard", "-f", "/dev/vdz2"]);
@@ -260,6 +261,66 @@ fn an_image_named_by_the_os_is_never_swapped_for_the_copy_in_memory() {
     live.env.sfs = Some(live.dir.path("medium/gone.sfs"));
     assert_eq!(live.run(&mut f, &[], &plan().dumps()), 1);
     assert!(f.out.iter().any(|l| l.starts_with("ERROR the system to copy was not found")), "{:?}", f.out);
+}
+
+/// D1 of the faster install: the Disk page's confirmation sends the first part, steps 1 to 7 run while the person answers the
+/// rest, and Install sends the whole plan.
+fn first_part(full: &str) -> String {
+    use install_system::pyjson::{Dict, Py};
+    let p = install_system::pyjson::loads(full, 20).unwrap();
+    let mut first = Dict::default();
+    for (k, v) in p.as_dict().unwrap().iter().filter(|(k, _)| *k != "user" && *k != "hostname") {
+        first.insert(k.clone(), v.clone());
+    }
+    first.insert("stage".into(), Py::Str("disk".into()));
+    Py::Dict(first).dumps()
+}
+
+#[test]
+fn a_two_part_plan_prepares_the_disk_before_the_account_comes() {
+    let live = Live::new();
+    let mut f = live.fake();
+    let full = plan().dumps();
+    assert_eq!(live.run(&mut f, &[], &format!("{}\n{full}\n", first_part(&full))), 0, "{:?}", f.out);
+    let ready = f.out.iter().position(|l| l == "READY").expect("READY");
+    assert_eq!(f.out[ready - 1..ready + 2], ["STEP 7 10 Making the start-up image", "READY", "STEP 8 10 Setting up your account and apps"]);
+    assert_eq!(f.out.last().unwrap(), "DONE");
+    let unsquash = f.calls.iter().position(|(a, _)| a[0] == "unsquashfs").unwrap();
+    let useradd = f.calls.iter().position(|(a, _)| a.get(4).map(String::as_str) == Some("useradd")).unwrap();
+    assert!(unsquash < useradd);
+    assert_eq!(live.read("etc/hostname"), "test-pc\n");
+}
+
+#[test]
+fn the_first_part_alone_stops_after_the_copy_and_unmounts() {
+    // the window closed (or went back to the Disk page): standard input ends without the rest
+    let live = Live::new();
+    let mut f = live.fake();
+    let full = plan().dumps();
+    assert_eq!(live.run(&mut f, &[], &format!("{}\n", first_part(&full))), 1, "{:?}", f.out);
+    assert!(f.out.iter().any(|l| l.starts_with("ERROR stopped before the rest of the choices came")), "{:?}", f.out);
+    assert!(f.program_calls("useradd").is_empty());
+    assert!(f.calls.iter().any(|(a, _)| a[..2] == ["umount", "-R"]), "unmounted");
+}
+
+#[test]
+fn the_rest_may_not_change_the_disks_choices() {
+    let live = Live::new();
+    let mut f = live.fake();
+    let full = plan().dumps();
+    let other = plan_with(&[("timezone", "\"UTC\"")]);
+    assert_eq!(live.run(&mut f, &[], &format!("{}\n{other}\n", first_part(&full))), 1);
+    assert!(f.out.contains(&"ERROR the disk's choices changed after it was prepared".to_string()), "{:?}", f.out);
+    assert!(f.program_calls("useradd").is_empty());
+}
+
+#[test]
+fn the_first_part_is_checked_without_the_account() {
+    let live = Live::new();
+    let mut f = live.fake();
+    let first = first_part(&plan().dumps());
+    assert_eq!(live.run(&mut f, &["--check"], &first), 0, "{:?}", f.out);
+    assert_eq!(f.out, ["DONE"]);
 }
 
 #[test]

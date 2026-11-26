@@ -142,6 +142,7 @@ shots() {
     shot installer-timezone             desktop app yggdrasil-installer --demo timezone
     shot installer-timezone-light       desktop app yggdrasil-installer --demo timezone
     shot installer-disk-manual          desktop app yggdrasil-installer --demo disk-manual
+    shot installer-disk-erase           desktop app yggdrasil-installer --demo disk-erase
     shot installer-account              desktop app yggdrasil-installer --demo account
     shot lock-screen                    desktop lock
     # last: the Agents pill stays in the bar once its made-up agents are written

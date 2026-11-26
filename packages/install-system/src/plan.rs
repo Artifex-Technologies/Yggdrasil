@@ -120,25 +120,9 @@ pub struct Ask<'a> {
     pub account_exists: &'a mut dyn FnMut(&str) -> bool,
 }
 
-/// The plan, checked: an error message, or None when it can be installed. A value of the wrong kind (a number where text
-/// belongs, say) gets the message of that value.
-pub fn check_plan(p: &Py, os: &Os, ask: &mut Ask) -> Option<String> {
+/// The account and the computer's name.
+fn check_account(p: &Py, os: &Os, ask: &mut Ask) -> Option<String> {
     let empty = Py::Str(String::new());
-    if p.as_dict().is_none() {
-        return Some("the plan is not a JSON object".into());
-    }
-    let mode = p.at("mode").as_str();
-    if mode != Some("erase") && mode != Some("manual") {
-        return Some("unknown way to install (erase or manual)".into());
-    }
-    if !fits(get(p, "disk", &empty), device_ok) {
-        return Some("no disk chosen".into());
-    }
-    if mode == Some("manual") {
-        if let Some(problem) = check_manual(p) {
-            return Some(problem);
-        }
-    }
     let empty_user = Py::Dict(Default::default());
     let u = if p.at("user").as_dict().is_some() { p.at("user") } else { &empty_user };
     let (login, password, name) = (get(u, "login", &empty), get(u, "password", &empty), get(u, "name", &empty));
@@ -160,6 +144,34 @@ pub fn check_plan(p: &Py, os: &Os, ask: &mut Ask) -> Option<String> {
     }
     if !fits(get(p, "hostname", &empty), hostname_ok) {
         return Some("the computer's name may use letters, digits and - (not at the start or end)".into());
+    }
+    None
+}
+
+/// The plan, checked: an error message, or None when it can be installed. A value of the wrong kind (a number where text
+/// belongs, say) gets the message of that value.
+pub fn check_plan(p: &Py, os: &Os, ask: &mut Ask) -> Option<String> {
+    let empty = Py::Str(String::new());
+    if p.as_dict().is_none() {
+        return Some("the plan is not a JSON object".into());
+    }
+    let mode = p.at("mode").as_str();
+    if mode != Some("erase") && mode != Some("manual") {
+        return Some("unknown way to install (erase or manual)".into());
+    }
+    if !fits(get(p, "disk", &empty), device_ok) {
+        return Some("no disk chosen".into());
+    }
+    if mode == Some("manual") {
+        if let Some(problem) = check_manual(p) {
+            return Some(problem);
+        }
+    }
+    // a two-part plan's first part (`"stage": "disk"`) comes before the account's page: its account and name come later
+    if p.at("stage").as_str() != Some("disk") {
+        if let Some(problem) = check_account(p, os, ask) {
+            return Some(problem);
+        }
     }
     if p.at("encrypt").truthy() {
         match get(p, "encrypt_password", &empty).as_str() {
