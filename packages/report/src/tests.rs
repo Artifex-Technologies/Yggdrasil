@@ -93,8 +93,8 @@ fn commands() -> HashMap<&'static str, &'static str> {
         ("nmcli -t -f NAME,TYPE connection show", "Cosy Home 5G:802-11-wireless\nlo:loopback\n"),
         ("bluetoothctl devices", "Device AA:BB:CC:DD:EE:FF Sam's Headphones\n"),
         (
-            "journalctl -b 0 -p warning -o short-iso --no-pager -n 3000",
-            "2026-11-26T10:00:00-0700 example-pc kernel: usb 1-2: SerialNumber: ABC123\n2026-11-26T10:00:01-0700 example-pc NetworkManager: wlan0 192.168.1.23 aa:bb:cc:dd:ee:ff joined Cosy Home 5G\n2026-11-26T10:00:02-0700 example-pc pulseaudio: Sam's Headphones lost; mail sam.sample@example.com\n",
+            "journalctl -b 0 -p warning -o short-iso --utc --no-pager -n 3000",
+            "2026-11-26T17:00:00+00:00 example-pc kernel: usb 1-2: SerialNumber: ABC123\n2026-11-26T17:00:01+00:00 example-pc NetworkManager: wlan0 192.168.1.23 aa:bb:cc:dd:ee:ff joined Cosy Home 5G\n2026-11-26T17:00:02+00:00 example-pc pulseaudio: Sam's Headphones lost; mail sam.sample@example.com\n2026-11-26T17:00:03+00:00 example-pc evince[812]: cannot open '/home/sam/Documents/Taxes 2026.pdf'\n2026-11-26T17:00:04+00:00 example-pc rclone[90]: GET https://drive-api.proton.me/drive/shares/AbC123/links?Page=0: 429\n2026-11-26T17:00:05+00:00 example-pc rclone[90]: GET https://drive-api.proton.me/drive/shares/AbC123/links?Page=1: 429\n2026-11-26T17:00:06+00:00 example-pc rclone[90]: GET https://drive-api.proton.me/drive/shares/AbC123/links?Page=2: 429\n2026-11-26T17:00:07+00:00 example-pc rclone[90]: GET https://drive-api.proton.me/drive/shares/AbC123/links?Page=3: 429\n2026-11-26T17:00:08+00:00 example-pc rclone[90]: GET https://drive-api.proton.me/drive/shares/AbC123/links?Page=4: 429\n",
         ),
         ("/usr/bin/selfcheck", "OK  the session for sam on example-pc\n"),
     ])
@@ -109,7 +109,7 @@ fn report(t: &Tree, req: &Request, support: Option<&Support>) -> Vec<File> {
         "XDG_SESSION_TYPE" => Some("wayland".to_string()),
         _ => None,
     };
-    let m = Machine { root: t.0.clone(), run: &run, env: &env, home: t.0.join("home/sam"), now: "2026-11-26 15:30 -07:00".into() };
+    let m = Machine { root: t.0.clone(), run: &run, env: &env, home: PathBuf::from("/home/sam"), now: "2026-11-26 22:30 UTC".into() };
     gather(req, &m, support)
 }
 
@@ -117,6 +117,7 @@ fn support() -> Support {
     Support {
         name: "Example OS".into(),
         email: Some("support@example.com".into()),
+        github: None,
         includes: vec![("Self-check".into(), vec!["/usr/bin/selfcheck".into()])],
     }
 }
@@ -164,6 +165,9 @@ fn nothing_personal_leaves_the_computer() {
             "SERIAL-SHOULD-NOT-APPEAR",
             "Headphones",
             "sam.sample@",
+            "Taxes",
+            "AbC123",
+            "-0700",
         ] {
             assert!(!s.contains(secret), "{} holds {secret:?}:\n{s}", f.name);
         }
@@ -172,7 +176,7 @@ fn nothing_personal_leaves_the_computer() {
     let r = text(&files, "report.txt");
     for want in [
         "Problem report for Example OS\n",
-        "Made: 2026-11-26 15:30 -07:00\n",
+        "Made: 2026-11-26 22:30 UTC\n",
         "About: Sound\n",
         "What happened:\nNo sound after waking. My name is <name>, at <computer>.\n",
         "System: Example OS 1.0.0 (build 7)\n",
@@ -201,6 +205,10 @@ fn nothing_personal_leaves_the_computer() {
     assert!(!d.contains("HDMI-A-1"), "a connector with no screen is left out");
     let j = text(&files, "logs/this-start.txt");
     assert!(j.contains("usb 1-2: SerialNumber: <serial>") && j.contains("wlan0 <ip> <mac> joined <network>"), "{j}");
+    assert!(j.contains("cannot open '/home/<user>/Documents/<file>'"), "a file's name in an own folder goes: {j}");
+    assert!(j.contains("GET https://drive-api.proton.me/… 429"), "a link keeps its site: {j}");
+    assert_eq!(j.matches("drive-api.proton.me").count(), 4, "the repeat shown three times, then counted: {j}");
+    assert!(j.contains("Repeated lines, shown three times above and left out after that:\n2 more times: <computer> rclone[##]: GET https://drive-api.proton.me/… ###\n"), "{j}");
     assert!(text(&files, "logs/last-start.txt").starts_with("(not available: journalctl -b -1"), "a missing command says so");
     assert_eq!(text(&files, "system/self-check.txt"), "OK  the session for <user> on <computer>\n");
 }
@@ -255,8 +263,40 @@ fn the_system_s_integration_names_the_address_and_its_checks() {
         ],
         "in their ids' order; a relative command or an untitled one left out"
     );
+    assert_eq!(s.github, None);
     let odd = yggdrasil_conf::integrations::Integration::parse(Path::new("/x/r.conf"), "kind = report\nemail = not an address\n").unwrap();
     assert_eq!(Support::from(&odd).email, None);
+    let gh = |v: &str| {
+        let i =
+            yggdrasil_conf::integrations::Integration::parse(Path::new("/x/r.conf"), &format!("kind = report\ngithub = {v}\n")).unwrap();
+        Support::from(&i).github
+    };
+    assert_eq!(gh("https://github.com/Example-Org/Example_OS/").as_deref(), Some("https://github.com/Example-Org/Example_OS"));
+    for bad in [
+        "http://github.com/a/b",
+        "https://gitlab.com/a/b",
+        "https://github.com/a",
+        "https://github.com/a/b/issues",
+        "https://github.com/a/b?x=1",
+    ] {
+        assert_eq!(gh(bad), None, "{bad}");
+    }
+}
+
+#[test]
+fn the_message_to_paste_says_what_happened_without_names() {
+    let t = computer("message");
+    let cmds = commands();
+    let run = |argv: &[&str]| cmds.get(argv.join(" ").as_str()).map(|s| s.to_string());
+    let env = |k: &str| (k == "USER").then(|| "sam".to_string());
+    let m = Machine { root: t.0.clone(), run: &run, env: &env, home: PathBuf::from("/home/sam"), now: String::new() };
+    let req = Request { area: "Sound".into(), text: "  No sound on example-pc after sleep.\n".into(), pictures: vec![] };
+    let (subject, message) = message(&req, &m, "exampleos-report-2026-11-26-2230.zip");
+    assert_eq!(subject, "Problem report: Sound");
+    assert_eq!(
+        message,
+        "No sound on <computer> after sleep.\n\nAbout: Sound\nSystem: Example OS 1.0.0\n\nThe full report is the attached file exampleos-report-2026-11-26-2230.zip."
+    );
 }
 
 #[test]

@@ -58,6 +58,7 @@ declare -A ACTIONS=(
     [minos-settings]="tap 382 155; wait 1; tap 404 341; wait 2"
     [settings-cloud-drives-add]="tap 769 603; wait 2; tap 940 653; wait 1"
     [settings-cloud-drive-page]="tap 1435 371; wait 2"
+    [settings-report-problem]="wait 2; pointer 1100 600; scroll 400; wait 1; scroll 400; wait 2; tap 1394 748; wait 2; type No sound after the computer wakes up from sleep.; wait 1; tap 773 709; wait 12"
 )
 shots() {
     shot desktop                        desktop panel desktop
@@ -119,6 +120,7 @@ shots() {
     shot settings-date-time             desktop settings datetime system
     shot settings-date-time-light       desktop settings datetime system
     shot settings-about                 desktop settings about system
+    shot settings-report-problem        desktop settings about system
     shot minos-explorer                 desktop app minos /home/alex/Documents
     shot minos-privacy-menu             desktop app minos /home/alex/Music
     shot minos-top                      desktop app minos /home/alex/Documents

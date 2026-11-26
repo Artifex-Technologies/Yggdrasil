@@ -1,14 +1,15 @@
 //! About > Report a problem: a window where the person says what went wrong and may add recent screenshots, then gets one
 //! zip (the yggdrasil-report library: what the computer is, recent errors, nothing personal) and sends it to the system's
-//! support with Email it. Where it goes comes from the operating system's `kind = report` integration; without one the file
-//! is made all the same, for whoever helps them.
+//! support: Email it (a mail program with the zip attached), or the address, subject and message to copy into any mail
+//! service, or, for someone with a GitHub account, a public issue. Where it goes comes from the operating system's
+//! `kind = report` integration; without one the file is made all the same, for whoever helps them.
 
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime};
 
 use eframe::egui::{self, vec2, RichText};
-use yggdrasil_report::{Mail, Request, Support, AREAS, WHAT_IT_HOLDS};
+use yggdrasil_report::{Made, Mail, Request, Support, AREAS, WHAT_IT_HOLDS};
 
 use crate::theme::Palette;
 use crate::ui;
@@ -21,9 +22,11 @@ pub struct ReportUi {
     /// Recent screenshots (Pictures/Screenshots, the last day), each ticked to go in the report or not.
     pictures: Vec<(PathBuf, bool)>,
     support: Option<Support>,
-    making: Option<mpsc::Receiver<Result<PathBuf, String>>>,
-    made: Option<Result<PathBuf, String>>,
+    making: Option<mpsc::Receiver<Result<Made, String>>>,
+    made: Option<Result<Made, String>>,
     mail: Option<Mail>,
+    /// Open a GitHub issue was pressed (and whether the browser opened).
+    github: Option<bool>,
     /// The text box takes the keyboard when the window opens.
     focus: bool,
 }
@@ -137,9 +140,9 @@ impl ReportUi {
         });
     }
 
-    fn result(&mut self, ui: &mut egui::Ui, pal: &Palette, made: Result<PathBuf, String>) {
-        let path = match made {
-            Ok(p) => p,
+    fn result(&mut self, ui: &mut egui::Ui, pal: &Palette, made: Result<Made, String>) {
+        let made = match made {
+            Ok(m) => m,
             Err(e) => {
                 ui.colored_label(pal.red, format!("The report could not be made: {e}"));
                 ui.add_space(8.0);
@@ -149,6 +152,7 @@ impl ReportUi {
                 return;
             }
         };
+        let path = made.path.clone();
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let home = std::env::var("HOME").map(PathBuf::from).ok();
         let folder = match path.parent() {
@@ -161,38 +165,62 @@ impl ReportUi {
         ui.label(format!("Saved as {name} in {folder} ({}).", kib(size)));
         ui.add_space(8.0);
         let email = self.support.as_ref().and_then(|s| s.email.clone());
-        match (&email, self.mail) {
-            (Some(to), None) => {
-                ui.label(format!("Send it to {to} so the problem can be fixed."));
+        let github = self.support.as_ref().and_then(|s| s.github.clone());
+        if let Some(to) = &email {
+            if ui::action(ui, pal, &format!("Email it to {to}")).clicked() {
+                self.mail = Some(yggdrasil_report::email(to, &path, &made.subject, &made.message));
             }
-            (Some(to), Some(Mail::Attached)) => {
-                ui.label(format!("Your mail app opened a message to {to} with the report attached: press Send there."));
+            let said = match self.mail {
+                None => None,
+                Some(Mail::Attached) => Some("Your mail app opened a message with the report attached: press Send there.".to_string()),
+                Some(Mail::AttachYourself) => {
+                    Some(format!("A new message opened, and the folder with the report: attach {name} to it, then send it."))
+                }
+                Some(Mail::NoMailApp) => Some("No mail app is set up here: copy these into any mail service instead.".to_string()),
+            };
+            if let Some(s) = said {
+                ui.add(egui::Label::new(RichText::new(s).color(pal.dim)).wrap());
             }
-            (Some(to), Some(Mail::AttachYourself)) => {
-                ui.add(
-                    egui::Label::new(format!(
-                        "A new message to {to} opened, and the folder with the report: attach {name} to the message, then send it."
-                    ))
-                    .wrap(),
-                );
+            ui.add_space(8.0);
+            ui.label(RichText::new("Or paste these into any mail service, and attach the file:").strong());
+            copy_line(ui, pal, "To", to);
+            copy_line(ui, pal, "Subject", &made.subject);
+            ui.horizontal(|ui| {
+                ui.add_sized(vec2(60.0, 18.0), egui::Label::new(RichText::new("Message").color(pal.dim)));
+                if ui::quiet(ui, pal, "Copy").clicked() {
+                    ui.ctx().copy_text(made.message.clone());
+                }
+            });
+            ui.add(egui::TextEdit::multiline(&mut made.message.as_str()).desired_rows(4).desired_width(f32::INFINITY));
+        } else {
+            ui.add(egui::Label::new("Send this file to whoever helps you with this computer.").wrap());
+        }
+        if let Some(repo) = &github {
+            ui.add_space(10.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new("Have a GitHub account? You can open an issue there instead. GitHub issues are public, and they show your account's name.")
+                        .color(pal.dim),
+                )
+                .wrap(),
+            );
+            if ui::quiet(ui, pal, "Open a GitHub issue").clicked() {
+                self.github = Some(yggdrasil_report::github_issue(repo, &made.subject, &made.message, &path));
             }
-            (Some(to), Some(Mail::NoMailApp)) => {
-                ui.add(egui::Label::new(format!("No mail app is set up here. Send {name} to {to} from any mail or chat app.")).wrap());
-            }
-            (None, _) => {
-                ui.add(egui::Label::new("Send this file to whoever helps you with this computer.").wrap());
+            match self.github {
+                Some(true) => {
+                    ui.label(
+                        RichText::new(format!("Your browser opened the issue: drag {name} into it to attach the report.")).color(pal.dim),
+                    );
+                }
+                Some(false) => {
+                    ui.colored_label(pal.red, "No browser could be opened.");
+                }
+                None => {}
             }
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if let Some(to) = &email {
-                if ui::action(ui, pal, &format!("Email it to {to}")).clicked() {
-                    let subject = format!("Problem report: {}", AREAS[self.area]);
-                    let said: String = self.text.trim().chars().take(1000).collect();
-                    let body = format!("{said}\n\n(The full report is the attached file, {name}.)");
-                    self.mail = Some(yggdrasil_report::email(to, &path, &subject, &body));
-                }
-            }
             if ui::quiet(ui, pal, "Show the file").clicked() {
                 yggdrasil_report::show(&path);
             }
@@ -201,6 +229,17 @@ impl ReportUi {
             }
         });
     }
+}
+
+/// One value to copy: its title, the value (selectable) and a Copy button.
+fn copy_line(ui: &mut egui::Ui, pal: &Palette, title: &str, value: &str) {
+    ui.horizontal(|ui| {
+        ui.add_sized(vec2(60.0, 18.0), egui::Label::new(RichText::new(title).color(pal.dim)));
+        ui.add(egui::TextEdit::singleline(&mut &*value).desired_width(280.0));
+        if ui::quiet(ui, pal, "Copy").clicked() {
+            ui.ctx().copy_text(value.to_string());
+        }
+    });
 }
 
 fn kib(bytes: u64) -> String {

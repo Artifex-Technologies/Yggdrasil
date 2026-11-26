@@ -256,6 +256,7 @@ options, the browser and optional-part lists) are in [INSTALLER.md](INSTALLER.md
 kind = report
 name = Labyrinth OS                                       # whose support it is
 email = support@artifextech.sh                            # where Email it sends the report
+github = https://github.com/Artifex-Technologies/Labyrinth_OS   # optional: Open a GitHub issue, for someone with an account
 include.a_selfcheck = Self-check | /usr/bin/labyrinth-selfcheck
 include.b_packages = Packages | /usr/bin/pacman -Q
 ```
@@ -266,10 +267,17 @@ memory windows and PCIe link, the connected screens' makers, names and modes, di
 states), the warnings of this start and the errors of the last one, the week's crashes, the session's own logs (the ends of the
 state folder's `*.log` and Hyprland's), and each `include.ID` command's output as `system/TITLE.txt`, in the IDs' order. Every
 text is scrubbed first: the computer's name, the accounts' names and full names, saved networks' and paired Bluetooth devices'
-names, IPv4, IPv6 and hardware addresses, e-mail addresses and serial numbers become `<computer>`, `<user>`, `<ip>` and the like;
-a picture goes as it is. The zip goes to the Downloads folder; Email it opens the mail program with it attached (Thunderbird,
-Evolution, KMail, Geary and the like, through `xdg-email --attach`) or, for webmail, a new message and the folder to attach it
-from. Without this file the report is made all the same, for whoever helps the person.
+names, the names of files in the person's own folders (Documents, Pictures ...: `<file>`), web links' paths (the site stays:
+`https://drive-api.proton.me/…`), IPv4, IPv6 and hardware addresses, e-mail addresses and serial numbers become `<computer>`,
+`<user>`, `<ip>` and the like; times are UTC (a clock's offset tells where someone is), the commands speak English, and a line
+repeated in the journal is shown three times and then counted. A picture goes as it is. The zip goes to the Downloads folder.
+Then: Email it opens the mail program with it attached (Thunderbird, Evolution, KMail, Geary and the like, through
+`xdg-email --attach`) or, for webmail, a new message and the folder to attach it from; the address, a subject and a message (the
+person's words, what it is about, the system) are there to copy into any mail service; and with `github`, Open a GitHub issue
+opens the repository's new issue page with the subject and message filled in (an issue is public, under the person's
+account, which the window says). Without this file the report is made all the same, for whoever helps the person.
+
+![Report a problem, the report made](../assets/screenshots/settings-report-problem.png)
 
 ### `settings-page` (an OS page in Settings)
 

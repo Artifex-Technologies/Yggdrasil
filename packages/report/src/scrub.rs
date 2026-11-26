@@ -1,12 +1,15 @@
 //! What a report leaves out: the names that make a person or their home recognisable (the accounts' names and full names, the
-//! computer's name, saved networks' and paired devices' names, found on this computer), and anything shaped like a network
-//! address (IPv4, IPv6, a hardware address), an e-mail address or a serial number. The device's make, model and parts stay:
-//! they are what a fix needs.
+//! computer's name, saved networks' and paired devices' names, found on this computer), the names of the files in their own
+//! folders (Documents, Pictures ...), the paths of web links (the site stays), and anything shaped like a network address
+//! (IPv4, IPv6, a hardware address), an e-mail address or a serial number. The device's make, model and parts stay: they are
+//! what a fix needs.
 
 /// The names to take out, each with its stand-in, longest first (so a home folder's path goes before the account's name).
 #[derive(Debug, Default, Clone)]
 pub struct Personal {
     words: Vec<(String, &'static str)>,
+    /// The person's own folders (absolute paths): a file's name in one becomes <file>.
+    folders: Vec<String>,
 }
 
 impl Personal {
@@ -20,12 +23,25 @@ impl Personal {
         self.words.push((w.to_string(), stand_in));
         self.words.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
     }
+
+    /// A folder of the person's own files (Documents, Pictures ...): what is in it is named <file> in a report.
+    pub fn folder(&mut self, path: &str) {
+        let p = path.trim().trim_end_matches('/');
+        if p.len() > 1 && !self.folders.iter().any(|f| f == p) {
+            self.folders.push(p.to_string());
+        }
+    }
 }
 
 /// `text` with the names in `p` and every address, e-mail address and serial number replaced by a stand-in.
 pub fn scrub(text: &str, p: &Personal) -> String {
-    // addresses first, whole (an e-mail address with the account's name in it goes as one)
-    let out = tokens(text, mac, "<mac>");
+    // links and files first (a link's or a file's name can hold anything), then addresses whole (an e-mail address with the
+    // account's name in it goes as one), then the names
+    let mut out = links(text);
+    for f in &p.folders {
+        out = files_in(&out, f);
+    }
+    let out = tokens(&out, mac, "<mac>");
     let out = tokens(&out, ipv6, "<ip>");
     let out = tokens(&out, ipv4, "<ip>");
     let out = tokens(&out, email, "<email>");
@@ -33,6 +49,58 @@ pub fn scrub(text: &str, p: &Personal) -> String {
     for (w, stand_in) in &p.words {
         out = replace_word(&out, w, stand_in);
     }
+    out
+}
+
+/// Web and file links keep their scheme and site and lose the rest: https://drive-api.proton.me/drive/shares/ID?x=y becomes
+/// https://drive-api.proton.me/…; a file:// link becomes file://….
+fn links(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("://") {
+        let scheme_start = rest[..i].rfind(|c: char| !c.is_ascii_alphanumeric() && c != '+' && c != '-').map_or(0, |s| s + 1);
+        if scheme_start == i {
+            out.push_str(&rest[..i + 3]);
+            rest = &rest[i + 3..];
+            continue;
+        }
+        out.push_str(&rest[..i + 3]);
+        let after = &rest[i + 3..];
+        let stop = |c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | ')' | ']' | '}' | '`' | ',');
+        let end = after.find(stop).unwrap_or(after.len());
+        let link = &after[..end];
+        let file = rest[scheme_start..i].eq_ignore_ascii_case("file");
+        let host_end = if file { 0 } else { link.find(['/', '?', '#']).unwrap_or(link.len()) };
+        out.push_str(&link[..host_end]);
+        if host_end < link.len() {
+            out.push_str(if file { "…" } else { "/…" });
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The names of what is inside `folder` become <file>: "/home/sam/Documents/Taxes 2026.pdf" -> "/home/sam/Documents/<file>"
+/// (to the closing quote when the path is quoted, else to the next space).
+fn files_in(text: &str, folder: &str) -> String {
+    let needle = format!("{folder}/");
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find(&needle) {
+        let quote = rest[..i].chars().next_back().filter(|c| matches!(c, '"' | '\''));
+        out.push_str(&rest[..i + needle.len()]);
+        let after = &rest[i + needle.len()..];
+        let end = match quote {
+            Some(q) => after.find(q).unwrap_or(after.len()),
+            None => after.find(|c: char| c.is_whitespace() || matches!(c, ')' | ']' | ',' | ';')).unwrap_or(after.len()),
+        };
+        if end > 0 {
+            out.push_str("<file>");
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
     out
 }
 
@@ -224,6 +292,22 @@ mod tests {
         assert_eq!(scrub(units, &me()), units);
         let modes = "drm: Mode 0: 3440x1440@174.96Hz (preferred), 2560x1440@59.95";
         assert_eq!(scrub(modes, &me()), modes, "a screen's mode is no e-mail address");
+    }
+
+    #[test]
+    fn links_keep_their_site_and_files_in_own_folders_lose_their_names() {
+        let mut p = me();
+        p.folder("/home/sam/Documents");
+        p.folder("/home/sam/Pictures/");
+        let t = "rclone: GET https://drive-api.proton.me/drive/shares/AbC123/links?Page=0 failed; see https://rclone.org.";
+        assert_eq!(scrub(t, &p), "rclone: GET https://drive-api.proton.me/… failed; see https://rclone.org.");
+        assert_eq!(scrub("opened file:///home/sam/Documents/a.txt", &p), "opened file://…");
+        let f = "evince: cannot open '/home/sam/Documents/Taxes 2026.pdf' and /home/sam/Pictures/me.png, kept /home/sam/Games/x.exe";
+        assert_eq!(
+            scrub(f, &p),
+            "evince: cannot open '/home/<user>/Documents/<file>' and /home/<user>/Pictures/<file>, kept /home/<user>/Games/x.exe"
+        );
+        assert_eq!(scrub("ftp: no scheme ://here", &p), "ftp: no scheme ://here");
     }
 
     #[test]

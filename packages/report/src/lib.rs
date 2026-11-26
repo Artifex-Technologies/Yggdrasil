@@ -1,8 +1,9 @@
 //! Report a problem: the zip a person sends to their system's support when something goes wrong, made by Settings > About >
 //! Report a problem. It holds what the person wrote, what the computer is (make and model, processor, memory, graphics cards
 //! and their drivers, screens, disks, sound), the software's versions, recent errors and what the operating system adds (its
-//! `kind = report` integration: where reports go and its own checks). Names, network addresses, Wi-Fi names and serial
-//! numbers are taken out first (`scrub`); pictures the person adds go as they are.
+//! `kind = report` integration: where reports go and its own checks). Names, the files in the person's own folders, links'
+//! paths, network addresses, Wi-Fi names and serial numbers are taken out first (`scrub`), times are UTC (a clock's offset
+//! tells where someone is) and the commands speak English; pictures the person adds go as they are.
 
 pub mod scrub;
 
@@ -28,7 +29,7 @@ pub const AREAS: [&str; 10] = [
 ];
 
 /// What the form says goes in a report.
-pub const WHAT_IT_HOLDS: &str = "The report holds what you write here and what is needed to fix the problem: this computer's make and model, its processor, memory, graphics cards and drivers, screens, disks and sound, the software's versions, and recent error messages. Your name, the computer's name, network addresses, Wi-Fi names and serial numbers are taken out. Pictures you add go as they are.";
+pub const WHAT_IT_HOLDS: &str = "The report holds what you write here and what is needed to fix the problem: this computer's make and model, its processor, memory, graphics cards and drivers, screens, disks and sound, the software's versions, and recent error messages. Your name, the computer's name, your files' names, the web addresses you visit, network addresses, Wi-Fi names and serial numbers are taken out. Pictures you add go as they are.";
 
 /// The most of one log kept (its end, where the problem is).
 const LOG_TAIL: usize = 400 * 1024;
@@ -40,6 +41,8 @@ pub struct Support {
     pub name: String,
     /// Where Email it sends the report.
     pub email: Option<String>,
+    /// A GitHub repository (https://github.com/OWNER/REPO) where someone with an account may open an issue instead.
+    pub github: Option<String>,
     /// More files for the report: (title, command), each command's output as `system/<title>.txt`.
     pub includes: Vec<(String, Vec<String>)>,
 }
@@ -56,7 +59,20 @@ impl Support {
             })
             .collect();
         let email = i.get("email").filter(|e| e.contains('@') && !e.contains(char::is_whitespace)).map(str::to_string);
-        Support { name: i.get("name").unwrap_or("").to_string(), email, includes }
+        let github = i
+            .get("github")
+            .map(|g| g.trim_end_matches('/'))
+            .filter(|g| {
+                g.strip_prefix("https://github.com/").is_some_and(|r| {
+                    let parts: Vec<&str> = r.split('/').collect();
+                    parts.len() == 2
+                        && parts
+                            .iter()
+                            .all(|x| !x.is_empty() && x.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+                })
+            })
+            .map(str::to_string);
+        Support { name: i.get("name").unwrap_or("").to_string(), email, github, includes }
     }
 
     /// The operating system's, if it has one.
@@ -79,15 +95,20 @@ pub struct Machine<'a> {
     pub root: PathBuf,
     pub run: &'a dyn Fn(&[&str]) -> Option<String>,
     pub env: &'a dyn Fn(&str) -> Option<String>,
-    /// The account's home folder.
+    /// The account's home folder (read under `root`, as every other path).
     pub home: PathBuf,
-    /// When, as the report says it ("2026-11-26 15:30 -07:00").
+    /// When, as the report says it, in UTC ("2026-11-26 22:30 UTC").
     pub now: String,
 }
 
 impl Machine<'_> {
     fn read(&self, path: &str) -> String {
-        std::fs::read_to_string(self.root.join(path.trim_start_matches('/'))).map(|s| s.trim().to_string()).unwrap_or_default()
+        std::fs::read_to_string(self.under(Path::new(path))).map(|s| s.trim().to_string()).unwrap_or_default()
+    }
+
+    /// Where `path` (as this computer names it) is under `root`.
+    fn under(&self, path: &Path) -> PathBuf {
+        self.root.join(path.strip_prefix("/").unwrap_or(path))
     }
 
     fn sh(&self, argv: &[&str]) -> String {
@@ -119,6 +140,20 @@ pub fn personal(m: &Machine) -> Personal {
     if let Some(user) = (m.env)("USER") {
         p.add(&user, "<user>");
     }
+    // the person's own folders, as xdg-user-dir names them (else their English names in the home folder)
+    for (key, name) in [
+        ("DESKTOP", "Desktop"),
+        ("DOCUMENTS", "Documents"),
+        ("DOWNLOAD", "Downloads"),
+        ("MUSIC", "Music"),
+        ("PICTURES", "Pictures"),
+        ("VIDEOS", "Videos"),
+        ("PUBLICSHARE", "Public"),
+        ("TEMPLATES", "Templates"),
+    ] {
+        let dir = (m.run)(&["xdg-user-dir", key]).map(|s| s.trim().to_string()).filter(|d| d.starts_with('/') && Path::new(d) != m.home);
+        p.folder(&dir.unwrap_or_else(|| m.home.join(name).to_string_lossy().into_owned()));
+    }
     for line in (m.run)(&["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"]).unwrap_or_default().lines() {
         if let Some((name, kind)) = line.rsplit_once(':') {
             if !matches!(kind, "loopback" | "bridge") {
@@ -142,8 +177,14 @@ pub fn gather(req: &Request, m: &Machine, support: Option<&Support>) -> Vec<File
     let mut files = vec![
         text("report.txt", summary(req, m, support)),
         text("device.txt", device(m)),
-        text("logs/this-start.txt", tail(m.sh(&["journalctl", "-b", "0", "-p", "warning", "-o", "short-iso", "--no-pager", "-n", "3000"]))),
-        text("logs/last-start.txt", tail(m.sh(&["journalctl", "-b", "-1", "-p", "err", "-o", "short-iso", "--no-pager", "-n", "1000"]))),
+        text(
+            "logs/this-start.txt",
+            tail(fold_repeats(m.sh(&["journalctl", "-b", "0", "-p", "warning", "-o", "short-iso", "--utc", "--no-pager", "-n", "3000"]))),
+        ),
+        text(
+            "logs/last-start.txt",
+            tail(fold_repeats(m.sh(&["journalctl", "-b", "-1", "-p", "err", "-o", "short-iso", "--utc", "--no-pager", "-n", "1000"]))),
+        ),
         text("logs/crashes.txt", m.sh(&["coredumpctl", "list", "--no-pager", "--since", "-7d"])),
     ];
     for (name, body) in session_logs(m) {
@@ -389,17 +430,45 @@ fn edid_name(e: &[u8]) -> String {
 fn session_logs(m: &Machine) -> Vec<(String, String)> {
     let mut out = vec![];
     let state = (m.env)("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|| m.home.join(".local/state")).join("yggdrasil");
-    let mut logs: Vec<PathBuf> = std::fs::read_dir(&state)
+    let mut logs: Vec<PathBuf> = std::fs::read_dir(m.under(&state))
         .map(|r| r.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "log")).collect())
         .unwrap_or_default();
     logs.sort();
     if let (Some(run), Some(sig)) = ((m.env)("XDG_RUNTIME_DIR"), (m.env)("HYPRLAND_INSTANCE_SIGNATURE")) {
-        logs.push(Path::new(&run).join("hypr").join(sig).join("hyprland.log"));
+        logs.push(m.under(&Path::new(&run).join("hypr").join(sig).join("hyprland.log")));
     }
     for l in logs {
         if let Ok(data) = std::fs::read(&l) {
             let name = l.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             out.push((format!("{name}.txt"), tail(String::from_utf8_lossy(&data).into_owned())));
+        }
+    }
+    out
+}
+
+/// A log without its repeats: a message seen three times (its time and numbers aside) is not shown again, and the end says
+/// how often each left-out one came (one program can fill the journal with the same line thousands of times).
+fn fold_repeats(log: String) -> String {
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut folded: Vec<String> = vec![];
+    let mut out = String::with_capacity(log.len());
+    for line in log.lines() {
+        // the time (first field) and every number aside
+        let key: String = line.split_once(' ').map_or(line, |(_, r)| r).chars().map(|c| if c.is_ascii_digit() { '#' } else { c }).collect();
+        let n = seen.entry(key.clone()).or_insert(0);
+        *n += 1;
+        if *n <= 3 {
+            out.push_str(line);
+            out.push('\n');
+        } else if *n == 4 {
+            folded.push(key);
+        }
+    }
+    if !folded.is_empty() {
+        out.push_str("\nRepeated lines, shown three times above and left out after that:\n");
+        for k in folded {
+            let short: String = k.chars().take(200).collect();
+            out.push_str(&format!("{} more times: {short}\n", seen[&k] - 3));
         }
     }
     out
@@ -452,7 +521,16 @@ pub fn zip(files: &[File], folder: &str) -> std::io::Result<Vec<u8>> {
 /// takes longer than `limit`.
 pub fn run(argv: &[&str], limit: Duration) -> Option<String> {
     let (prog, args) = argv.split_first()?;
-    let mut child = Command::new(prog).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    // UTC times (a clock's offset tells where someone is) and English words, whatever the person's settings
+    let mut child = Command::new(prog)
+        .args(args)
+        .env("TZ", "UTC")
+        .env("LC_ALL", "C.UTF-8")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut s = Vec::new();
@@ -474,18 +552,42 @@ pub fn run(argv: &[&str], limit: Duration) -> Option<String> {
     reader.join().ok().map(|s| String::from_utf8_lossy(&s).into_owned())
 }
 
-/// Makes the report on this computer and saves it in the Downloads folder (else the home folder); its path.
-pub fn make(req: &Request, support: Option<&Support>) -> Result<PathBuf, String> {
+/// A report made: the zip, and the subject and message to send with it (the person's words scrubbed, what it is about and
+/// the system), for any mail service or a GitHub issue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Made {
+    pub path: PathBuf,
+    pub subject: String,
+    pub message: String,
+}
+
+/// The subject and message for a report named `file`.
+pub fn message(req: &Request, m: &Machine, file: &str) -> (String, String) {
+    let p = personal(m);
+    let os = os_release(m);
+    let get = |k: &str| os.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone()).unwrap_or_default();
+    let area = if req.area.is_empty() { "Something else" } else { &req.area };
+    let system =
+        [if get("PRETTY_NAME").is_empty() { get("NAME") } else { get("PRETTY_NAME") }, get("VERSION_ID")].join(" ").trim().to_string();
+    let said = scrub::scrub(req.text.trim(), &p);
+    (
+        format!("Problem report: {area}"),
+        format!("{said}\n\nAbout: {area}\nSystem: {system}\n\nThe full report is the attached file {file}."),
+    )
+}
+
+/// Makes the report on this computer and saves it in the Downloads folder (else the home folder).
+pub fn make(req: &Request, support: Option<&Support>) -> Result<Made, String> {
     let run_cmd = |argv: &[&str]| run(argv, Duration::from_secs(15));
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let home = PathBuf::from(std::env::var("HOME").map_err(|_| "no home folder".to_string())?);
-    let now = jiff::Zoned::now();
+    let now = jiff::Timestamp::now();
     let m = Machine {
         root: PathBuf::from("/"),
         run: &run_cmd,
         env: &env,
         home: home.clone(),
-        now: now.strftime("%Y-%m-%d %H:%M %:z").to_string(),
+        now: now.strftime("%Y-%m-%d %H:%M UTC").to_string(),
     };
     let folder = format!("{}-report-{}", os_id(&m), now.strftime("%Y-%m-%d-%H%M"));
     let data = zip(&gather(req, &m, support), &folder).map_err(|e| format!("the report could not be packed: {e}"))?;
@@ -495,7 +597,8 @@ pub fn make(req: &Request, support: Option<&Support>) -> Result<PathBuf, String>
         .unwrap_or_else(|| home.clone());
     let path = downloads.join(format!("{folder}.zip"));
     std::fs::write(&path, data).map_err(|e| format!("the report could not be saved in {}: {e}", downloads.display()))?;
-    Ok(path)
+    let (subject, message) = message(req, &m, &format!("{folder}.zip"));
+    Ok(Made { path, subject, message })
 }
 
 /// How Email it went.
@@ -534,6 +637,19 @@ pub fn email(to: &str, report: &Path, subject: &str, body: &str) -> Mail {
     }
     show(report);
     Mail::AttachYourself
+}
+
+/// Opens a new issue on `repo` (https://github.com/OWNER/REPO) in the browser with the subject and message filled in, and
+/// shows the report's folder to drag the file in from. On GitHub the issue is public, under the person's account.
+pub fn github_issue(repo: &str, subject: &str, message: &str, report: &Path) -> bool {
+    let name = report.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let body = format!("{message}\n\n(Drag {name} from the folder that opened into this box to attach it.)");
+    let url = format!("{repo}/issues/new?title={}&body={}", encode(subject), encode(&body));
+    let opened = Command::new("xdg-open").arg(url).spawn().is_ok();
+    if opened {
+        show(report);
+    }
+    opened
 }
 
 /// Shows the report's folder in the file manager.
