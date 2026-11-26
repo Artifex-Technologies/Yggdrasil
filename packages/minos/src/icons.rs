@@ -29,6 +29,14 @@ pub enum Icon {
     Home,
     Computer,
     Cloud,
+    /// A transfer's file states (the transfer panel): put in place, failed, left alone, waiting its turn.
+    Tick,
+    Failed,
+    Skipped,
+    Waiting,
+    /// Collapse (down) and expand (up), for the transfer panel.
+    ChevronDown,
+    ChevronUp,
     Pin,
     SortUp,
     SortDown,
@@ -204,6 +212,33 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             p.circle_filled(f.p(0.7, 0.58), f.size * 0.2, color);
             p.rect_filled(f.rect(0.34, 0.55, 0.7, 0.78), CornerRadius::same(2), color);
         }
+        Icon::Tick => {
+            p.circle_filled(f.p(0.5, 0.5), f.size * 0.42, color);
+            p.add(Shape::line(
+                [(0.3, 0.52), (0.44, 0.66), (0.7, 0.38)].iter().map(|&(x, y)| f.p(x, y)).collect(),
+                Stroke::new((f.size * 0.1).max(1.4), on(color)),
+            ));
+        }
+        Icon::Failed => {
+            p.circle_filled(f.p(0.5, 0.5), f.size * 0.42, color);
+            let k = Stroke::new((f.size * 0.1).max(1.4), on(color));
+            p.line_segment([f.p(0.36, 0.36), f.p(0.64, 0.64)], k);
+            p.line_segment([f.p(0.64, 0.36), f.p(0.36, 0.64)], k);
+        }
+        Icon::Skipped => {
+            p.circle_stroke(f.p(0.5, 0.5), f.size * 0.38, s);
+            line(p, &f, &[(0.33, 0.5), (0.67, 0.5)], color);
+        }
+        Icon::Waiting => {
+            p.circle_stroke(f.p(0.5, 0.5), f.size * 0.38, s);
+            line(p, &f, &[(0.5, 0.28), (0.5, 0.5), (0.66, 0.6)], color);
+        }
+        Icon::ChevronDown => {
+            line(p, &f, &[(0.25, 0.4), (0.5, 0.64), (0.75, 0.4)], color);
+        }
+        Icon::ChevronUp => {
+            line(p, &f, &[(0.25, 0.6), (0.5, 0.36), (0.75, 0.6)], color);
+        }
         Icon::SortUp => {
             p.add(Shape::convex_polygon(vec![f.p(0.2, 0.68), f.p(0.8, 0.68), f.p(0.5, 0.28)], color, Stroke::NONE));
         }
@@ -233,6 +268,29 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             p.circle_filled(f.p(0.5, 0.4), f.size * 0.2, color);
             line(p, &f, &[(0.5, 0.55), (0.5, 0.9)], color);
         }
+    }
+}
+
+/// A ring filled clockwise from the top to `frac` (0 to 1) over a faint full ring: a file being copied, how far it is.
+pub fn paint_ring(p: &Painter, rect: Rect, frac: f32, color: Color32, track: Color32) {
+    let f = Frame::new(rect);
+    let st = Stroke::new((f.size * 0.12).max(1.5), color);
+    p.circle_stroke(f.p(0.5, 0.5), f.size * 0.38, Stroke::new(st.width, track));
+    let frac = frac.clamp(0.0, 1.0);
+    if frac > 0.0 {
+        let steps = ((frac * 32.0).ceil() as usize).max(2);
+        let pts = arc(0.5, 0.5, 0.38, -90.0, -90.0 + 360.0 * frac, steps);
+        p.add(Shape::line(pts.iter().map(|&(x, y)| f.p(x, y)).collect(), st));
+    }
+}
+
+/// White or near-black, whichever reads on `c` (the mark inside a filled circle).
+fn on(c: Color32) -> Color32 {
+    let lum = 0.2126 * c.r() as f32 + 0.7152 * c.g() as f32 + 0.0722 * c.b() as f32;
+    if lum > 150.0 {
+        Color32::from_rgb(24, 20, 36)
+    } else {
+        Color32::WHITE
     }
 }
 
