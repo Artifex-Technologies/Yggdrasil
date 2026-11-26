@@ -50,6 +50,8 @@ skrifa = "0.44"
 tiny-skia = "0.12"
 # Date & time's map and short list of time zones (shared with the installer)
 yggdrasil-tzpicker = { path = "../tzpicker" }
+# Apps > Minos > Cloud drives: the drives Minos lists under Cloud Storage, their rclone remotes and mount units (shared with Minos)
+yggdrasil-clouddrives = { path = "../clouddrives" }
 
 [dev-dependencies]
 # the Razer tests talk to a made-up daemon over a socket pair (peer to peer: no bus)

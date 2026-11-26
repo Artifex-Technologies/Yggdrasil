@@ -109,6 +109,7 @@ impl App {
                 match self.app_tab {
                     1 => l.push("Optional software".into()),
                     2 => l.push("Minos".into()),
+                    3 => l.extend(["Minos".into(), "Cloud drives".into()]),
                     _ => {}
                 }
                 if let Some(id) = &self.app_sel {
@@ -198,7 +199,8 @@ impl App {
                     self.app_sel = None;
                     self.app_confirm = None;
                 } else {
-                    self.app_tab = 0;
+                    // Cloud drives is a page of Minos's
+                    self.app_tab = if self.app_tab == 3 { 2 } else { 0 };
                 }
             }
             Page::Peripherals => match (self.peri.sub, self.key_sub) {

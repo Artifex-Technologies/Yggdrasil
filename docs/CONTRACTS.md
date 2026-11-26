@@ -40,6 +40,15 @@ yggdrasil-theme's fontconfig file, linked into `/etc/fonts/conf.d` by fontconfig
 is read before it and wins; it wins over the distribution's `60-latin.conf`.
 Used by: every program that asks fontconfig for a generic family on a system with yggdrasil-theme (Labyrinth OS, LykanOS).
 
+### The cloud drives list (`~/.config/yggdrasil/cloud-drives.conf`) and their mount units
+
+Settings > Apps > Minos > Cloud drives writes it and Minos reads it (it watches the folder, so its Cloud Storage section follows
+without a restart); both through `packages/clouddrives`. `[remote NAME]` sections (`type` = rclone's type, `mount` = the
+folder) are rclone remotes; `[folder NAME]` sections (`path`) are folders a sync app keeps. A remote is mounted by the user unit
+`~/.config/systemd/user/yggdrasil-cloud-NAME.service` (written when Mount or "Mount at sign-in" is first used), except Proton
+Drive's remote `proton`, which uses `proton-drive.service` shipped with Minos. Format and rules: [packages/clouddrives/README.md](../packages/clouddrives/README.md).
+Used by: Minos, Settings.
+
 ### The `yggdrasil-ui` crate (a git dependency)
 
 The egui apps' shared look: palette and accent, widgets, the system font, accessibility (`theme::apply_accessibility`),

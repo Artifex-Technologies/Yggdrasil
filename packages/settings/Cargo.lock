@@ -4513,6 +4513,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-clouddrives"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "yggdrasil-conf",
+]
+
+[[package]]
 name = "yggdrasil-colorpicker"
 version = "0.1.0"
 
@@ -4563,6 +4571,7 @@ dependencies = [
  "skrifa",
  "tiny-skia 0.12.0",
  "yggdrasil-appusage",
+ "yggdrasil-clouddrives",
  "yggdrasil-colorpicker",
  "yggdrasil-conf",
  "yggdrasil-gamepads",

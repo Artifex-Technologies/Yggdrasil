@@ -141,6 +141,10 @@ impl App {
             (0, Some(id)) => self.app_detail(ui, pal, ctx, &id),
             (0, None) => self.app_list(ui, pal, ctx),
             (1, _) => self.page_apps_software(ui, pal),
+            (3, _) => match self.cloud_panel.as_mut() {
+                Some(p) => p.show(ui, pal, ctx),
+                None => self.cloud_panel = Some(crate::clouddrives_ui::Panel::new(ctx)),
+            },
             _ => self.page_apps_minos(ui, pal, ctx),
         }
         self.app_confirm_window(ctx, pal);

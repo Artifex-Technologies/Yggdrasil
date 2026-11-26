@@ -297,6 +297,13 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   status, storage with Clear cache and Clear data (the latter lists the folders and asks for the password), the privacy
   sandbox, Remove.
 - **Optional software** and **Minos** are rows on the card at the top, each its own page.
+- **Minos > Cloud drives** (`yggdrasil-settings apps:cloud-drives`; Minos's sidebar opens it): every cloud drive with its state
+  (a dot: green mounted or ready, red an error), Mount / Unmount, "At sign-in" and Remove (asks first; removes the rclone sign-in
+  and the mount service, never files in the cloud); Add a cloud drive: Proton Drive, Google Drive, OneDrive, Dropbox, Box,
+  WebDAV / Nextcloud, S3, an existing rclone remote, or a folder a sync app keeps. The sign-in is the provider's own through
+  rclone: the browser for Google Drive, OneDrive, Dropbox and Box (what rclone prints is shown on the page), rclone's own
+  questions in a terminal for the others. Without rclone the page says so and shows the install command. The drives appear in
+  Minos under Cloud Storage. Code: `src/clouddrives_ui.rs` and packages/clouddrives ([README](../packages/clouddrives/README.md)).
 - **Developer options** (About: click the logo five times while holding the ` key): adds "Any connection / Ethernet only /
   Wi-Fi only" next to an app's network switch, and the selected power mode's CPU and graphics-card limits under Power. Stored as
   `developer = yes` in ~/.config/yggdrasil/panel.conf.
