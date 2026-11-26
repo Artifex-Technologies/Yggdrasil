@@ -296,7 +296,9 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
 - **An app's page** (click a row, or `yggdrasil-settings apps:ID`): Network (switch; click the name too), open at login,
   status, storage with Clear cache and Clear data (the latter lists the folders and asks for the password), the privacy
   sandbox, Remove.
-- **Optional software** and **Minos** are rows on the card at the top, each its own page.
+- **Optional software** and **Minos** are rows on the card at the top, each its own page. Minos's page has a **Cloud Storage**
+  group only once a cloud drive was added, naming only the added ones (and the Proton Drive file status switch only once Proton
+  Drive was added); with none, Cloud drives is a row of the Minos group ("None added yet").
 - **Minos > Cloud drives** (`yggdrasil-settings apps:cloud-drives`; Minos's sidebar opens it): every cloud drive with its state
   (a dot: green mounted or ready, red an error), Mount / Unmount, "At sign-in" and Remove (asks first; removes the rclone sign-in
   and the mount service, never files in the cloud); Add a cloud drive: Proton Drive, Google Drive, OneDrive, Dropbox, Box,

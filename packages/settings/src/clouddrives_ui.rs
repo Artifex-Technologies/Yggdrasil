@@ -172,6 +172,40 @@ fn short(home: &Path, p: &Path) -> String {
     }
 }
 
+/// The names of the cloud drives that have been added, for Settings > Apps > Minos: its Cloud Storage group is there only when one
+/// was added, and names only those. Read once on a thread when that page opens (rclone is asked for its remotes).
+pub struct Added {
+    rx: Receiver<(Vec<String>, bool)>,
+    /// The names, and whether Proton Drive is one of them.
+    read: Option<(Vec<String>, bool)>,
+}
+
+impl Added {
+    pub fn read(ctx: &egui::Context) -> Added {
+        let (tx, rx) = channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let found = match load(None) {
+                Msg::Loaded { drives, .. } => {
+                    (drives.iter().map(|s| s.drive.label().to_string()).collect(), drives.iter().any(|s| s.drive.is_proton()))
+                }
+                _ => (Vec::new(), false),
+            };
+            let _ = tx.send(found);
+            ctx.request_repaint();
+        });
+        Added { rx, read: None }
+    }
+
+    /// The added drives' names, and whether Proton Drive is one of them; None until they have been read.
+    pub fn get(&mut self) -> Option<&(Vec<String>, bool)> {
+        if let Ok(r) = self.rx.try_recv() {
+            self.read = Some(r);
+        }
+        self.read.as_ref()
+    }
+}
+
 impl Panel {
     pub fn new(ctx: &egui::Context) -> Panel {
         let (tx, rx) = channel();

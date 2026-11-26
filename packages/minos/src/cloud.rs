@@ -632,6 +632,30 @@ pub fn availability(drive_root: &Path, path: &Path, size: u64) -> Option<Avail> 
 }
 
 /// Whether rclone already has a Proton Drive remote called `proton`.
+/// Whether Proton Drive has been added on this account, read from files only (Minos asks at start, after its own sign-in and
+/// when Settings changed something, never on the frame): Proton Drive in Settings' cloud drive list, or the `proton` remote in
+/// rclone's config file (Minos's own sign-in adds only that). Cloud Storage lists Proton Drive only then.
+pub fn proton_added() -> bool {
+    use yggdrasil_clouddrives as cd;
+    cd::load(&cd::Paths::user()).iter().any(cd::Drive::is_proton)
+        || rclone_config_file().and_then(|p| std::fs::read_to_string(p).ok()).is_some_and(|t| has_remote(&t, cd::PROTON_REMOTE))
+}
+
+/// rclone's config file, where rclone itself looks: `RCLONE_CONFIG`, then the XDG config folder, then the old ~/.rclone.conf.
+fn rclone_config_file() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("RCLONE_CONFIG").filter(|p| !p.is_empty()) {
+        return Some(PathBuf::from(p));
+    }
+    let home = dirs::home_dir()?;
+    let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".config"));
+    [config.join("rclone/rclone.conf"), home.join(".rclone.conf")].into_iter().find(|p| p.is_file())
+}
+
+/// Whether rclone's config text has the remote `name` (a `[name]` section).
+fn has_remote(text: &str, name: &str) -> bool {
+    text.lines().any(|l| l.trim().strip_prefix('[').and_then(|r| r.strip_suffix(']')) == Some(name))
+}
+
 pub fn proton_configured() -> bool {
     Command::new("rclone")
         .arg("listremotes")
@@ -930,6 +954,15 @@ pub fn start_proton_mount() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_remote_is_found_by_its_section_only() {
+        let conf = "[GoogleDrive]\ntype = drive\n\n[proton]\ntype = protondrive\nusername = someone\n";
+        assert!(has_remote(conf, "proton"));
+        assert!(has_remote("  [proton]  \n", "proton"));
+        assert!(!has_remote("[GoogleDrive]\nremote = proton\n# [proton]x\n", "proton"));
+        assert!(!has_remote("[proton2]\n", "proton"));
+    }
+
     use super::*;
 
     fn item(path: &str, size: i64, sha1: Option<&str>) -> LsItem {

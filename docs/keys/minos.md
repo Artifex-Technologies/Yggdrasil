@@ -33,8 +33,10 @@ bar, and a narrow pane puts Sort, Group, the layout and the preview pane in one 
 letters and words, and its owner; with nothing selected, the folder's. A folder's size (and several items') is counted on a
 thread by the status bar's walker (`src/foldersize.rs`); on a network or cloud drive it is not counted (it would fetch every file). Code: `src/props.rs`.
 
-**Cloud Storage** (the sidebar): Proton Drive as before, and every cloud drive added in Settings > Apps > Minos > Cloud drives
-(packages/clouddrives). A mounted drive, or a sync app's folder that is there, opens on a click; a drive that is not mounted is
+**Cloud Storage** (the sidebar): only what has been added, and nothing at all (no heading, no Manage link) before that: Proton
+Drive once it is signed in or added in Settings (or its folder holds a synced copy), and every cloud drive added in Settings >
+Apps > Minos > Cloud drives (packages/clouddrives). Whether Proton Drive was added is read from Settings' list and rclone's config
+file at start and when Settings changes something, never on the frame. A mounted drive, or a sync app's folder that is there, opens on a click; a drive that is not mounted is
 greyed and mounts on a click or with right-click > Mount (and opens once it is up); right-click > Unmount, and Manage cloud
 drives opens the Settings page. A green dot is a mounted drive, a red one an error (the tooltip says which). The list follows
 Settings without a restart; whether a drive is mounted is read from the mount table every few seconds on a thread. Code:

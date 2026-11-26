@@ -2215,6 +2215,11 @@ struct App {
     /// Proton Drive sign-in form: email, password, mailbox password, 2FA code.
     proton_form: Option<[String; 4]>,
     proton_busy: bool,
+    /// Whether Proton Drive was added (cloud::proton_added): read at start, after a sign-in and when Settings changed something.
+    proton_added: bool,
+    /// Until when the mount is looked for after a sign-in (every 2 s); never longer, so an added Proton Drive that is simply not
+    /// mounted costs nothing while Minos is open.
+    proton_wait: Option<Instant>,
     dev_tx: Sender<DevEvent>,
     dev_rx: Receiver<DevEvent>,
     /// The watcher's way to wake the window, set on the first frame.
@@ -2321,7 +2326,8 @@ impl App {
                 }
             });
         }
-        let cloud_place = places::proton_drive();
+        let proton_added = cloud::proton_added();
+        let cloud_place = places::proton_drive(proton_added);
         lap("proton drive place");
         Self {
             panes: [pane_l, pane_r],
@@ -2357,6 +2363,8 @@ impl App {
             verify_rx,
             proton_form: None,
             proton_busy: false,
+            proton_added,
+            proton_wait: None,
             dev_tx,
             dev_rx,
             dev_ctx,
@@ -3925,7 +3933,9 @@ impl App {
                 }
             }
 
-            if self.cloud.is_some() || !self.links.is_empty() || !self.cloud_drives.list.is_empty() {
+            // Cloud Storage only with something added under it (no heading, no "Manage" link before that: adding starts in Settings)
+            let any_cloud = self.cloud.is_some() || !self.links.is_empty() || !self.cloud_drives.list.is_empty();
+            if any_cloud {
                 section_heading(ui, pal, "Cloud Storage");
             }
             if let Some(c) = &self.cloud {
@@ -3992,7 +4002,7 @@ impl App {
                     }
                 });
             }
-            if ui.small_button("Manage cloud drives").on_hover_text("Settings > Apps > Minos > Cloud drives").clicked() {
+            if any_cloud && ui.small_button("Manage cloud drives").on_hover_text("Settings > Apps > Minos > Cloud drives").clicked() {
                 actions.push(Action::ManageCloud);
             }
         });
@@ -4036,8 +4046,10 @@ impl eframe::App for App {
                 self.st.show_hidden = show;
                 self.reload_all();
             }
-            // Settings > Apps > Minos > Cloud drives writes its list into the same folder
+            // Settings > Apps > Minos > Cloud drives writes its list into the same folder (Proton Drive added or removed there too)
             self.cloud_drives.reload_list();
+            self.proton_added = cloud::proton_added();
+            self.cloud = places::proton_drive(self.proton_added);
         }
         let want = (self.st.dark, self.st.accent(), self.st.opacity);
         if self.applied_theme != Some(want) {
@@ -4092,6 +4104,7 @@ impl eframe::App for App {
                 Ok(()) => {
                     self.status = "Proton Drive is connecting; its files appear in a few seconds".into();
                     self.proton_form = None;
+                    self.proton_wait = Some(Instant::now() + Duration::from_secs(30));
                 }
                 Err(e) => match e.strip_prefix(cloud::SIGN_IN_AGAIN) {
                     Some(msg) => {
@@ -4103,12 +4116,17 @@ impl eframe::App for App {
                     None => self.status = e,
                 },
             }
-            self.cloud = places::proton_drive();
+            self.proton_added = cloud::proton_added();
+            self.cloud = places::proton_drive(self.proton_added);
         }
-        if self.proton_busy || self.cloud.as_ref().map(|c| c.state == CloudState::NotMounted).unwrap_or(false) && cloud::proton_configured()
-        {
-            // keep looking while the mount comes up
-            self.cloud = places::proton_drive();
+        let waiting =
+            self.proton_wait.is_some_and(|t| Instant::now() < t) && self.cloud.as_ref().is_some_and(|c| c.state == CloudState::NotMounted);
+        if !waiting {
+            self.proton_wait = None;
+        }
+        if self.proton_busy || waiting {
+            // keep looking while the mount comes up after a sign-in (a file check every 2 s, for 30 s at most)
+            self.cloud = places::proton_drive(self.proton_added);
             ctx.request_repaint_after(Duration::from_secs(2));
         }
         if let Some(t) = self.download_status.lock().ok().and_then(|mut g| g.take()) {

@@ -579,6 +579,8 @@ struct App {
     limbo_panel: Option<limbo_ui::Panel>,
     /// Apps > Minos > Cloud drives (`apps:cloud-drives`): dropped when the page is left.
     cloud_panel: Option<clouddrives_ui::Panel>,
+    /// The added cloud drives' names while Apps > Minos is open (read again each time it opens).
+    cloud_added: Option<clouddrives_ui::Added>,
     /// Power > Graphics card: the unlock's confirmation while open (with the date of Sarina's last backup), and its checkbox.
     unlock_confirm: Option<Option<String>>,
     unlock_read: bool,
@@ -782,6 +784,7 @@ impl App {
             fans_panel: None,
             limbo_panel: None,
             cloud_panel: None,
+            cloud_added: None,
             unlock_confirm: None,
             unlock_read: false,
             app_filter: String::new(),
@@ -1174,6 +1177,9 @@ impl eframe::App for App {
         }
         if !(self.page == Page::Apps && self.app_tab == 3) {
             self.cloud_panel = None;
+        }
+        if !(self.page == Page::Apps && self.app_tab == 2) {
+            self.cloud_added = None;
         }
         // a look belongs to its network's page: it goes when the page does
         if self.lan_look.as_ref().is_some_and(|(u, _)| self.page != Page::Network || self.net_open.as_deref() != Some(u.as_str())) {
@@ -4934,18 +4940,16 @@ impl App {
                 }
             });
         });
-        ui::group(ui, pal, Some("Cloud Storage"), |ui| {
-            if ui::nav_row(
-                ui,
-                pal,
-                true,
-                "Cloud drives",
-                Some("Google Drive, OneDrive, Dropbox, Proton Drive and more, in Minos's sidebar"),
-                |_| {},
-            ) {
-                self.app_tab = 3;
-            }
-        });
+        // Cloud Storage is there only once a cloud drive was added, and names only the added ones; with none, adding one starts
+        // from a row in the Minos group below
+        let added = self.cloud_added.get_or_insert_with(|| clouddrives_ui::Added::read(ctx)).get().cloned();
+        if let Some((names, _)) = added.as_ref().filter(|(n, _)| !n.is_empty()) {
+            ui::group(ui, pal, Some("Cloud Storage"), |ui| {
+                if ui::nav_row(ui, pal, true, "Cloud drives", Some(&names.join(", ")), |_| {}) {
+                    self.app_tab = 3;
+                }
+            });
+        }
         ui::group(ui, pal, Some("Minos"), |ui| {
             ui::row(
                 ui,
@@ -4960,16 +4964,31 @@ impl App {
             ui::row(ui, pal, false, "Show hidden items", Some("Files and folders whose names start with a dot"), |ui| {
                 minos_changed |= ui::switch(ui, pal, &mut minos.show_hidden).changed();
             });
-            ui::row(
-                ui,
-                pal,
-                false,
-                "Show Proton Drive file status",
-                Some("A mark on each Proton Drive file: kept on this computer, or only in the cloud"),
-                |ui| {
-                    minos_changed |= ui::switch(ui, pal, &mut minos.drive_status).changed();
-                },
-            );
+            // Proton Drive's own row only once Proton Drive was added
+            if added.as_ref().is_some_and(|(_, proton)| *proton) {
+                ui::row(
+                    ui,
+                    pal,
+                    false,
+                    "Show Proton Drive file status",
+                    Some("A mark on each Proton Drive file: kept on this computer, or only in the cloud"),
+                    |ui| {
+                        minos_changed |= ui::switch(ui, pal, &mut minos.drive_status).changed();
+                    },
+                );
+            }
+            if added.as_ref().is_some_and(|(n, _)| n.is_empty())
+                && ui::nav_row(
+                    ui,
+                    pal,
+                    false,
+                    "Cloud drives",
+                    Some("None added yet; a drive you add shows in Minos's sidebar under Cloud Storage"),
+                    |_| {},
+                )
+            {
+                self.app_tab = 3;
+            }
         });
         if minos_changed {
             // saved right away (a tiny file), so the slider and the sample follow the drag

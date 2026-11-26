@@ -43,13 +43,22 @@ pub fn proton_drive_candidates() -> Vec<PathBuf> {
     vec![home.join("ProtonDrive"), home.join("Proton Drive")]
 }
 
-pub fn proton_drive() -> Option<CloudPlace> {
-    let cands = proton_drive_candidates();
+/// Proton Drive's row under Cloud Storage, when it has one: only once Proton Drive was added (`added`: signed in, or in Settings'
+/// cloud drive list; `MINOS_PROTON_DRIVE` counts as added) or its folder holds a synced copy. Not added, it is not listed at all,
+/// and with nothing else added Cloud Storage is not shown either; Proton Drive is added in Settings > Apps > Minos > Cloud drives.
+pub fn proton_drive(added: bool) -> Option<CloudPlace> {
+    proton_place(proton_drive_candidates(), added || std::env::var_os("MINOS_PROTON_DRIVE").is_some_and(|p| !p.is_empty()))
+}
+
+fn proton_place(cands: Vec<PathBuf>, added: bool) -> Option<CloudPlace> {
     let first = cands.first()?.clone();
     // the mount's folder stays behind empty when the mount is down (a lapsed sign-in, no network): that is not a working Proton Drive,
     // and showing it as one hid the way to sign in again. Usable = a mount, or a folder with files in it (a synced copy).
     let found =
         cands.into_iter().find(|p| p.is_dir() && (is_mount(p) || std::fs::read_dir(p).map(|mut d| d.next().is_some()).unwrap_or(false)));
+    if found.is_none() && !added {
+        return None;
+    }
     Some(CloudPlace {
         label: "Proton Drive".into(),
         state: if found.is_some() { CloudState::Ready } else { CloudState::NotMounted },
@@ -653,12 +662,29 @@ mod mount_tests {
         let d = std::env::temp_dir().join(format!("minos-pd-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         std::env::set_var("MINOS_PROTON_DRIVE", &d);
-        assert_eq!(proton_drive().unwrap().state, CloudState::NotMounted);
+        assert_eq!(proton_drive(false).unwrap().state, CloudState::NotMounted);
         std::fs::write(d.join("file.txt"), "x").unwrap();
-        assert_eq!(proton_drive().unwrap().state, CloudState::Ready);
+        assert_eq!(proton_drive(false).unwrap().state, CloudState::Ready);
         std::env::remove_var("MINOS_PROTON_DRIVE");
         let _ = std::fs::remove_dir_all(&d);
         assert!(!is_mount(Path::new("/tmp/does-not-exist-here")));
+    }
+
+    #[test]
+    fn proton_drive_is_listed_only_once_added_or_synced() {
+        let d = std::env::temp_dir().join(format!("minos-pd-added-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        // never added, no folder: no row (and Cloud Storage has nothing from it)
+        assert!(proton_place(vec![d.clone()], false).is_none());
+        // added (signed in or in Settings' list) but not mounted: the row to connect it
+        assert_eq!(proton_place(vec![d.clone()], true).unwrap().state, CloudState::NotMounted);
+        // an empty folder left behind is still not added
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(proton_place(vec![d.clone()], false).is_none());
+        // a synced copy (the Proton Drive app's folder with files) is listed either way
+        std::fs::write(d.join("file.txt"), "x").unwrap();
+        assert_eq!(proton_place(vec![d.clone()], false).unwrap().state, CloudState::Ready);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     const MOUNTINFO: &str = "\
