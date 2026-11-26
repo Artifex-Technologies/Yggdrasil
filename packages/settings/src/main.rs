@@ -42,6 +42,7 @@ mod quit;
 mod razer;
 mod readout;
 mod refresh;
+mod report_ui;
 mod restore;
 mod security;
 mod single;
@@ -573,6 +574,8 @@ struct App {
     dev_clicks: u8,
     dev_last: std::time::Instant,
     dev_prompt: bool,
+    /// About > Report a problem's window.
+    report_ui: report_ui::ReportUi,
     /// Power > Graphics card: its own page while open (`power:gpu` opens on it), and the panel it shows (dropped, with its
     /// readout, when the page is left).
     power_gpu: bool,
@@ -780,6 +783,7 @@ impl App {
             dev_clicks: 0,
             dev_last: std::time::Instant::now(),
             dev_prompt: false,
+            report_ui: report_ui::ReportUi::default(),
             power_gpu: start_sub() == "gpu",
             gpu_panel: None,
             power_cpu: start_sub() == "cpu",
@@ -1898,6 +1902,21 @@ impl App {
                 ui.label(&a.kernel);
             });
         });
+        ui::group(ui, pal, None, |ui| {
+            ui::row(
+                ui,
+                pal,
+                true,
+                "Report a problem",
+                Some("Something not working? Make a report to send, with what is needed to fix it"),
+                |ui| {
+                    if ui::quiet(ui, pal, "Report a problem").clicked() {
+                        self.report_ui.start();
+                    }
+                },
+            );
+        });
+        self.report_ui.window(ctx, pal);
     }
 
     /// The device list a network's page shows for connection `uuid`: the kept list on a home network, else the look at it

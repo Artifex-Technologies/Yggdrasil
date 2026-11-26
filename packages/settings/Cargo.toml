@@ -16,6 +16,8 @@ egui_extras = { version = "0.36.2", features = ["file", "image", "svg"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 yggdrasil-ui = { path = "../yggdrasil-ui" }
 yggdrasil-conf = { path = "../yggdrasil-conf" }
+# About > Report a problem: the zip of what went wrong and what the computer is, for the system's support
+yggdrasil-report = { path = "../report" }
 # Software Update: what the repositories can update (Agora's checker, shared)
 yggdrasil-updates = { path = "../updates" }
 # the compositor (Hyprland or Yggdrasil's own): screens, reload, shortcuts, focusing a window

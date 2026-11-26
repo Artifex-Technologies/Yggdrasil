@@ -36,6 +36,16 @@ impl Integration {
         self.values.get(key).map(String::as_str).filter(|v| !v.is_empty())
     }
 
+    /// Every key that starts with `prefix` (`include.` for `include.a_selfcheck = ...`), without the prefix, with its value,
+    /// in the keys' order.
+    pub fn entries(&self, prefix: &str) -> Vec<(&str, &str)> {
+        self.values
+            .iter()
+            .filter_map(|(k, v)| Some((k.strip_prefix(prefix)?, v.as_str())))
+            .filter(|(id, v)| !id.is_empty() && !v.is_empty())
+            .collect()
+    }
+
     /// A command: the program (an absolute path, or nothing) and its arguments, split on spaces. Run directly, never through a shell.
     pub fn command(&self, key: &str) -> Option<Vec<String>> {
         let parts: Vec<String> = self.get(key)?.split_whitespace().map(str::to_string).collect();

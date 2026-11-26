@@ -1,0 +1,17 @@
+[package]
+name = "yggdrasil-report"
+version = "0.1.0"
+edition = "2021"
+description = "Report a problem: the zip of what went wrong and what the computer is, for the system's support (Settings > About)"
+license = "MPL-2.0"
+
+[lib]
+name = "yggdrasil_report"
+path = "src/lib.rs"
+
+[dependencies]
+yggdrasil-conf = { path = "../yggdrasil-conf" }
+# the zip a person e-mails: deflate in Rust (zlib-rs), nothing else of the crate
+zip = { version = "9.8.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# the report's time and the zip's name in the computer's time zone (already in the tree through Settings)
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }

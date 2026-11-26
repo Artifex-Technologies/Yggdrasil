@@ -250,6 +250,27 @@ cleanup = /usr/local/bin/labyrinth-install-cleanup
 The window (`yggdrasil-installer`) runs `command`; the other keys (name, clean-up and finishing programs, boot menu theme, kernel
 options, the browser and optional-part lists) are in [INSTALLER.md](INSTALLER.md).
 
+### `report` (where Report a problem sends a report)
+
+```
+kind = report
+name = Labyrinth OS                                       # whose support it is
+email = support@artifextech.sh                            # where Email it sends the report
+include.a_selfcheck = Self-check | /usr/bin/labyrinth-selfcheck
+include.b_packages = Packages | /usr/bin/pacman -Q
+```
+
+Settings > About > Report a problem makes one zip (`packages/report`): what the person wrote and chose (what it is about, recent
+screenshots they tick), `device.txt` (make and model, board, firmware, processor, memory, each graphics card with its driver,
+memory windows and PCIe link, the connected screens' makers, names and modes, disks, sound, the network devices' kinds and
+states), the warnings of this start and the errors of the last one, the week's crashes, the session's own logs (the ends of the
+state folder's `*.log` and Hyprland's), and each `include.ID` command's output as `system/TITLE.txt`, in the IDs' order. Every
+text is scrubbed first: the computer's name, the accounts' names and full names, saved networks' and paired Bluetooth devices'
+names, IPv4, IPv6 and hardware addresses, e-mail addresses and serial numbers become `<computer>`, `<user>`, `<ip>` and the like;
+a picture goes as it is. The zip goes to the Downloads folder; Email it opens the mail program with it attached (Thunderbird,
+Evolution, KMail, Geary and the like, through `xdg-email --attach`) or, for webmail, a new message and the folder to attach it
+from. Without this file the report is made all the same, for whoever helps the person.
+
 ### `settings-page` (an OS page in Settings)
 
 ```

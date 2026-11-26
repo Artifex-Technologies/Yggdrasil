@@ -8,9 +8,9 @@ one of these means changing its users in the same push, or keeping the old shape
 ### Integration files (`/usr/share/yggdrasil/integrations/*.conf`, `/etc/yggdrasil/integrations/*.conf`)
 
 How an operating system plugs into the desktop: `key = value` lines, one file per integration, kinds `assistant`, `packages`,
-`security`, `bar-item`, `apps`, `branding`, `installer`, `settings-page`. Unknown keys are ignored, so an older Yggdrasil
-accepts newer files. The full shape: [INTEGRATIONS.md](INTEGRATIONS.md).
-Used by: Labyrinth OS (Sarina's `assistant` file, its installer, branding, package backend), LykanOS (its installer, Sarina),
+`security`, `bar-item`, `apps`, `branding`, `installer`, `settings-page`, `report`. Unknown keys are ignored, so an older
+Yggdrasil accepts newer files. The full shape: [INTEGRATIONS.md](INTEGRATIONS.md).
+Used by: Labyrinth OS (Sarina's `assistant` file, its installer, branding, package backend, where reports go), LykanOS (its installer, Sarina),
 Heimdall (`security`), Limbo (`apps`), the bar add-ons in this repository (`bar-item`).
 
 ### The assistant's update verdict (`update_verdict` in an `assistant` integration file)
