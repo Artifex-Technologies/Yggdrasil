@@ -4,15 +4,18 @@
 
 pub mod archive;
 pub mod cloud;
+pub mod commandbar;
 pub mod compat;
 pub mod devices;
 pub mod fileops;
 pub mod fmt;
+pub mod grouping;
 pub mod listing;
 pub mod opener;
 pub mod places;
 pub mod preview;
 pub mod privacy;
+pub mod props;
 pub mod run;
 pub mod search;
 pub mod state;
