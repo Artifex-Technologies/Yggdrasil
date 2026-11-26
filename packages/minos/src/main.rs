@@ -1540,6 +1540,66 @@ fn group_heading(ui: &mut egui::Ui, pal: &Palette, title: &str) {
     }
 }
 
+/// How wide `s` is in `font`.
+fn text_width(ui: &egui::Ui, s: &str, font: &FontId) -> f32 {
+    ui.painter().layout_no_wrap(s.to_string(), font.clone(), Color32::WHITE).size().x
+}
+
+/// `s` with every digit made the font's widest digit: measured, it is as wide as any number of that shape can be.
+fn widest_digits(ui: &egui::Ui, s: &str, font: &FontId) -> String {
+    let w = |c: char| text_width(ui, &c.to_string(), font);
+    let digit = ('0'..='9').max_by(|a, b| w(*a).total_cmp(&w(*b))).unwrap_or('0');
+    s.chars().map(|c| if c.is_ascii_digit() { digit } else { c }).collect()
+}
+
+/// The preview pane's narrowest: room for the details' usual labels and a date on one line in the font in use (a larger text
+/// size widens it), never under PREVIEW_MIN.
+fn preview_min(ui: &egui::Ui) -> f32 {
+    let font = FontId::proportional(12.5);
+    let label = ["Type", "Size", "Modified", "Location", "Contains"].map(|l| text_width(ui, l, &font)).into_iter().fold(0.0, f32::max);
+    let date = text_width(ui, &widest_digits(ui, "2026-01-01 00:00", &font), &font);
+    // the frame's margins (14 a side), the grid's gap (10), and a few points so nothing touches the edge
+    (28.0 + label + 10.0 + date + 6.0).ceil().clamp(PREVIEW_MIN, PREVIEW_MAX)
+}
+
+/// The widths Date modified, Type and Size need to show the listed entries (`order` into `shown`) in full, their headings (with
+/// the sort arrow) included. Measured
+/// once per listing for pane `pi` and kept in egui's memory: only the distinct shapes are measured (a digit counts as the widest
+/// digit, so a later "8" never gets cut), never every row on every frame.
+fn fitted_widths(ui: &egui::Ui, pi: usize, shown: &[Entry], order: &[usize]) -> [f32; 3] {
+    let listed = || order.iter().filter_map(|&i| shown.get(i));
+    // what the listing is, cheaply: a change in it (another folder, a file added or grown, hidden items shown) measures again
+    let print = listed().fold(order.len() as u64, |h, e| {
+        h.rotate_left(7) ^ e.size ^ ((e.name.len() as u64) << 32) ^ u64::from(e.is_dir) ^ u64::from(e.usage.is_some()) << 1
+    });
+    let id = egui::Id::new(("minos-fit", pi));
+    if let Some((p, w)) = ui.ctx().data(|d| d.get_temp::<(u64, [f32; 3])>(id)) {
+        if p == print {
+            return w;
+        }
+    }
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let width = |s: &str| text_width(ui, s, &font);
+    let shape = |s: &str| widest_digits(ui, s, &font);
+    // a heading: its words, and room for the sort arrow (12 px and a gap) where it sorts
+    let head = |s: &str, sorts: bool| width(s) + if sorts { 12.0 + ui.spacing().item_spacing.x } else { 0.0 };
+    let mut types = BTreeSet::new();
+    let mut sizes = BTreeSet::new();
+    for e in listed() {
+        types.insert(listing::type_name(e));
+        if !e.is_dir {
+            sizes.insert(shape(&listing::human_size(e.size)));
+        }
+    }
+    let date = width(&shape("2026-01-01 00:00")).max(head("Date modified", true));
+    let kind = types.iter().map(|t| width(t)).fold(head("Type", false), f32::max).min(320.0);
+    let size = sizes.iter().map(|s| width(s)).fold(head("Size", true), f32::max);
+    // a little air after the longest text, so it never touches the next column
+    let w = [date, kind, size].map(|x| (x + 12.0).ceil());
+    ui.ctx().data_mut(|d| d.insert_temp(id, (print, w)));
+    w
+}
+
 fn header_cell(ui: &mut egui::Ui, pal: &Palette, label: &str, key: Option<SortKey>, sort: Sort, new_sort: &mut Sort) {
     ui.horizontal(|ui| {
         let r = ui.add(egui::Label::new(RichText::new(label).strong().color(pal.text)).sense(if key.is_some() {
@@ -1773,6 +1833,10 @@ fn draw_pane(
                     .flat_map(|pos| heads.iter().any(|(p, _)| *p == pos).then_some((pos, true)).into_iter().chain([(pos, false)]))
                     .collect();
                 let columns = 2 + usize::from(status_col) + if narrow { 0 } else { 2 };
+                // Date modified, Type and Size start just wide enough for what this folder shows in full, and the name takes the
+                // rest, so the list fits the pane without scrolling sideways. A dragged edge stays for the session; a folder whose
+                // widest date, type or size differs starts fitted again (the widths are the table's id).
+                let [date_w, type_w, size_w] = fitted_widths(ui, pi, shown, &order);
                 let mut tb =
                     TableBuilder::new(ui).striped(true).resizable(!narrow).sense(Sense::click_and_drag()).drag_to_scroll(drag_scroll);
                 if let Some(r) = want_row.and_then(|w| rows.iter().position(|&(p, head)| p == w && !head)) {
@@ -1782,14 +1846,15 @@ fn draw_pane(
                     let name_w = (avail_w - 84.0).max(100.0);
                     tb = tb.column(Column::exact(name_w).clip(true)).column(Column::exact(70.0));
                 } else {
-                    tb = tb.column(Column::initial(420.0).at_least(160.0).clip(true));
+                    tb = tb.id_salt(("details", date_w as u32, type_w as u32, size_w as u32));
+                    tb = tb.column(Column::remainder().at_least(160.0).clip(true).resizable(false));
                     if status_col {
                         tb = tb.column(Column::initial(80.0).at_least(60.0));
                     }
                     tb = tb
-                        .column(Column::initial(160.0).at_least(80.0))
-                        .column(Column::initial(120.0).at_least(60.0))
-                        .column(Column::remainder().at_least(70.0));
+                        .column(Column::initial(date_w).at_least(60.0))
+                        .column(Column::initial(type_w).at_least(50.0))
+                        .column(Column::initial(size_w).at_least(50.0));
                 }
                 tb.header(26.0, |mut h| {
                     h.col(|ui| header_cell(ui, &pal, "Name", Some(SortKey::Name), sort, &mut new_sort));
@@ -4446,17 +4511,20 @@ impl eframe::App for App {
             }
             self.pv.poll(&ctx);
             // the width the pane was last dragged to (the narrowest at first), kept for next time once the drag ends
+            let min = preview_min(ui);
             let shown = egui::Panel::right("preview")
-                .default_size(self.st.preview_width.clamp(PREVIEW_MIN, PREVIEW_MAX))
+                .default_size(self.st.preview_width.clamp(min, PREVIEW_MAX))
                 .max_size(PREVIEW_MAX)
-                .min_size(PREVIEW_MIN)
+                .min_size(min)
                 .frame(egui::Frame::new().fill(pal.sidebar).inner_margin(egui::Margin::symmetric(14, 12)))
                 .show(ui, |ui| {
                     draw_preview(ui, &pal, &self.pv);
                 });
+            // at the narrowest it is kept as "the narrowest" (PREVIEW_MIN), so it follows a later change of font or text size
             let width = shown.response.rect.width().round();
-            if (width - self.st.preview_width).abs() >= 1.0 && !ctx.input(|i| i.pointer.any_down()) {
-                self.st.preview_width = width;
+            let keep = if width <= min.round() + 1.0 { PREVIEW_MIN } else { width };
+            if (keep - self.st.preview_width).abs() >= 1.0 && !ctx.input(|i| i.pointer.any_down()) {
+                self.st.preview_width = keep;
                 self.dirty = true;
             }
         }

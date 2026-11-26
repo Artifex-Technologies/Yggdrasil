@@ -29,6 +29,12 @@ Share is greyed: the system has no file sharing service. In split view each pane
 bar, and a narrow pane puts Sort, Group, the layout and the preview pane in one menu. Code: `src/topbar.rs`, the rules in
 `src/commandbar.rs`, Group by in `src/grouping.rs`.
 
+**The details list and the preview pane fit without scrolling sideways:** Date modified, Type and Size start just wide enough
+for the folder's longest date, type and size (and their headings), and Name takes the rest of the pane. Dragging a column's edge
+keeps that width for the session; a folder whose widest values differ starts fitted again. The preview pane opens at its
+narrowest, measured from its text (the details' labels and a date on one line, so a larger text size widens it), and keeps the
+width it is dragged to. Code: `fitted_widths` and `preview_min` in `src/main.rs`.
+
 **Properties** (Alt+Enter, the wrench, or right-click > Properties): name, type, size, where it is, when it was made and changed, its permissions in
 letters and words, and its owner; with nothing selected, the folder's. A folder's size (and several items') is counted on a
 thread by the status bar's walker (`src/foldersize.rs`); on a network or cloud drive it is not counted (it would fetch every file). Code: `src/props.rs`.

@@ -28,8 +28,12 @@ pub struct Tag {
     pub color: [u8; 3],
 }
 
-/// The preview pane's narrowest and widest (its whole width, frame included).
-pub const PREVIEW_MIN: f32 = 220.0;
+/// The preview pane's narrowest and widest (its whole width, frame included). The narrowest the pane really takes is measured
+/// from its text (Minos's preview_min: the details' labels and a date on one line), never under PREVIEW_MIN; a saved width of
+/// PREVIEW_MIN means "at the narrowest".
+pub const PREVIEW_MIN: f32 = 160.0;
+/// The narrowest until 2026-11-26: a pane saved at it was at its narrowest, so it opens at the new narrowest.
+const PREVIEW_MIN_BEFORE: f32 = 220.0;
 pub const PREVIEW_MAX: f32 = 520.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,7 +127,11 @@ impl State {
     }
 
     pub fn load_from(path: &Path) -> State {
-        crate::compat::read_to_string(path).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+        let mut s: State = crate::compat::read_to_string(path).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        if (s.preview_width - PREVIEW_MIN_BEFORE).abs() < 0.5 {
+            s.preview_width = PREVIEW_MIN;
+        }
+        s
     }
 
     /// Write atomically (temp file then rename) so a crash cannot leave half a file.
@@ -228,6 +236,9 @@ mod tests {
         let l = State::load_from(&file);
         assert_eq!(l.tabs, s.tabs);
         assert_eq!(l.preview_width, 268.0, "the preview pane's width is kept");
+        s.preview_width = PREVIEW_MIN_BEFORE;
+        s.save_to(&file).unwrap();
+        assert_eq!(State::load_from(&file).preview_width, PREVIEW_MIN, "a pane left at the old narrowest opens at the new one");
         assert_eq!(l.favorites, vec![PathBuf::from("/fav")]);
         assert_eq!(l.color_for(Path::new("/a")), Some([220, 70, 70]));
 
