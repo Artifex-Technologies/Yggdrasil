@@ -2372,8 +2372,11 @@ impl App {
             st.opacity = if c.minos_transparent { c.minos_opacity } else { 100 };
         }
         st.follow_accent = true;
+        let defaults: Vec<PathBuf> = places::favorites().into_iter().map(|p| p.path).collect();
         if st.favorites.is_empty() {
-            st.favorites = places::favorites().into_iter().map(|p| p.path).collect();
+            st.favorites = defaults;
+        } else if let Some(f) = places::without_old_home(&st.favorites, dirs::home_dir().as_deref(), &defaults) {
+            st.favorites = f;
         }
         lap("state loaded");
         // Where this window starts, from Settings: the first window, or one opened while another is open.

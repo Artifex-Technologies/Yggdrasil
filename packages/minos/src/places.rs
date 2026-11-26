@@ -66,9 +66,10 @@ fn proton_place(cands: Vec<PathBuf>, added: bool) -> Option<CloudPlace> {
     })
 }
 
+/// The favorites Minos starts with, and Reset favorites gives back: the user's own folders that exist. Home is not one: it is
+/// in Places already ("My User Home", second from the top); until 2026-11-26 it was the first favorite as well.
 pub fn favorites() -> Vec<Place> {
-    let items: [(&str, Option<PathBuf>); 7] = [
-        ("Home", dirs::home_dir()),
+    let items: [(&str, Option<PathBuf>); 6] = [
         ("Desktop", dirs::desktop_dir()),
         ("Documents", dirs::document_dir()),
         ("Downloads", dirs::download_dir()),
@@ -77,6 +78,13 @@ pub fn favorites() -> Vec<Place> {
         ("Videos", dirs::video_dir()),
     ];
     items.into_iter().filter_map(|(label, p)| p.filter(|p| p.is_dir()).map(|path| Place { label: label.into(), path })).collect()
+}
+
+/// Saved favorites that are still exactly the old defaults (home, then `defaults`) become `defaults`: Home leaves a list
+/// nobody changed. A list someone changed (Home added back, a folder added, moved or removed) stays as it is.
+pub fn without_old_home(saved: &[PathBuf], home: Option<&Path>, defaults: &[PathBuf]) -> Option<Vec<PathBuf>> {
+    let (first, rest) = saved.split_first()?;
+    (Some(first.as_path()) == home && rest == defaults).then(|| defaults.to_vec())
 }
 
 /// The well-known folders that get their own picture in the sidebar (as Windows draws Desktop, Documents, Downloads ...).
@@ -592,6 +600,24 @@ mod tests {
         assert_eq!(disk_name(&disk_path("nvme0n1")).as_deref(), Some("nvme0n1"));
         assert!(is_virtual(&disk_path("vda")) && is_virtual(&this_pc()));
         assert!(!is_virtual(Path::new("/home")));
+    }
+
+    #[test]
+    fn home_leaves_only_an_unchanged_default_list() {
+        let p = |v: &[&str]| v.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let defaults = p(&["/u/Desktop", "/u/Documents", "/u/Downloads"]);
+        let home = Some(Path::new("/u"));
+        assert_eq!(without_old_home(&p(&["/u", "/u/Desktop", "/u/Documents", "/u/Downloads"]), home, &defaults), Some(defaults.clone()));
+        assert_eq!(
+            without_old_home(&p(&["/u", "/u/Desktop", "/u/Documents", "/u/Downloads", "/u/src"]), home, &defaults),
+            None,
+            "a folder added"
+        );
+        assert_eq!(without_old_home(&p(&["/u/Desktop", "/u", "/u/Documents", "/u/Downloads"]), home, &defaults), None, "moved");
+        assert_eq!(without_old_home(&p(&["/u", "/u/Documents", "/u/Downloads"]), home, &defaults), None, "one removed");
+        assert_eq!(without_old_home(&defaults, home, &defaults), None, "already without Home");
+        assert_eq!(without_old_home(&[], home, &defaults), None);
+        assert_eq!(without_old_home(&p(&["/u", "/u/Desktop", "/u/Documents", "/u/Downloads"]), None, &defaults), None);
     }
 
     #[test]
