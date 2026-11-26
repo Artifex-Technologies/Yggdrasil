@@ -4350,9 +4350,10 @@ impl eframe::App for App {
             });
         });
 
-        // the navigation row across the window, under the tabs (split view: one in each pane, draw_pane)
+        // the navigation row across the window, under the tabs, in the title strip's colour: only the current tab is
+        // coloured (split view: one in each pane, draw_pane)
         if !split {
-            egui::Panel::top("nav").frame(egui::Frame::new().fill(pal.tab_active).inner_margin(egui::Margin::symmetric(8, 5))).show(
+            egui::Panel::top("nav").frame(egui::Frame::new().fill(pal.strip).inner_margin(egui::Margin::symmetric(8, 5))).show(
                 ui,
                 |ui| {
                     topbar::nav_bar(ui, &mut self.panes[0], 0, &pal, &self.st, true, &mut actions);
