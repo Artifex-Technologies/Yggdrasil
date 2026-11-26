@@ -1735,6 +1735,19 @@ fn an_x11_program_drags_again_after_it_gave_a_drag_up() {
     let (xi, ti) = (comp.window("X11source").unwrap(), comp.window("test.target").unwrap());
     let _tdev = data_device(&mut t);
     give_an_x11_drag_up(&comp, &x, win, xi.at, &mut t, ti.at);
+    // the window manager's stand-in, which covers the whole screen above every X11 window while a drag lasts, goes with the
+    // grab: else it takes the next press on the X11 window, which then reaches the window only if the compositor's raise of
+    // it gets to XWayland before the press does (CI, YGG-146)
+    let on_win = (xi.at.0 + 100, xi.at.1 + 100);
+    let start = Instant::now();
+    loop {
+        let child = x.conn.translate_coordinates(x.root, x.root, on_win.0 as i16, on_win.1 as i16).unwrap().reply().unwrap().child;
+        if child != x11rb::NONE && x.aware_of(child).is_none() {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5), "the stand-in still over the X11 window after the drag ended");
+        std::thread::sleep(Duration::from_millis(20));
+    }
 
     // its next drag, from its window again: the stand-in comes, and the Wayland window is offered the URI
     log(|l| *l = Log::default());
