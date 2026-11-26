@@ -121,6 +121,10 @@ shots() {
     shot minos-top                      desktop app minos /home/alex/Documents
     shot minos-top-light                desktop app minos /home/alex/Documents
     shot minos-properties               desktop app minos /home/alex/Documents
+    shot minos-transfers                desktop app minos /home/alex/Documents --demo-transfers
+    shot minos-transfers-collapsed      desktop app minos /home/alex/Documents --demo-transfers=collapsed
+    shot minos-transfers-failed         desktop app minos /home/alex/Documents --demo-transfers=failed
+    shot minos-transfers-light          desktop app minos /home/alex/Documents --demo-transfers
     shot taskmanager-processes          desktop app yggdrasil-taskmanager
     shot taskmanager                    desktop app yggdrasil-taskmanager
     shot marketplace                    desktop app agora

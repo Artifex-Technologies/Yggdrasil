@@ -283,6 +283,37 @@ fn programs_list_and_change_the_screens_through_wlr_output_management() {
         ["HEADLESS-1 1600x900 scale=1.25 at=0,0 logical=1280x720", "HEADLESS-2 1280x720 scale=1 at=1280,0 logical=1280x720"]
     );
     assert_eq!(comp.connect().state.outputs.len(), 2);
+
+    // a mode the screen's GPU refuses (as the hardware backend's test commit can): applying or testing it is answered
+    // 'failed' and nothing changes, the other screen's change in the same configuration neither; another mode still goes
+    comp.must("refuse-mode HEADLESS-1 1280x720@60");
+    c.until("the heads told again", |s| s.mgmt.serial != Some(serial));
+    let serial = c.state.mgmt.serial.unwrap();
+    for (id, test) in [(5, true), (6, false)] {
+        let cfg = mgr.create_configuration(serial, &c.qh, id);
+        cfg.enable_head(&h1, &c.qh, ()).set_custom_mode(1280, 720, 60_000);
+        cfg.enable_head(&h2, &c.qh, ()).set_scale(2.0);
+        if test {
+            cfg.test();
+        } else {
+            cfg.apply();
+        }
+        c.until("the answer", |s| s.mgmt.answers.contains_key(&id));
+        assert_eq!(c.state.mgmt.answers[&id], "failed", "a refused mode, test {test}");
+    }
+    assert_eq!(
+        comp.must("outputs"),
+        ["HEADLESS-1 1600x900 scale=1.25 at=0,0 logical=1280x720", "HEADLESS-2 1280x720 scale=1 at=1280,0 logical=1280x720"],
+        "nothing changed"
+    );
+    comp.wait(5, "the reason in the log", |c| c.log_tail(20).contains("HEADLESS-1: 1280x720 at 60 Hz: its GPU refused it"));
+    let ok = mgr.create_configuration(serial, &c.qh, 7);
+    ok.enable_head(&h1, &c.qh, ()).set_custom_mode(1024, 768, 60_000);
+    ok.enable_head(&h2, &c.qh, ());
+    ok.apply();
+    c.until("the answer", |s| s.mgmt.answers.contains_key(&7));
+    assert_eq!(c.state.mgmt.answers[&7], "succeeded");
+    assert_eq!(comp.must("outputs")[0], "HEADLESS-1 1024x768 scale=1.25 at=0,0 logical=819x614");
 }
 
 #[test]

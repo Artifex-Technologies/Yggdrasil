@@ -71,7 +71,7 @@ fn a_window_that_waits_to_be_told_it_has_the_focus_is_made_active_and_given_it()
 /// What an X11 window asks for before it is shown, which the window manager reads when it is mapped (EWMH, ICCCM): full screen
 /// or maximized (`_NET_WM_STATE`: games, programs that restore a maximized window) from its first frame, and back to the place
 /// it would have had when that ends; Steam's maximize is ignored, as its requests are, and it may still size itself; a window
-/// that asks to start minimized (WM_HINTS) is shown, and told so.
+/// that asks to start minimized (WM_HINTS) is minimized from the start, never told it is shown until it is brought back.
 #[test]
 fn an_x11_window_opens_as_it_asked_before_it_was_shown() {
     if !xwayland_installed() {
@@ -138,17 +138,30 @@ fn an_x11_window_opens_as_it_asked_before_it_was_shown() {
     conn.flush().unwrap();
     comp.wait(10, "Steam's window at the size it asked for", |c| c.window("steam").is_some_and(|w| w.size == (400, 300)));
 
+    // asked to start minimized: minimized at once, the keyboard left with Steam's window, and told Iconic, never Normal (Wine
+    // restores a minimized window when WM_STATE says Normal)
     let i = open(b"iconic\0Iconic\0", &[], true);
-    comp.wait(10, "the window shown", |c| c.window("Iconic").is_some_and(|w| !w.has("minimized")));
-    let start = Instant::now();
-    loop {
-        let (states, wm) = told(i);
-        if !states.contains(&hidden) && wm == Some(1) {
-            break;
+    comp.wait(10, "the window listed minimized", |c| c.window("Iconic").is_some_and(|w| w.has("minimized")));
+    assert!(comp.focus().contains("steam"), "the keyboard stays where it was: {}", comp.focus());
+    let until = |what: &str, ok: &dyn Fn(&[u32], Option<u32>) -> bool| {
+        let start = Instant::now();
+        loop {
+            let (states, wm) = told(i);
+            if ok(&states, wm) {
+                return;
+            }
+            assert!(start.elapsed() < Duration::from_secs(10), "{what}: _NET_WM_STATE {states:?}, WM_STATE {wm:?}");
+            std::thread::sleep(Duration::from_millis(50));
         }
-        assert!(start.elapsed() < Duration::from_secs(10), "told it is shown: _NET_WM_STATE {states:?}, WM_STATE {wm:?}");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    };
+    until("told it is minimized", &|_, wm| wm == Some(3));
+    // brought back (the dock): shown, told so, with the keyboard; minimized again: told Iconic and hidden
+    comp.must(&format!("activate {}", client_of(&comp, "Iconic")));
+    comp.wait(10, "the window shown", |c| c.window("Iconic").is_some_and(|w| !w.has("minimized")));
+    comp.wait(10, "the window has the keyboard", |c| c.focus().contains("Iconic"));
+    until("told it is shown", &|states, wm| !states.contains(&hidden) && wm == Some(1));
+    comp.must(&format!("minimize {}", client_of(&comp, "Iconic")));
+    until("told it is minimized again", &|states, wm| states.contains(&hidden) && wm == Some(3));
 }
 
 /// Under variable refresh on the hardware backend only a full screen window's own frames start a refresh of its screen

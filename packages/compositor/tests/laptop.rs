@@ -85,3 +85,41 @@ fn a_dark_screen_wakes_on_two_taps_and_a_single_touch_reaches_nothing() {
     c.until("down", |s| s.touches.iter().any(|t| t.0 == "down"));
     comp.must("touch-up 3");
 }
+
+/// The touchscreen cancels its fingers (libinput's touch cancel, `touch-cancel`): a program with a finger down hears
+/// wl_touch.cancel, once, even though the cancel comes in a frame of its own; its next finger is an ordinary touch again.
+#[test]
+fn a_cancelled_finger_is_told_cancelled() {
+    let _l = limit(60, "touch cancel");
+    let comp = Compositor::start(&["--size", "800x600"]);
+    let mut c = comp.connect();
+    let (_k, _p) = c.input();
+    let w = c.window("test.w", "W");
+    c.draw(&w, (400, 300), BLUE);
+    let info = comp.window("test.w").unwrap();
+    let (x, y) = (info.at.0 + 30, info.at.1 + 40);
+    comp.must(&format!("touch-down 0 {x} {y}"));
+    comp.must("touch-up 0");
+    c.until("the seat has touch", |s| s.seat_caps & 4 != 0);
+    let _t = c.touch();
+
+    // two fingers down, each change framed; then the touchscreen cancels them, with no other touch change in that frame
+    comp.must(&format!("touch-down 1 {x} {y}"));
+    comp.must(&format!("touch-down 2 {} {y}", x + 50));
+    comp.must(&format!("touch-move 1 {} {}", x + 5, y + 5));
+    c.until("the fingers down and moved", |s| s.touches.iter().filter(|t| t.0 == "frame").count() == 3);
+    comp.must("touch-cancel");
+    c.until("cancel", |s| s.touches.iter().any(|t| t.0 == "cancel"));
+    c.roundtrip();
+    let kinds: Vec<&str> = c.state.touches.iter().map(|t| t.0).collect();
+    assert_eq!(kinds, ["down", "frame", "down", "frame", "motion", "frame", "cancel"], "one cancel for the program");
+
+    // the next finger: an ordinary down, at its place
+    c.state.touches.clear();
+    comp.must(&format!("touch-down 3 {x} {y}"));
+    comp.must("touch-up 3");
+    c.until("up", |s| s.touches.iter().any(|t| t.0 == "up"));
+    let kinds: Vec<&str> = c.state.touches.iter().map(|t| t.0).collect();
+    assert_eq!(kinds, ["down", "frame", "up", "frame"]);
+    assert_eq!((c.state.touches[0].2, c.state.touches[0].3), (30.0, 40.0));
+}

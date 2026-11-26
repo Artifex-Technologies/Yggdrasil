@@ -5,8 +5,9 @@
 //!   a touchscreen is used. A finger put down on a window gives it the keyboard and raises it, as a click does. With a finger
 //!   still down on its own window a program may move or resize that window, which then follows the finger (grabs.rs), or start
 //!   a drag, whose icon is drawn under that finger (`App::fingers`; the pointer keeps its own look). The touchscreen's cancel
-//!   ends every finger and a move, resize or drag made with one, but programs are not told it: Smithay sends wl_touch.cancel
-//!   only with another touch change in the same frame, and libinput's cancel comes in a frame of its own.
+//!   ends every finger and a move, resize or drag made with one, and the programs with a finger down are told (wl_touch.cancel,
+//!   also when it comes in a frame of its own, as libinput's does: our Smithay fork); XWayland then ends an X11 program's
+//!   finger, which it hears as the release, during its finger drag too.
 //! - **The pen** moves the pointer, and its tip is the left button, its first side button the right one and its second the
 //!   middle one, so every program takes it (tablet-v2, pressure and tilt for drawing programs, is not offered yet).
 //!

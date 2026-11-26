@@ -31,7 +31,7 @@ bar, and a narrow pane puts Sort, Group, the layout and the preview pane in one 
 
 **Properties** (Alt+Enter, the wrench, or right-click > Properties): name, type, size, where it is, when it was made and changed, its permissions in
 letters and words, and its owner; with nothing selected, the folder's. A folder's size (and several items') is counted on a
-thread and fills in as it goes; on a network or cloud drive it is not counted (it would fetch every file). Code: `src/props.rs`.
+thread by the status bar's walker (`src/foldersize.rs`); on a network or cloud drive it is not counted (it would fetch every file). Code: `src/props.rs`.
 
 **Cloud Storage** (the sidebar): Proton Drive as before, and every cloud drive added in Settings > Apps > Minos > Cloud drives
 (packages/clouddrives). A mounted drive, or a sync app's folder that is there, opens on a click; a drive that is not mounted is

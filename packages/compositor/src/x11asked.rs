@@ -20,8 +20,12 @@
 //! sent at once. Wine watches it: a game that minimized itself (old DirectX 9 games do when they lose the focus) is restored
 //! only when WM_STATE goes back to Normal. Smithay 0.7 wrote it only when a window was mapped or unmapped, so Wine kept the
 //! game at its minimized size, and on the dock's restore only a strip of the picture showed (Dead Space 2, found 2026-11-05).
-//! Smithay main's set_hidden, called beside this, writes the same value on the window manager's connection, sent with its
-//! next flush; the write here is the one that was tried with Wine.
+//! Smithay main's set_hidden, called just before this, writes the same value on the window manager's connection but does not
+//! flush it: it goes out with that connection's next request, often at once (set_activated when the window had the keyboard),
+//! but not for a window minimized from the dock while another has the keyboard. The write here is kept because it is the one
+//! tried with Wine (Dead Space 2); Smithay's alone has not been. The two cannot leave a stale value: set_hidden flushes the
+//! connection (its _NET_WM_STATE change) before it queues its WM_STATE, and runs before this job is sent, so an older Iconic
+//! of Smithay's is always out before a newer Normal of ours, and the last value written is the newest on both.
 
 use std::sync::mpsc::{channel, Sender};
 

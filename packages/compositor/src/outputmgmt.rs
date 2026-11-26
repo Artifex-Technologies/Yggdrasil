@@ -3,7 +3,9 @@
 //! ship it, so it is written here. What a program applies goes through `App::configure_outputs` (outputs.rs) like Settings'
 //! file, and lasts while the session runs (as on Hyprland: Settings' file is what is kept).
 //!
-//! Headless, any mode is accepted (a custom mode makes the picture that size). A screen can be turned (transform, wl_output's
+//! A configuration is answered 'succeeded' only once the screens' GPUs have taken its modes in a test commit (the hardware
+//! backend's `mode_check`); one refused is answered 'failed' and nothing changes. Headless, any mode is accepted (a custom mode
+//! makes the picture that size) unless `refuse-mode` named it. A screen can be turned (transform, wl_output's
 //! numbering); variable refresh is not offered (a configuration asking for it fails).
 
 use std::sync::{Arc, Mutex};
@@ -366,8 +368,17 @@ impl Dispatch<ZwlrOutputConfigurationV1, Mutex<Config>> for App {
                     };
                     changes.push((name, want));
                 }
+                // what could not be (no screen on, a size out of range) first, then whether the screens' GPUs take the modes
+                // (the hardware backend's test commit), and only then the change
                 let test = matches!(request, Request::Test);
-                match state.configure_outputs(changes, test) {
+                let answer = state.configure_outputs(changes.clone(), true).and_then(|()| state.modes_taken(&changes)).and_then(|()| {
+                    if test {
+                        Ok(())
+                    } else {
+                        state.configure_outputs(changes, false)
+                    }
+                });
+                match answer {
                     Ok(()) => config.succeeded(),
                     Err(e) => {
                         eprintln!("yggdrasil-compositor: a program's screen configuration was refused: {e}");

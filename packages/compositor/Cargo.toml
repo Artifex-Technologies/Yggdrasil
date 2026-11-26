@@ -48,8 +48,8 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 opt-level = 2
 lto = "thin"
 
-# Smithay's main branch (54cf9c10; its version is still 0.7.0, so it stands in for the 0.7 above) with thirteen commits of ours:
-# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit (84cf834d).
+# Smithay's main branch (54cf9c10; its version is still 0.7.0, so it stands in for the 0.7 above) with fifteen commits of ours:
+# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit (2f436c2f).
 #   514b9ae1  the X11 sockets bound apart from starting XWayland (X11Sockets, XWayland::spawn_with_sockets), so XWayland
 #             starts on the first X11 program (xwayland.rs)
 #   3c8ca3a4  two X11 window manager fixes: every event was dropped after set_randr_primary_output until the next request;
@@ -74,5 +74,9 @@ lto = "thin"
 #             cleared the other's waiting drop, which then never ended and its program never heard back)
 #   84cf834d  the window manager takes WM_S0 after its setup (before, an X11 program waiting for XWayland on demand could map
 #             a window before the root's subwindows were redirected under load, and that window never showed)
+#   92c735b4  the drop proxy of an X11 program's drag unmapped when the grab ends (before, it stayed over every X11 window
+#             until the Wayland target let go of its offer, and took their presses unless the compositor's raise came first)
+#   2f436c2f  a touch cancel in a frame of its own sent to the clients (wl_touch.cancel), and a finger drag's cancel passed on
+#             to the dragging client (before, nobody was told, and XWayland kept an X11 program's finger down)
 [patch.crates-io]
-smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "84cf834d495bc29e06bd3b2723e40e5f192e3ae4" }
+smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "2f436c2f281cf50a7b202c4268dc3722f55a7f67" }

@@ -1,10 +1,8 @@
 //! Properties (the command bar's Properties, Alt+Enter): what a file or folder is, how big, where, when it was made and changed,
-//! and who may read and change it. A folder's size is counted on a thread by the caller ([`count`]), never on a drive that may
-//! stall (`places::may_stall`: network and cloud mounts), where every file would be fetched or asked for over the line.
+//! and who may read and change it. A folder's size is counted by `foldersize`, the status bar's walker.
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 /// What the dialog shows about one item.
@@ -95,59 +93,6 @@ pub fn facts(path: &Path) -> std::io::Result<Facts> {
     })
 }
 
-/// What counting found so far.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Count {
-    pub bytes: u64,
-    pub files: u64,
-    pub folders: u64,
-    /// Some folders could not be read (no permission).
-    pub unreadable: u64,
-}
-
-/// Adds up everything under `paths` (folders walked, links not followed, other drives mounted inside not entered), calling
-/// `progress` now and then; stops early when `stop` is set. The total.
-pub fn count(paths: &[std::path::PathBuf], stop: &AtomicBool, progress: &mut dyn FnMut(Count)) -> Count {
-    let mut c = Count::default();
-    let mut stack: Vec<(std::path::PathBuf, u64)> = Vec::new();
-    for p in paths {
-        let Ok(m) = std::fs::symlink_metadata(p) else { continue };
-        if m.is_dir() {
-            stack.push((p.clone(), m.dev()));
-        } else {
-            c.files += 1;
-            c.bytes += m.len();
-        }
-    }
-    let mut seen = 0u32;
-    while let Some((dir, dev)) = stack.pop() {
-        if stop.load(Ordering::Relaxed) {
-            break;
-        }
-        let Ok(rd) = std::fs::read_dir(&dir) else {
-            c.unreadable += 1;
-            continue;
-        };
-        for item in rd.flatten() {
-            let Ok(m) = item.metadata() else { continue };
-            if m.is_dir() {
-                c.folders += 1;
-                if m.dev() == dev {
-                    stack.push((item.path(), dev));
-                }
-            } else {
-                c.files += 1;
-                c.bytes += m.len();
-            }
-            seen += 1;
-            if seen.is_multiple_of(2000) {
-                progress(c);
-            }
-        }
-    }
-    c
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,26 +108,17 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_is_counted_and_a_file_described() {
+    fn a_file_a_link_and_a_folder_described() {
         let d = std::env::temp_dir().join(format!("minos-props-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(d.join("sub/deeper")).unwrap();
+        std::fs::create_dir_all(d.join("sub")).unwrap();
         std::fs::write(d.join("a.txt"), "hello").unwrap();
-        std::fs::write(d.join("sub/b.bin"), vec![0u8; 1000]).unwrap();
-        std::fs::write(d.join("sub/deeper/c"), "xyz").unwrap();
         std::os::unix::fs::symlink(d.join("sub"), d.join("link")).unwrap();
-        let stop = AtomicBool::new(false);
-        let c = count(std::slice::from_ref(&d), &stop, &mut |_| {});
-        assert_eq!((c.files, c.folders), (4, 2), "three files and the link (not followed), two folders: {c:?}");
-        let link_len = std::fs::symlink_metadata(d.join("link")).unwrap().len();
-        assert_eq!(c.bytes, 1008 + link_len);
         let f = facts(&d.join("a.txt")).unwrap();
         assert_eq!((f.kind.as_str(), f.size, f.is_dir), ("TXT file", 5, false));
         assert!(f.modified.is_some() && !f.owner.is_empty());
         assert_eq!(facts(&d.join("link")).unwrap().kind, "Link to a folder");
         assert_eq!(facts(&d).unwrap().kind, "Folder");
-        stop.store(true, Ordering::Relaxed);
-        assert_eq!(count(std::slice::from_ref(&d), &stop, &mut |_| {}).files, 0, "stopped before it began");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

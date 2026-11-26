@@ -460,6 +460,51 @@ fn stalls_in(mountinfo: &str, p: &Path) -> bool {
     best.is_some_and(|(_, slow)| slow)
 }
 
+/// [`may_stall`] for a given copy of /proc/self/mountinfo (read once for many paths).
+pub fn may_stall_in(mountinfo: &str, p: &Path) -> bool {
+    stalls_in(mountinfo, p)
+}
+
+/// The mount points a count of a folder's size must not walk into: file systems that may stall (as [`may_stall`]) and the
+/// kernel's own (/proc, /sys and the like, whose files are not on any disk).
+pub fn count_skips_in(mountinfo: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for line in mountinfo.lines() {
+        let f: Vec<&str> = line.split(' ').collect();
+        let Some(sep) = f.iter().position(|x| *x == "-") else { continue };
+        let (Some(point), Some(fstype)) = (f.get(4), f.get(sep + 1)) else { continue };
+        if slow_fs(fstype) || pseudo_fs(fstype) {
+            out.push(PathBuf::from(unescape_mount(point)));
+        }
+    }
+    out
+}
+
+fn pseudo_fs(fstype: &str) -> bool {
+    matches!(
+        fstype,
+        "proc"
+            | "sysfs"
+            | "devtmpfs"
+            | "devpts"
+            | "cgroup"
+            | "cgroup2"
+            | "debugfs"
+            | "tracefs"
+            | "securityfs"
+            | "pstore"
+            | "bpf"
+            | "configfs"
+            | "efivarfs"
+            | "mqueue"
+            | "hugetlbfs"
+            | "binfmt_misc"
+            | "autofs"
+            | "fusectl"
+            | "nsfs"
+    )
+}
+
 fn slow_fs(fstype: &str) -> bool {
     // fuseblk is a local disk through FUSE (NTFS with ntfs-3g)
     (fstype.starts_with("fuse") && fstype != "fuseblk" && fstype != "fusectl")
@@ -634,6 +679,19 @@ mod mount_tests {
         assert!(!stalls("/mnt/windows/Games"), "fuseblk is a local disk");
         assert!(!stalls("/home/u/ProtonDrive/local/a"), "a disk mounted inside the FUSE mount");
         assert_eq!(unescape_mount("a\\040b\\134c\\999"), "a b\\c\\999");
+    }
+
+    #[test]
+    fn a_size_count_skips_network_cloud_and_kernel_mounts() {
+        let info = format!("{MOUNTINFO}50 22 0:5 / /proc rw - proc proc rw\n51 22 0:6 / /sys rw - sysfs sysfs rw\n");
+        let skips = count_skips_in(&info);
+        assert_eq!(
+            skips,
+            ["/home/u/ProtonDrive", "/home/u/Proton Drive", "/proc", "/sys"].map(PathBuf::from).to_vec(),
+            "not the root, not fuseblk, not a local disk inside the FUSE mount"
+        );
+        assert!(may_stall_in(&info, Path::new("/home/u/ProtonDrive/x")));
+        assert!(!may_stall_in(&info, Path::new("/home/u")));
     }
 
     #[test]

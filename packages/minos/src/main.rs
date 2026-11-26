@@ -7,7 +7,9 @@ use yggdrasil_ui::dnd;
 
 mod cloudside;
 mod icons;
+mod statusbar;
 mod topbar;
+mod transfers;
 
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Rect, RichText, Sense, UiBuilder};
 use egui_extras::{Column, TableBuilder};
@@ -29,24 +31,6 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use theme::{palette_for, Palette};
 use yggdrasil_ui::sysicon;
 use yggdrasil_ui::{chrome, theme};
-
-/// A copy or move running on its own thread (see App::start_transfer).
-struct Transfer {
-    rx: Receiver<TEvent>,
-    prog: Arc<fileops::Progress>,
-    what: String,
-    started: Instant,
-    /// Recent (seconds, bytes done) readings, for the speed.
-    samples: std::collections::VecDeque<(f64, u64)>,
-    /// The file the thread is waiting for an answer about: what is coming, what is there, where to send the answer.
-    ask: Option<(PathBuf, PathBuf, Sender<Option<fileops::Decision>>)>,
-    /// "Do this for all": the answer given to every later question.
-    sticky: Option<fileops::Decision>,
-    all: bool,
-}
-
-/// What a transfer did: (source, where it went) for each item.
-type Done = Vec<(PathBuf, PathBuf)>;
 
 /// Right-click > Scrub location sounds, running on its own thread (see App::start_scrub): a small window with its progress, then
 /// whether it worked, until closed.
@@ -156,11 +140,6 @@ fn privacy_menu(ui: &mut egui::Ui, e: &Entry, actions: &mut Vec<Action>) {
             ui.add_enabled(false, egui::Button::new(entry.label())).on_disabled_hover_text(*why);
         }
     }
-}
-
-enum TEvent {
-    Conflict(PathBuf, PathBuf, Sender<Option<fileops::Decision>>),
-    Done { stats: fileops::Stats, done: Done, mv: bool, stopped: bool, dest: PathBuf },
 }
 
 /// Whether `dest` is on the same drive as `src` (a move there is just a rename, not a copy and a delete).
@@ -1994,12 +1973,8 @@ fn draw_pane(
         pane.sort = new_sort;
     }
     ui.add_space(4.0);
-    let nsel = pane.tabs[pane.active].selected.len();
+    // how many items and selected: the window's bottom bar (statusbar.rs)
     ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("{} items", order.len())).color(pal.dim));
-        if nsel > 0 {
-            ui.label(RichText::new(format!("{nsel} selected")).color(pal.dim));
-        }
         if searching {
             ui.label(RichText::new("search results").color(pal.dim));
         }
@@ -2208,7 +2183,10 @@ struct App {
     clip_text: Option<String>,
     rename: Option<RenameDlg>,
     rename_unseen: u8,
-    transfer: Option<Transfer>,
+    /// Copies and moves, one at a time, the rest waiting their turn (transfers.rs: the panel and the bottom bar's part).
+    transfers: transfers::Transfers,
+    /// The bottom bar (statusbar.rs).
+    bar: statusbar::StatusBar,
     /// Right-click > Scrub location sounds, each running or showing how it ended.
     scrubs: Vec<ScrubJob>,
     scrub_next: u64,
@@ -2357,7 +2335,8 @@ impl App {
             clip_text: None,
             rename: None,
             rename_unseen: 0,
-            transfer: None,
+            transfers: Default::default(),
+            bar: Default::default(),
             scrubs: Vec::new(),
             scrub_next: 0,
             strips: Vec::new(),
@@ -2485,58 +2464,11 @@ impl App {
     /// Copy or move these into `dest` on a worker thread, merging with what is there and asking about every
     /// file that already exists (see fileops::transfer and the "already exists" dialog).
     fn start_transfer(&mut self, ctx: &egui::Context, paths: Vec<PathBuf>, dest: PathBuf, mv: bool) {
-        if self.transfer.is_some() {
-            self.status = "Another copy is still running".into();
-            return;
-        }
-        let (tx, rx) = channel();
-        let c = ctx.clone();
         let n = paths.len();
-        let prog = Arc::new(fileops::Progress::default());
-        let what = format!(
-            "{} {} to {}",
-            if mv { "Moving" } else { "Copying" },
-            if n == 1 { paths[0].file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default() } else { format!("{n} items") },
-            dest.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| dest.display().to_string())
-        );
-        {
-            let (srcs, p) = (paths.clone(), prog.clone());
-            std::thread::spawn(move || fileops::scan(&srcs, &p));
-        }
-        let wp = prog.clone();
-        std::thread::spawn(move || {
-            let mut stats = fileops::Stats::default();
-            let mut done = vec![];
-            let mut stopped = false;
-            for src in &paths {
-                let res = fileops::transfer(
-                    src,
-                    &dest,
-                    mv,
-                    &mut |a, b| {
-                        let (rt, rr) = channel();
-                        tx.send(TEvent::Conflict(a.to_path_buf(), b.to_path_buf(), rt)).ok()?;
-                        c.request_repaint();
-                        rr.recv().ok().flatten()
-                    },
-                    &mut stats,
-                    &wp,
-                );
-                match res {
-                    Ok(new) => done.push((src.clone(), new)),
-                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
-                        stopped = true;
-                        break;
-                    }
-                    Err(e) => stats.errors.push(format!("{}: {e}", src.display())),
-                }
-            }
-            let _ = tx.send(TEvent::Done { stats, done, mv, stopped, dest });
-            c.request_repaint();
-        });
-        self.status = format!("{} {n} item(s)...", if mv { "Moving" } else { "Copying" });
-        self.transfer =
-            Some(Transfer { rx, prog, what, started: Instant::now(), samples: Default::default(), ask: None, sticky: None, all: false });
+        let ahead = self.transfers.push(ctx, paths, dest, mv);
+        let verb = if mv { "Moving" } else { "Copying" };
+        self.status =
+            if ahead == 0 { format!("{verb} {n} item(s)...") } else { format!("{verb} {n} item(s) after the transfers before it") };
     }
 
     /// Right-click > Scrub location sounds: heimdall-scrub writes "name (scrubbed).ext" beside the file (a new name, never over
@@ -2834,152 +2766,10 @@ impl App {
         }
     }
 
-    /// Take what the transfer thread reports, and show the "already exists" dialog while it waits for an answer.
+    /// Take what the transfers report (the "already exists" dialog shows while one waits for an answer); when one has ended,
+    /// moved items' tags follow them and the folders are read again.
     fn poll_transfer(&mut self, ctx: &egui::Context) {
-        let Some(tr) = &mut self.transfer else { return };
-        // what TEvent::Done carries: stats, what was done, a move, stopped early, the destination
-        let mut finished: Option<(fileops::Stats, Done, bool, bool, PathBuf)> = None;
-        while let Ok(ev) = tr.rx.try_recv() {
-            match ev {
-                TEvent::Conflict(a, b, reply) => match tr.sticky {
-                    Some(d) => {
-                        let _ = reply.send(Some(d));
-                    }
-                    None => tr.ask = Some((a, b, reply)),
-                },
-                TEvent::Done { stats, done, mv, stopped, dest } => finished = Some((stats, done, mv, stopped, dest)),
-            }
-        }
-        if finished.is_none() && tr.ask.is_some() {
-            let mut answer: Option<Option<fileops::Decision>> = None;
-            let (a, b, _) = tr.ask.clone().unwrap();
-            let info = |p: &Path| match std::fs::metadata(p) {
-                Ok(m) => format!("{}, {}", listing::human_size(m.len()), m.modified().ok().map(fmt_time).unwrap_or_default()),
-                Err(_) => String::new(),
-            };
-            let name = b.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            let folder = b.parent().map(|p| p.display().to_string()).unwrap_or_default();
-            let mut all = tr.all;
-            egui::Window::new("File already exists")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.label(RichText::new(&name).strong());
-                    ui.label(format!("is already in {folder}"));
-                    ui.add_space(6.0);
-                    ui.label(format!("Already there:  {}", info(&b)));
-                    ui.label(format!("Coming in:  {}", info(&a)));
-                    ui.add_space(6.0);
-                    ui.checkbox(&mut all, "Do this for all remaining files that already exist");
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("Replace").clicked() {
-                            answer = Some(Some(fileops::Decision::Replace));
-                        }
-                        if ui.button("Skip").clicked() {
-                            answer = Some(Some(fileops::Decision::Skip));
-                        }
-                        if ui.button("Keep both").clicked() {
-                            answer = Some(Some(fileops::Decision::KeepBoth));
-                        }
-                        if ui.button("Stop").clicked() {
-                            answer = Some(None);
-                        }
-                    });
-                });
-            tr.all = all;
-            if let Some(ans) = answer {
-                if let Some((_, _, reply)) = tr.ask.take() {
-                    let _ = reply.send(ans);
-                }
-                if tr.all {
-                    tr.sticky = ans;
-                }
-            }
-        }
-        if finished.is_none() {
-            // Like Windows' copy window: what, how far, how fast, how long left.
-            use std::sync::atomic::Ordering::Relaxed;
-            let p = tr.prog.clone();
-            let now = tr.started.elapsed().as_secs_f64();
-            let (done, total) = (p.done_bytes.load(Relaxed), p.total_bytes.load(Relaxed));
-            let (fdone, ftotal) = (p.done_files.load(Relaxed), p.total_files.load(Relaxed));
-            let scanning = p.scanning.load(Relaxed);
-            tr.samples.push_back((now, done));
-            while tr.samples.len() > 2 && now - tr.samples[0].0 > 4.0 {
-                tr.samples.pop_front();
-            }
-            let (t0, b0) = tr.samples[0];
-            let speed = if now - t0 > 0.4 { done.saturating_sub(b0) as f64 / (now - t0) } else { 0.0 };
-            let fspeed = fdone as f64 / now.max(0.5);
-            let current = p.current.lock().map(|c| c.clone()).unwrap_or_default();
-            let mut cancel = false;
-            egui::Window::new(&tr.what)
-                .id(egui::Id::new("minos-transfer"))
-                .collapsible(false)
-                .resizable(false)
-                .anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -16.0))
-                .default_width(420.0)
-                .show(ctx, |ui| {
-                    ui.set_min_width(400.0);
-                    if total > 0 {
-                        let frac = (done as f32 / total as f32).clamp(0.0, 1.0);
-                        ui.add(
-                            egui::ProgressBar::new(frac)
-                                .text(format!("{:.0}%{}", frac * 100.0, if scanning { " so far" } else { "" }))
-                                .animate(scanning),
-                        );
-                    } else {
-                        ui.add(egui::ProgressBar::new(0.0).text("Counting files...").animate(true));
-                    }
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(format!(
-                            "{} of {}{}",
-                            listing::human_size(done),
-                            listing::human_size(total),
-                            if scanning { " (still counting)" } else { "" }
-                        ))
-                        .strong(),
-                    );
-                    let mut line = format!("{}/s", listing::human_size(speed as u64));
-                    if fspeed > 0.0 {
-                        line += &format!("   {:.1} files/s", fspeed);
-                    }
-                    if !scanning && speed > 1.0 && total > done {
-                        let left = ((total - done) as f64 / speed) as u64;
-                        line += &format!(
-                            "   about {} left",
-                            if left >= 3600 {
-                                format!("{} h {} min", left / 3600, left % 3600 / 60)
-                            } else if left >= 60 {
-                                format!("{} min", left / 60 + 1)
-                            } else {
-                                format!("{left} s")
-                            }
-                        );
-                    }
-                    ui.label(line);
-                    ui.label(format!("{fdone} of {ftotal} files{}", if scanning { "+" } else { "" }));
-                    if !current.is_empty() {
-                        ui.add(egui::Label::new(RichText::new(format!("Now: {current}")).color(ui.visuals().weak_text_color())).truncate());
-                    }
-                    ui.add_space(4.0);
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            if cancel {
-                p.cancel.store(true, Relaxed);
-                if let Some((_, _, reply)) = tr.ask.take() {
-                    let _ = reply.send(None);
-                }
-            }
-            ctx.request_repaint_after(Duration::from_millis(250));
-        }
-        if let Some((stats, done, mv, stopped, dest)) = finished {
-            self.transfer = None;
+        if let Some(transfers::Finished { stats, done, mv, stopped, dest }) = self.transfers.poll(ctx) {
             if mv {
                 for (src, new) in &done {
                     if !src.exists() {
@@ -4554,12 +4344,6 @@ impl eframe::App for App {
                     tab_strip(ui, &self.panes[0], 0, &pal, &mut actions);
                     ui.add_space(6.0);
                 }
-                let room = ui.available_width() - chrome::controls_width() - 48.0;
-                if room > 40.0 && !self.status.is_empty() {
-                    ui.allocate_ui(vec2(room.min(420.0), 28.0), |ui| {
-                        ui.add(egui::Label::new(RichText::new(&self.status).color(pal.dim)).truncate());
-                    });
-                }
                 // The strip is the title bar: empty space moves the window, buttons at the end.
                 chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
                 chrome::window_controls(ui, &pal);
@@ -4574,6 +4358,36 @@ impl eframe::App for App {
                     topbar::nav_bar(ui, &mut self.panes[0], 0, &pal, &self.st, true, &mut actions);
                 },
             );
+        }
+
+        // the bottom bar (statusbar.rs, transfers.rs): across the whole window, under the sidebar too, as in Windows Explorer
+        // (in the open and save dialog only while it has a message or a transfer, and without the counts: the dialog's
+        // file-type filter hides files the counts would include)
+        self.bar.say(std::mem::take(&mut self.status));
+        let picking = self.picker.is_some();
+        if !picking || self.bar.has_message() || !self.transfers.is_empty() {
+            let (bar, tr, pane) = (&mut self.bar, &mut self.transfers, &self.panes[self.focus]);
+            let t = &pane.tabs[pane.active];
+            let view = statusbar::View {
+                dir: t.tab.history.current(),
+                entries: &t.entries,
+                results: t.results.as_deref(),
+                // the command bar's quick filter counts as the filter while it is set (YGG-169)
+                query: if t.filter.is_empty() { &t.query } else { &t.filter },
+                hidden: self.st.show_hidden,
+                selected: &t.selected,
+                loading: t.pending.is_some(),
+                counts: !picking,
+            };
+            egui::Panel::bottom("statusbar")
+                .exact_size(statusbar::HEIGHT)
+                .frame(egui::Frame::new().fill(pal.sidebar).inner_margin(egui::Margin::symmetric(8, 0)))
+                .show(ui, |ui| {
+                    ui.horizontal_centered(|ui| bar.show(ui, &pal, &view, |ui| tr.bar(ui, &pal)));
+                });
+            if let Some(dir) = self.transfers.panel(&ctx, &pal, statusbar::HEIGHT) {
+                actions.push(Action::Go(self.focus, dir));
+            }
         }
 
         if !self.st.sidebar_hidden {
@@ -4880,6 +4694,10 @@ impl eframe::App for App {
 
         chrome::outline(&ctx, &pal);
         self.apply(&ctx, actions);
+        if !self.status.is_empty() {
+            // a message set just now goes to the bottom bar on the next frame
+            ctx.request_repaint();
+        }
         self.sync_state();
         if self.dirty && self.last_saved.elapsed() > Duration::from_secs(1) {
             self.save();
@@ -5079,6 +4897,11 @@ fn main() -> eframe::Result {
             st.follow_accent = true;
             theme::apply(&cc.egui_ctx, st.dark, if st.follow_accent { theme::system_accent() } else { None });
             let mut app = App::new();
+            // made-up transfers for the screenshots (scripts/screenshots.sh); a debug build only
+            #[cfg(debug_assertions)]
+            if let Some(a) = argv.iter().find(|a| a.starts_with("--demo-transfers")) {
+                app.transfers.demo(a.strip_prefix("--demo-transfers=").unwrap_or(""));
+            }
             // `minos FOLDER` (the dock's Trash, "open with"): that folder in a new tab.
             if let Some((pk, folder, _)) = pick.take().flatten() {
                 // choosing a file: no saved tabs, no saved state, starts in the folder asked for

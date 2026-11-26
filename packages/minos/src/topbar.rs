@@ -7,9 +7,7 @@
 use super::*;
 use minos_core::commandbar::{self, Command, Facts};
 use minos_core::grouping::GroupBy;
-use minos_core::props;
-use std::sync::atomic::AtomicBool;
-use std::sync::Mutex;
+use minos_core::{foldersize, props};
 
 /// The navigation row: back, forward, up, refresh, the address bar (a text field when clicked: Enter goes there, Esc cancels),
 /// the favorite star, the sidebar button (`sidebar_button`) and search.
@@ -320,16 +318,20 @@ pub(crate) fn command_bar(
 
 // ---------------------------------------------------------------------------------------------- Properties
 
-/// The Properties dialog: one item's facts, or for several (or a folder) the total size, counted on a thread.
+/// The Properties dialog: one item's facts, or for several (or a folder) the total size. Folders are walked on a thread by the
+/// status bar's walker (`foldersize`), so both count the same way: links not followed, and network or cloud drives never walked.
 pub(crate) struct PropsDlg {
     paths: Vec<PathBuf>,
     facts: Result<props::Facts, String>,
     location: String,
-    /// The count so far and whether it is finished; None when nothing is counted (one file, or a drive that may stall).
-    count: Option<Arc<Mutex<(props::Count, bool)>>>,
+    /// The bytes of the files among `paths` (known at once).
+    files: u64,
+    /// The walk through the folders among `paths`, while it runs.
+    counter: Option<foldersize::Counter>,
+    /// The total once known, and whether a network or cloud drive inside was left out.
+    total: Option<(u64, bool)>,
     /// Counting was left out: a network or cloud drive.
     stalls: bool,
-    stop: Arc<AtomicBool>,
 }
 
 impl PropsDlg {
@@ -340,30 +342,45 @@ impl PropsDlg {
         // read them; only the walk through a folder is left out
         let facts = props::facts(&first).map_err(|e| e.to_string());
         let location = first.parent().map(|p| p.display().to_string()).unwrap_or_default();
-        let needs_count = paths.len() > 1 || facts.as_ref().is_ok_and(|f| f.is_dir);
-        let stop = Arc::new(AtomicBool::new(false));
-        let count = (needs_count && !stalls).then(|| {
-            let shared = Arc::new(Mutex::new((props::Count::default(), false)));
-            let (s, stop, c, list) = (shared.clone(), stop.clone(), ctx.clone(), paths.clone());
-            std::thread::spawn(move || {
-                let total = props::count(&list, &stop, &mut |so_far| {
-                    if let Ok(mut g) = s.lock() {
-                        g.0 = so_far;
-                    }
-                    c.request_repaint();
-                });
-                if let Ok(mut g) = s.lock() {
-                    *g = (total, true);
+        let (mut dirs, mut files) = (Vec::new(), 0u64);
+        if !stalls {
+            for p in &paths {
+                match std::fs::symlink_metadata(p) {
+                    Ok(m) if m.is_dir() => dirs.push(p.clone()),
+                    Ok(m) => files += m.len(),
+                    Err(_) => {}
                 }
-                c.request_repaint();
-            });
-            shared
-        });
-        PropsDlg { paths, facts, location, count, stalls, stop }
+            }
+        }
+        let (counter, total) = if stalls || dirs.is_empty() {
+            (None, Some((files, false)))
+        } else {
+            let c = ctx.clone();
+            (Some(foldersize::Counter::start(dirs, move || c.request_repaint())), None)
+        };
+        PropsDlg { paths, facts, location, files, counter, total, stalls }
+    }
+
+    /// The size line: the total once it is in, "Counting..." before.
+    fn size_line(&self) -> String {
+        match self.total {
+            Some((b, partial)) => {
+                let mut s = format!("{} ({b} bytes)", listing::human_size(b));
+                if partial {
+                    s.push_str("\nA network or cloud drive inside was not counted");
+                }
+                s
+            }
+            None => "Counting...".into(),
+        }
     }
 
     /// Draws the dialog; false once it is closed.
     pub(crate) fn show(&mut self, ctx: &egui::Context, pal: &Palette) -> bool {
+        if let Some(c) = self.counter.as_ref().and_then(|c| c.poll()) {
+            self.total = Some((self.files + c.bytes.iter().sum::<u64>(), c.partial));
+            self.counter = None;
+        }
         let mut open = true;
         let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         let title = match (&self.facts, self.paths.len()) {
@@ -371,6 +388,7 @@ impl PropsDlg {
             (Ok(f), _) => f.name.clone(),
             (Err(_), _) => "Properties".into(),
         };
+        let size = self.size_line();
         egui::Window::new(format!("Properties: {title}"))
             .id(egui::Id::new("minos-properties"))
             .open(&mut open)
@@ -383,17 +401,6 @@ impl PropsDlg {
                     ui.add(egui::Label::new(v).wrap());
                     ui.end_row();
                 };
-                let size_line = |c: &props::Count, done: bool| {
-                    let mut s = format!("{} ({} bytes)", listing::human_size(c.bytes), c.bytes);
-                    s.push_str(&format!("\n{} files, {} folders", c.files, c.folders));
-                    if c.unreadable > 0 {
-                        s.push_str(&format!("; {} folders could not be read", c.unreadable));
-                    }
-                    if !done {
-                        s.push_str("\nCounting...");
-                    }
-                    s
-                };
                 egui::Grid::new("minos-properties-grid").num_columns(2).spacing([16.0, 8.0]).max_col_width(420.0).show(
                     ui,
                     |ui| match &self.facts {
@@ -401,13 +408,7 @@ impl PropsDlg {
                         Ok(f) if self.paths.len() == 1 => {
                             row(ui, "Name", f.name.clone());
                             row(ui, "Type", f.kind.clone());
-                            let size = if !f.is_dir {
-                                format!("{} ({} bytes)", listing::human_size(f.size), f.size)
-                            } else if self.stalls {
-                                "Not counted: it is on a network or cloud drive".into()
-                            } else {
-                                self.count.as_ref().and_then(|c| c.lock().ok().map(|g| size_line(&g.0, g.1))).unwrap_or_default()
-                            };
+                            let size = if f.is_dir && self.stalls { "Not counted: it is on a network or cloud drive".into() } else { size };
                             row(ui, "Size", size);
                             row(ui, "Location", self.location.clone());
                             row(ui, "Created", f.created.map(fmt_time).unwrap_or_else(|| "Not recorded by this drive".into()));
@@ -417,11 +418,7 @@ impl PropsDlg {
                         }
                         Ok(_) => {
                             row(ui, "Items", format!("{} selected", self.paths.len()));
-                            let size = if self.stalls {
-                                "Not counted: they are on a network or cloud drive".into()
-                            } else {
-                                self.count.as_ref().and_then(|c| c.lock().ok().map(|g| size_line(&g.0, g.1))).unwrap_or_default()
-                            };
+                            let size = if self.stalls { "Not counted: they are on a network or cloud drive".into() } else { size };
                             row(ui, "Size", size);
                             row(ui, "Location", self.location.clone());
                         }
@@ -435,12 +432,5 @@ impl PropsDlg {
                 });
             });
         open && !close
-    }
-}
-
-impl Drop for PropsDlg {
-    fn drop(&mut self) {
-        // a count still running stops when the dialog closes
-        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
