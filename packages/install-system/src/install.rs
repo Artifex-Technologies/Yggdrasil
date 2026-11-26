@@ -539,7 +539,18 @@ impl Ctx<'_> {
     }
 
     fn encrypt(&mut self, dev: &str, password: &str) -> R<String> {
-        // LUKS2 with PBKDF2: GRUB (which reads /boot from inside) cannot open Argon2 keys
+        // The old contents first: luksFormat writes only its header, and mkfs's TRIM inside the encryption does not reach
+        // the drive, so whatever was on the partition before stayed readable on the raw disk. A drive without discard (a
+        // hard disk) keeps it; that is said, and the install goes on.
+        let r = self.run(&strings(&["blkdiscard", "-f", dev]), None, false)?;
+        if r.code == 0 {
+            self.say("INFO", "the partition's old contents discarded before encrypting")?;
+        } else {
+            self.say("INFO", "the drive does not discard: the partition's old contents stay under the encryption")?;
+        }
+        // LUKS2 with PBKDF2: GRUB (which reads /boot from inside) opens the disk at every start. GRUB 2.16 can read Argon2id
+        // slots, but it runs Argon2 single-threaded, so a slot calibrated under Linux would take far longer to open there;
+        // PBKDF2 keeps that unlock at about 2 s.
         let label = format!("{}-crypt", self.os.name.replace(' ', "_"));
         self.run(
             &strings(&[

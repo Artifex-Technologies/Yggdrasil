@@ -5,7 +5,8 @@ mod fake;
 
 use fake::{manual_plan, plan, plan_with, Disk, Live, ACCOUNT_PW, DISK_PW};
 
-const DISK_TOOLS: [&str; 9] = ["wipefs", "sfdisk", "mkfs.btrfs", "mkfs.ext4", "mkfs.xfs", "mkfs.vfat", "mkswap", "cryptsetup", "mount"];
+const DISK_TOOLS: [&str; 10] =
+    ["wipefs", "sfdisk", "blkdiscard", "mkfs.btrfs", "mkfs.ext4", "mkfs.xfs", "mkfs.vfat", "mkswap", "cryptsetup", "mount"];
 
 /// Every device a disk tool was given: only the chosen disk, its partitions and the encrypted system's mapper.
 fn devices_touched(f: &fake::Fake) -> Vec<String> {
@@ -92,6 +93,11 @@ fn passwords_only_on_standard_input() {
         }
     }
     assert_eq!(seen, ["luksFormat", "open", "chpasswd", "luksAddKey"]);
+    // the partition's old contents are discarded right before it is encrypted (LAB-67), only that partition
+    let discard = f.calls.iter().position(|(a, _)| a[0] == "blkdiscard").expect("blkdiscard");
+    assert_eq!(f.calls[discard].0, ["blkdiscard", "-f", "/dev/vdz2"]);
+    assert_eq!(f.calls[discard + 1].0[..2], ["cryptsetup", "luksFormat"]);
+    assert!(f.out.contains(&"INFO the partition's old contents discarded before encrypting".to_string()));
     for line in f.out.iter().chain(f.err.iter()) {
         assert!(!line.contains(ACCOUNT_PW) && !line.contains(DISK_PW), "{line}");
     }
@@ -116,6 +122,18 @@ fn passwords_only_on_standard_input() {
     ));
     assert!(grub.contains("GRUB_ENABLE_CRYPTODISK=y\n"));
     assert!(live.read("etc/mkinitcpio.conf.d/example-encrypt.conf").contains("\"sd-encrypt\" opens it"));
+}
+
+/// A hard disk has no discard: the encrypted install goes on and says so (LAB-67).
+#[test]
+fn a_drive_without_discard_still_installs_encrypted() {
+    let live = Live::new();
+    let mut f = live.fake();
+    f.fail.push(vec!["blkdiscard".into()]);
+    let p = plan_with(&[("encrypt", "true"), ("encrypt_password", &format!("\"{DISK_PW}\""))]);
+    assert_eq!(live.run(&mut f, &[], &p), 0, "{:?}", f.out);
+    assert!(f.out.contains(&"INFO the drive does not discard: the partition's old contents stay under the encryption".to_string()));
+    assert_eq!(f.out.last().unwrap(), "DONE");
 }
 
 #[test]

@@ -243,8 +243,9 @@ to make room automatically ("install alongside"), and partitions on more than on
 ## How the program installs
 
 `yggdrasil-install-system` checks the computer (UEFI, the disk not in use, at least `min_size_gb`), writes a GPT with a 1 GiB EFI
-partition and the rest for the system, optionally LUKS2 (PBKDF2, because GRUB reads /boot from inside it; a key file in the
-start-up image so the password is typed once, in GRUB), btrfs with `@`, `@home`, `@cache`, `@log`, copies the system from the
+partition and the rest for the system, optionally LUKS2 (the partition's old contents discarded first with `blkdiscard`, where the drive supports it, since
+neither luksFormat nor mkfs's TRIM inside the encryption clears them; PBKDF2, because GRUB opens the disk at every start to
+read /boot and runs Argon2 single-threaded; a key file in the start-up image so the password is typed once, in GRUB), btrfs with `@`, `@home`, `@cache`, `@log`, copies the system from the
 medium (`unsquashfs`), sets it up inside (the OS's `cleanup` program, language, keyboard, time zone, name, the account in `wheel`
 with sudo; root stays locked; greetd as the login screen), builds the start-up image (`sd-encrypt` or `encrypt`, whichever the
 system's mkinitcpio uses), installs GRUB (plus the firmware's fallback path) with the OS's `boot_menu_theme`, and runs its
