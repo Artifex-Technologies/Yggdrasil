@@ -585,6 +585,7 @@ impl TabView {
                     is_dir: m.is_dir(),
                     size: if m.is_dir() { 0 } else { m.len() },
                     modified: m.modified().ok(),
+                    created: m.created().ok(),
                     path: p,
                     usage: None,
                 });
@@ -1641,17 +1642,13 @@ fn header_cell(
 }
 
 /// The details list's columns, ticked where shown: the layout menu's Columns and a right-click on the list's header. Name is
-/// always there; Status only while Settings shows Proton Drive's marks.
+/// always there (Status too, in Proton Drive folders: not a choice).
 pub(crate) fn columns_menu(ui: &mut egui::Ui, st: &State, toggle: &mut dyn FnMut(ListColumn)) {
     ui.label(RichText::new("Columns").small());
     ui.add_enabled(false, egui::Checkbox::new(&mut true, "Name"));
-    for c in ListColumn::ALL {
-        if c == ListColumn::Status && !st.drive_status {
-            continue;
-        }
+    for c in ListColumn::CHOOSABLE {
         let mut on = st.columns.shows(c);
-        let label = if c == ListColumn::Status { "Status (Proton Drive folders)" } else { c.label() };
-        if ui.checkbox(&mut on, label).clicked() {
+        if ui.checkbox(&mut on, c.label()).clicked() {
             toggle(c);
         }
     }
@@ -1773,12 +1770,9 @@ fn draw_pane(
         ViewMode::Details => {
             // The row, not the name, takes the clicks and drags (see entry_interact below).
             let ectx = ui.ctx().clone();
-            // A Status column (like Windows) in Proton Drive folders, while it is chosen (the columns menu).
-            let status_col = st.drive_status
-                && st.columns.status
-                && !in_pc
-                && !in_archive
-                && places::proton_drive_candidates().iter().any(|r| dir.starts_with(r));
+            // A Status column (like Windows) in Proton Drive folders, while Settings shows Proton Drive's marks.
+            let status_col =
+                st.drive_status && !in_pc && !in_archive && places::proton_drive_candidates().iter().any(|r| dir.starts_with(r));
             let name_cell = |ui: &mut egui::Ui, e: &Entry| {
                 ui.horizontal(|ui| {
                     let cut = is_cut(ui.ctx(), &e.path);
@@ -1877,7 +1871,7 @@ fn draw_pane(
                     .iter()
                     .map(|c| match c {
                         ListColumn::Status => (80.0, 56.0),
-                        ListColumn::Modified => (date_w, 64.0),
+                        ListColumn::Modified | ListColumn::Created => (date_w, 64.0),
                         ListColumn::Type => (type_w, 56.0),
                         ListColumn::Size => (size_w, 56.0),
                     })
@@ -1914,6 +1908,7 @@ fn draw_pane(
                     for c in &cols {
                         let key = match c {
                             ListColumn::Modified => Some(SortKey::Modified),
+                            ListColumn::Created => Some(SortKey::Created),
                             ListColumn::Size => Some(SortKey::Size),
                             ListColumn::Status | ListColumn::Type => None,
                         };
@@ -1946,6 +1941,7 @@ fn draw_pane(
                                         }
                                     }
                                     ListColumn::Modified => dim(ui, e.modified.map(fmt_time).unwrap_or_default()),
+                                    ListColumn::Created => dim(ui, e.created.map(fmt_time).unwrap_or_default()),
                                     ListColumn::Type => dim(ui, listing::type_name(e).to_string()),
                                     ListColumn::Size => dim(ui, if e.is_dir { String::new() } else { listing::human_size(e.size) }),
                                 });

@@ -174,6 +174,7 @@ mod tests {
             is_dir: false,
             size,
             modified: days_ago.map(|d| now - Duration::from_secs(d * DAY)),
+            created: None,
             hidden: false,
             usage: None,
         }

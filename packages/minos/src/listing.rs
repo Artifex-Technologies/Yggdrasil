@@ -12,6 +12,8 @@ pub struct Entry {
     pub is_dir: bool,
     pub size: u64,
     pub modified: Option<SystemTime>,
+    /// When it was made (the file system's birth time), where the file system keeps one.
+    pub created: Option<SystemTime>,
     pub hidden: bool,
     /// For a drive: (total bytes, free bytes). None for ordinary files and folders.
     pub usage: Option<(u64, u64)>,
@@ -22,6 +24,7 @@ pub enum SortKey {
     Name,
     Size,
     Modified,
+    Created,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -50,6 +53,7 @@ pub fn read_dir(dir: &Path) -> io::Result<Vec<Entry>> {
             is_dir: meta.is_dir(),
             size: if meta.is_dir() { 0 } else { meta.len() },
             modified: meta.modified().ok(),
+            created: meta.created().ok(),
             usage: None,
         });
     }
@@ -68,6 +72,7 @@ pub fn sort_entries(entries: &mut [Entry], sort: Sort) {
             SortKey::Name => by_name,
             SortKey::Size => a.size.cmp(&b.size).then(by_name),
             SortKey::Modified => a.modified.cmp(&b.modified).then(by_name),
+            SortKey::Created => a.created.cmp(&b.created).then(by_name),
         };
         if sort.descending {
             ord.reverse()
@@ -113,6 +118,7 @@ pub fn drive_entries(drives: &[crate::places::Drive]) -> Vec<Entry> {
             is_dir: true,
             size: d.total,
             modified: None,
+            created: None,
             hidden: false,
             usage: Some((d.total, d.free)),
         })
@@ -129,6 +135,7 @@ pub fn disk_entries(disks: &[crate::places::Disk]) -> Vec<Entry> {
             is_dir: true,
             size: d.size,
             modified: None,
+            created: None,
             hidden: false,
             usage: Some(d.mounted_usage().unwrap_or((d.size, d.size))),
         })
@@ -149,6 +156,7 @@ pub fn partition_entries(disk: &crate::places::Disk) -> Vec<Entry> {
             is_dir: true,
             size: p.size,
             modified: None,
+            created: None,
             hidden: false,
             usage: p.usage,
         })
@@ -184,7 +192,16 @@ mod tests {
     use super::*;
 
     fn e(name: &str, is_dir: bool, size: u64) -> Entry {
-        Entry { name: name.into(), path: name.into(), is_dir, size, modified: None, hidden: name.starts_with('.'), usage: None }
+        Entry {
+            name: name.into(),
+            path: name.into(),
+            is_dir,
+            size,
+            modified: None,
+            created: None,
+            hidden: name.starts_with('.'),
+            usage: None,
+        }
     }
 
     #[test]
@@ -201,6 +218,20 @@ mod tests {
         sort_entries(&mut v, Sort { key: SortKey::Size, descending: true });
         let names: Vec<_> = v.iter().map(|x| x.name.as_str()).collect();
         assert_eq!(names, ["d", "big", "s"]);
+    }
+
+    #[test]
+    fn sort_by_date_created_with_folders_first() {
+        let at = |s: u64| Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(s));
+        let mut v = vec![
+            Entry { created: at(30), ..e("new.txt", false, 1) },
+            Entry { created: at(10), ..e("old.txt", false, 1) },
+            Entry { created: None, ..e("unknown.txt", false, 1) },
+            Entry { created: at(5), ..e("dir", true, 0) },
+        ];
+        sort_entries(&mut v, Sort { key: SortKey::Created, descending: true });
+        let names: Vec<&str> = v.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["dir", "new.txt", "old.txt", "unknown.txt"], "newest first; no birth time last");
     }
 
     #[test]

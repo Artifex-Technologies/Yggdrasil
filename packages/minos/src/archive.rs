@@ -171,6 +171,7 @@ pub fn children(archive: &Path, entries: &[ArcEntry], inner: &str) -> Vec<Entry>
             is_dir,
             size: 0,
             modified: None,
+            created: None,
             usage: None,
         });
         if !nested && !e.is_dir {

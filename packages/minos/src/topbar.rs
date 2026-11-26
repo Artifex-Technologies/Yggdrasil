@@ -145,7 +145,9 @@ fn command_icon(c: Command) -> Icon {
 fn sort_menu(ui: &mut egui::Ui, sort: &mut minos_core::listing::Sort) {
     use minos_core::listing::SortKey;
     ui.label(RichText::new("Sort by").small());
-    for (k, label) in [(SortKey::Name, "Name"), (SortKey::Modified, "Date modified"), (SortKey::Size, "Size")] {
+    for (k, label) in
+        [(SortKey::Name, "Name"), (SortKey::Modified, "Date modified"), (SortKey::Created, "Date created"), (SortKey::Size, "Size")]
+    {
         if ui.selectable_label(sort.key == k, label).clicked() {
             sort.key = k;
             ui.close();

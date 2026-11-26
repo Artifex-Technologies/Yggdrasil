@@ -235,6 +235,7 @@ mod tests {
             is_dir: dir,
             size,
             modified: None,
+            created: None,
             hidden: name.starts_with('.'),
             usage: None,
         };

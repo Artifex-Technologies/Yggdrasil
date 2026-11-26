@@ -1,38 +1,42 @@
 //! The details list's columns: which are shown (the layout menu's Columns, and a right-click on the list's header), and how
-//! wide each is in the room a pane has. Name is always shown; the others are chosen and keep their order, at any width (the
-//! preview pane open or not, split view or not).
+//! wide each is in the room a pane has. Name is always shown, and Status wherever it means something (Proton Drive folders);
+//! the others are chosen and keep their order, at any width (the preview pane open or not, split view or not).
 
 use serde::{Deserialize, Serialize};
 
 /// A column after Name, in the list's order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListColumn {
-    /// Proton Drive's marks (on this computer, or in the cloud only), in Proton Drive folders while Settings shows them
+    /// Proton Drive's marks (on this computer, or in the cloud only): not chosen, there in Proton Drive folders while
+    /// Settings shows the marks
     Status,
     Modified,
+    Created,
     Type,
     Size,
 }
 
 impl ListColumn {
-    pub const ALL: [ListColumn; 4] = [ListColumn::Status, ListColumn::Modified, ListColumn::Type, ListColumn::Size];
+    /// The columns the menus offer, in the list's order.
+    pub const CHOOSABLE: [ListColumn; 4] = [ListColumn::Modified, ListColumn::Created, ListColumn::Type, ListColumn::Size];
 
     pub fn label(self) -> &'static str {
         match self {
             ListColumn::Status => "Status",
             ListColumn::Modified => "Date modified",
+            ListColumn::Created => "Date created",
             ListColumn::Type => "Type",
             ListColumn::Size => "Size",
         }
     }
 }
 
-/// Which columns after Name are shown. Every one is, until it is switched off.
+/// Which of the chosen columns are shown: all but Date created, until changed (as Windows starts).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Columns {
-    pub status: bool,
     pub modified: bool,
+    pub created: bool,
     #[serde(rename = "type")]
     pub kind: bool,
     pub size: bool,
@@ -40,33 +44,38 @@ pub struct Columns {
 
 impl Default for Columns {
     fn default() -> Self {
-        Self { status: true, modified: true, kind: true, size: true }
+        Self { modified: true, created: false, kind: true, size: true }
     }
 }
 
 impl Columns {
+    /// Whether a chosen column is shown (Status is not chosen: false).
     pub fn shows(&self, c: ListColumn) -> bool {
         match c {
-            ListColumn::Status => self.status,
+            ListColumn::Status => false,
             ListColumn::Modified => self.modified,
+            ListColumn::Created => self.created,
             ListColumn::Type => self.kind,
             ListColumn::Size => self.size,
         }
     }
 
+    /// Switches a chosen column (Status is not one: nothing).
     pub fn toggle(&mut self, c: ListColumn) {
         let s = match c {
-            ListColumn::Status => &mut self.status,
+            ListColumn::Status => return,
             ListColumn::Modified => &mut self.modified,
+            ListColumn::Created => &mut self.created,
             ListColumn::Type => &mut self.kind,
             ListColumn::Size => &mut self.size,
         };
         *s = !*s;
     }
 
-    /// The shown columns in order; Status only where `status_here` (a Proton Drive folder, with Settings' marks on).
+    /// The columns shown, in order: Status first where `status_here` (a Proton Drive folder, with Settings' marks on), then
+    /// the chosen ones.
     pub fn shown(&self, status_here: bool) -> Vec<ListColumn> {
-        ListColumn::ALL.into_iter().filter(|c| self.shows(*c) && (*c != ListColumn::Status || status_here)).collect()
+        status_here.then_some(ListColumn::Status).into_iter().chain(ListColumn::CHOOSABLE.into_iter().filter(|c| self.shows(*c))).collect()
     }
 }
 
@@ -106,14 +115,21 @@ mod tests {
 
     #[test]
     fn every_chosen_column_is_shown_in_its_order() {
+        use ListColumn::*;
         let mut c = Columns::default();
-        assert_eq!(c.shown(true), ListColumn::ALL);
-        assert_eq!(c.shown(false), [ListColumn::Modified, ListColumn::Type, ListColumn::Size], "Status only in Proton Drive");
-        c.toggle(ListColumn::Type);
-        assert!(!c.shows(ListColumn::Type));
-        assert_eq!(c.shown(false), [ListColumn::Modified, ListColumn::Size]);
-        c.toggle(ListColumn::Type);
+        assert_eq!(c.shown(false), [Modified, Type, Size], "Date created only when chosen");
+        assert_eq!(c.shown(true), [Status, Modified, Type, Size], "Status in Proton Drive folders, not chosen");
+        c.toggle(Created);
+        assert_eq!(c.shown(false), [Modified, Created, Type, Size]);
+        c.toggle(Type);
+        assert!(!c.shows(Type));
+        assert_eq!(c.shown(false), [Modified, Created, Size]);
+        c.toggle(Status);
+        assert_eq!(c.shown(true), [Status, Modified, Created, Size], "Status cannot be switched");
+        c.toggle(Type);
+        c.toggle(Created);
         assert_eq!(c, Columns::default());
+        assert!(!ListColumn::CHOOSABLE.contains(&Status));
     }
 
     #[test]
@@ -158,5 +174,8 @@ mod tests {
         assert!(text.contains("\"type\":true"), "{text}");
         assert_eq!(serde_json::from_str::<Columns>(&text).unwrap(), c);
         assert_eq!(serde_json::from_str::<Columns>("{}").unwrap(), Columns::default());
+        // a file saved while Status was a choice
+        let old = r#"{"status":false,"modified":true,"type":false,"size":true}"#;
+        assert_eq!(serde_json::from_str::<Columns>(old).unwrap(), Columns { kind: false, ..Columns::default() });
     }
 }

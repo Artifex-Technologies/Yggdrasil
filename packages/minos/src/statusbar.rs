@@ -507,6 +507,7 @@ mod tests {
             is_dir: dir,
             size,
             modified: None,
+            created: None,
             hidden: false,
             usage: None,
         };
