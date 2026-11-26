@@ -112,7 +112,11 @@ pub fn command(e: &Entry, op: Op) -> Option<(String, Vec<String>)> {
         (Source::Pacman(p), Op::Remove) | (Source::Aur(p), Op::Remove) => {
             ("pkexec".into(), with(s(&[ROOT_HELPER, CANCEL, "pacman", "-Rs", "--noconfirm"]), p))
         }
-        (Source::Aur(p), Op::Install) => ("yay".into(), with(s(&["-S", "--needed", "--noconfirm", "--sudo", SUDO_WRAPPER]), p)),
+        // base-devel with it: a build needs the build tools, which an OS may leave off its image (Labyrinth does; --needed
+        // makes it nothing where they are installed)
+        (Source::Aur(p), Op::Install) => {
+            ("yay".into(), with(s(&["-S", "--needed", "--noconfirm", "--sudo", SUDO_WRAPPER, "base-devel"]), p))
+        }
         (Source::Aur(p), Op::Reinstall) => ("yay".into(), with(s(&["-S", "--noconfirm", "--sudo", SUDO_WRAPPER]), p)),
         (Source::Flatpak(a), Op::Install) => ("flatpak".into(), s(&["install", "--user", "-y", "--noninteractive", "flathub", a])),
         (Source::Flatpak(a), Op::Reinstall) => {
@@ -830,6 +834,10 @@ mod tests {
         let (p, a) = command(&find("pdfcraft"), Op::Install).unwrap();
         assert_eq!(p, "yay");
         assert!(a.contains(&"--noconfirm".to_string()) && a.contains(&"pdfcraft-bin".to_string()) && a.contains(&SUDO_WRAPPER.to_string()));
+        assert!(
+            a.contains(&"base-devel".to_string()) && a.contains(&"--needed".to_string()),
+            "the build tools come with the first AUR app"
+        );
         assert_eq!(
             command(&find("krita"), Op::Remove).unwrap().1.join(" "),
             format!("{ROOT_HELPER} {CANCEL} pacman -Rs --noconfirm krita")
