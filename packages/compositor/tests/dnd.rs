@@ -1410,6 +1410,76 @@ fn a_file_dragged_with_a_finger_from_an_x11_program_onto_a_wayland_program_arriv
     assert_eq!((finished[0], finished[1] & 1, finished[2]), (stand_in, 1, x.copy), "the drop finished: {finished:?}");
 }
 
+/// The touchscreen cancels its fingers (`touch-cancel`) while an X11 program drags with a finger over a Wayland program: XWayland
+/// is told (wl_touch.cancel, passed on by the drag's grab), so it ends the finger, which the X11 program hears as the release
+/// (XWayland keeps the finger down otherwise); the drag ends and the window manager's stand-in goes; a finger put down on the X11
+/// window afterwards is heard as a press again. A finger cancelled with no drag going on ends the same way.
+#[test]
+fn a_touch_cancel_ends_an_x11_programs_finger_and_its_drag() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "a touch cancel during an X11 program's finger drag");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    // the seat gets touch from a first finger before XWayland starts (with the first X11 program), which takes it as it starts
+    comp.must("touch-down 0 500 500");
+    comp.must("touch-up 0");
+    let x = X11::connect(&display);
+    let win = x.window(b"x11source\0X11source\0", pointer_events());
+    place_x11(&comp, "X11source", (600, 100));
+    let mut t = comp.connect();
+    let (_tk, _tp) = t.input();
+    let tw = t.window("test.target", "Target");
+    t.draw(&tw, (300, 200), 0xff00ff00);
+    comp.must(&format!("place {} 0 0 300 200", id_of(&comp, "test.target")));
+    t.roundtrip();
+    let (xi, ti) = (comp.window("X11source").unwrap(), comp.window("test.target").unwrap());
+    let _tdev = data_device(&mut t);
+    let released = |x: &X11, t: &mut Client, what: &str| {
+        x.until(&mut [t], what, |e| match e {
+            Event::ButtonRelease(b) => Some(b.time),
+            _ => None,
+        })
+    };
+    let on_win = (xi.at.0 + 100, xi.at.1 + 100);
+
+    // a finger on the X11 window, no drag: cancelled, the program hears the release
+    x11_drawn(&comp, xi.at);
+    comp.must(&format!("touch-down 1 {} {}", on_win.0, on_win.1));
+    x.until(&mut [&mut t], "the finger heard as a press", |e| matches!(e, Event::ButtonPress(_)).then_some(()));
+    comp.must("touch-cancel");
+    released(&x, &mut t, "the cancelled finger heard as the release");
+
+    // its drag with a finger over the Wayland window, offered there; then the touchscreen cancels the finger
+    let (px, py) = (ti.at.0 + 32, ti.at.1 + 32);
+    let stand_in = x11_finger_drag_from(&comp, &x, win, xi.at, (px, py));
+    comp.must(&format!("touch-move 1 {px} {py}"));
+    let moved = x.finger_motion(&mut [&mut t], (px, py));
+    x.send(stand_in, x.enter, [win, XDND << 24, x.uri, 0, 0]);
+    x.send(stand_in, x.position, [win, 0, xy(px, py), moved, x.copy]);
+    x.message(&mut [&mut t], x.status, "XdndStatus");
+    comp.must(&format!("touch-move 1 {} {py}", px + 10));
+    until(&mut [&mut t], "the Wayland program offered the drag", |l| l.entered.is_some() && l.mimes.iter().any(|m| m == URI_MIME));
+    comp.must("touch-cancel");
+    released(&x, &mut t, "the cancelled drag's finger heard as the release");
+    // the stand-in goes with the drag: the X11 window is under that point again
+    let start = Instant::now();
+    loop {
+        let child = x.conn.translate_coordinates(x.root, x.root, on_win.0 as i16, on_win.1 as i16).unwrap().reply().unwrap().child;
+        if child != x11rb::NONE && x.aware_of(child).is_none() {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5), "the stand-in still over the X11 window after the cancel");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // XWayland has no finger left down: the next one on the X11 window is a press again
+    comp.must(&format!("touch-down 2 {} {}", on_win.0, on_win.1));
+    x.until(&mut [&mut t], "the next finger heard as a press", |e| matches!(e, Event::ButtonPress(_)).then_some(()));
+    comp.must("touch-up 2");
+    released(&x, &mut t, "its lift");
+}
+
 /// Two X11 programs drag a file between them as on any X server: over an X11 window the window manager's stand-in steps
 /// aside, so the programs speak XDND to each other, and the URI arrives.
 #[test]
