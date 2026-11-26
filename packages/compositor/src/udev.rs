@@ -51,7 +51,9 @@
 //!   factor is applied here. The touchscreen and the pen are the laptop screen's (touch.rs).
 //! - **The control socket** (control.rs) is there too, for Yggdrasil's own tools (yggdrasil-wm); it makes no input.
 //! - **Ending**: `ctl quit`, SIGTERM, SIGINT or SIGHUP end it cleanly: the CRTCs it tinted (Night Light) get a straight gamma
-//!   table back so the next session is not tinted, the session is closed and the console comes back.
+//!   table back so the next session is not tinted, the session is closed and the console comes back. The same tint comes off
+//!   before Ctrl+Alt+Fn switches to another terminal (the console or another session there is not tinted) and goes back on
+//!   when this one shows again; a switch made from elsewhere (chvt) is noticed only once the seat is gone, too late for the GPU.
 //!
 //! - **Waiting for programs' GPUs** (sync.rs): a commit with a GPU buffer is applied once the buffer is drawn, through
 //!   explicit sync (linux-drm-syncobj-v1, which NVIDIA needs) where the GPU can, the buffer's own fences otherwise.
@@ -365,11 +367,28 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     crate::outputmgmt::create_global(&dh);
     gpu_buffers(&udev, &mut app, &dh);
 
-    // Ctrl+Alt+Fn: another virtual terminal
+    // Ctrl+Alt+Fn: another virtual terminal. The screens' tint (Night Light) is taken off first, while the session still has
+    // the GPUs: the kernel keeps a CRTC's gamma table for whoever shows next (the console, a Hyprland session). Each screen's
+    // `gamma` stays as it was, so no frame before the switch puts the tint back; coming back sets it again (ActivateSession)
     let mut vt_session = session.clone();
+    let u = udev.clone();
     app.vt_switch = Some(Box::new(move |n| {
+        if let Ok(mut b) = u.try_borrow_mut() {
+            if b.session.is_active() {
+                for d in b.devices.values_mut() {
+                    untint(d);
+                }
+            }
+        }
         if let Err(e) = vt_session.change_vt(n) {
             eprintln!("yggdrasil-compositor: cannot switch to terminal {n}: {e}");
+            // still here: the tint again with the next frame
+            if let Ok(mut b) = u.try_borrow_mut() {
+                for s in b.devices.values_mut().flat_map(|d| d.screens.values_mut()) {
+                    s.gamma = None;
+                    s.dirty = true;
+                }
+            }
         }
     }));
 
@@ -395,6 +414,13 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     handle.insert_source(notifier, move |event, _, app| match event {
         SessionEvent::PauseSession => {
             let mut b = u.borrow_mut();
+            // a switch not made with Ctrl+Alt+Fn (chvt, another session started): the tint is tried here, but Smithay has
+            // already let the seat go by now, so the GPU usually refuses (said once per switch; ActivateSession sets it again)
+            if b.devices.values().any(|d| !d.tinted.is_empty()) {
+                for d in b.devices.values_mut() {
+                    untint(d);
+                }
+            }
             b.libinput.suspend();
             for d in b.devices.values_mut() {
                 match &mut d.gpu {
@@ -564,7 +590,7 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let mut b = udev.borrow_mut();
     // before the GPUs are let go: no tint of ours stays for the session after this one
     if b.session.is_active() {
-        for d in b.devices.values() {
+        for d in b.devices.values_mut() {
             untint(d);
         }
     } else if b.devices.values().any(|d| !d.tinted.is_empty()) {
@@ -581,7 +607,8 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
 /// without a gamma table has a colour matrix (CTM) or degamma table someone left on it cleared, so the session after this one
 /// (Hyprland, the console) is not tinted: the kernel keeps a CRTC's colour tables for whoever takes the GPU next. Gamescope
 /// clears them on exit the same way. (On an atomic driver the kernel's legacy gamma call also clears the CTM and degamma table.)
-fn untint(dev: &Device) {
+/// Also before a switch to another virtual terminal (`App::vt_switch`). A CRTC set straight is no longer counted as tinted.
+fn untint(dev: &mut Device) {
     let drm = gpu_drm(&dev.gpu);
     let crtcs: HashSet<crtc::Handle> = dev.screens.keys().chain(&dev.tinted).copied().collect();
     for crtc in crtcs {
@@ -591,7 +618,10 @@ fn untint(dev: &Device) {
             if dev.tinted.contains(&crtc) {
                 let straight = crate::ctm::ramp(1.0, len);
                 match drm.set_gamma(crtc, &straight, &straight, &straight) {
-                    Ok(()) => eprintln!("yggdrasil-compositor: {what}: tint taken off"),
+                    Ok(()) => {
+                        eprintln!("yggdrasil-compositor: {what}: tint taken off");
+                        dev.tinted.remove(&crtc);
+                    }
                     Err(e) => eprintln!("yggdrasil-compositor: {what}: the tint was not taken off: {e}"),
                 }
             }

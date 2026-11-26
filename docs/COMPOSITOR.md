@@ -68,7 +68,8 @@ default as the fallback, and each GPU's line says what EGL granted. `YGGDRASIL_C
 into each frame instead of on a cursor plane. A laptop's or handheld's panel mounted turned in its case starts upright from its
 'panel orientation'; where the session runs the tablet watcher (a machine with an accelerometer or a tablet-mode switch), the
 watcher's turn, counted from a panel that sits upright, replaces it a moment later. When the compositor
-ends, the Night Light tint is taken off the CRTCs before the GPUs are let go, so the next session is not tinted. The GPU
+ends, the Night Light tint is taken off the CRTCs before the GPUs are let go, so the next session is not tinted; the same
+before Ctrl+Alt+Fn shows another terminal, and the tint goes back on when the compositor's terminal shows again. The GPU
 priority, the cursor plane switch, the panel orientation and the tint at the end are ideas from reading Valve's gamescope (no
 code taken). Unit tests cover the rules, the mode choice with two real monitors' mode lists as Hyprland listed them; none of
 it has run on hardware yet. Each part and its check:
