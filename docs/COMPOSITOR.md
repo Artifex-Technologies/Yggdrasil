@@ -340,7 +340,7 @@ connects (since 2026-11-24, below). `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it 
   to start maximized, sets `_NET_WM_STATE` before its window is shown. Smithay's window manager reads it when the window is
   mapped (on Smithay main), and the window is full screen or maximized from its first frame (`src/xwayland.rs`,
   map_window_request); when that ends, it goes back to the place it would have had. Steam's is ignored, as its maximize requests
-  are (below). A window that asks to start minimized (WM_HINTS' initial state) is shown, and told so. A game (below) as big as
+  are (below). A window that asks to start minimized (WM_HINTS' initial state) is minimized as soon as XWayland has made its surface: never drawn, the keyboard left where it was, and told Iconic from the start (WM_STATE), never Normal first, which Wine would take as restored. A game (below) as big as
   the screen that said nothing is still taken as going full screen; other programs no longer are (`tests/x11.rs`).
 - Clipboard and middle-click selection both ways between X11 and Wayland programs; an X11 program can read them only while one of
   its windows has the keyboard. The program with the keyboard is now the one offered the clipboard (this was missing for Wayland

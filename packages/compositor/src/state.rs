@@ -1432,10 +1432,19 @@ impl App {
         self.opened_at.push(surface.clone());
         self.foreign_added(window);
         self.retile();
+        // one that opened minimized (an X11 window that asked to) leaves the keyboard where it is
+        if self.is_minimized(window) {
+            return;
+        }
         // the others are told they are no longer active (a full screen game under it would think it still has the keyboard)
         self.mark_active(window);
         self.give_keyboard(Some(surface.clone()), SERIAL_COUNTER.next_serial());
         self.touch_focus(surface);
+    }
+
+    /// Whether this window is minimized.
+    pub fn is_minimized(&self, window: &Window) -> bool {
+        self.minimized.contains(window)
     }
 
     /// A window has closed (an X11 one: unmapped or destroyed): forget it everywhere, and the keyboard goes to the window now on top.
