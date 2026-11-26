@@ -51,6 +51,8 @@ struct Log {
     entered: Option<(u32, WlDataOffer)>,
     mimes: Vec<String>,
     dropped: bool,
+    /// the receiver: told the drag left it (wl_data_device.leave)
+    left: bool,
     /// the receiver: the clipboard it was offered
     clipboard: Option<WlDataOffer>,
     /// the dragging program: the action the receiver chose, data asked for, the drop finished
@@ -86,6 +88,7 @@ impl Dispatch<WlDataDevice, Receiver> for State {
         match event {
             wl_data_device::Event::Enter { serial, id: Some(offer), .. } => log(|l| l.entered = Some((serial, offer))),
             wl_data_device::Event::Drop => log(|l| l.dropped = true),
+            wl_data_device::Event::Leave => log(|l| l.left = true),
             wl_data_device::Event::Selection { id } => log(|l| l.clipboard = id),
             _ => {}
         }
@@ -1831,6 +1834,52 @@ fn an_x11_program_drags_again_after_it_gave_a_drag_up() {
     comp.must(&format!("pointer {} {py}", px + 10));
     until(&mut [&mut t], "the Wayland program offered the next drag", |l| l.entered.is_some() && l.mimes.iter().any(|m| m == URI_MIME));
     comp.must("release");
+}
+
+/// An X11 program gives its drag up over a Wayland window that took it, and the button is let go there (`give_an_x11_drag_up`):
+/// nothing is dropped. The Wayland program is told the drag left, never that it was dropped, and its offer is called off: asking
+/// it for the data brings nothing (the pipe closed at once), and the X11 program is not asked for it (before, the Wayland program
+/// was told "drop" for a drag its source had given up, YGG-177).
+#[test]
+fn an_x11_drag_given_up_over_a_wayland_window_is_not_dropped_there() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "an X11 drag given up over a Wayland window");
+    let (comp, display) = with_xwayland_on(&["--size", "1000x600"], |_| {});
+    let x = X11::connect(&display);
+    let win = x.window(b"x11source\0X11source\0", pointer_events());
+    comp.wait(10, "the X11 window managed", |c| c.window("X11source").is_some());
+    place_x11(&comp, "X11source", (600, 100));
+    let mut t = comp.connect();
+    let (_tk, _tp) = t.input();
+    let tw = t.window("test.target", "Target");
+    t.draw(&tw, (300, 200), 0xff00ff00);
+    comp.must(&format!("place {} 0 0 300 200", id_of(&comp, "test.target")));
+    t.roundtrip();
+    let (xi, ti) = (comp.window("X11source").unwrap(), comp.window("test.target").unwrap());
+    let _tdev = data_device(&mut t);
+    give_an_x11_drag_up(&comp, &x, win, xi.at, &mut t, ti.at);
+
+    // told the drag left (a drop would have come before the leave), and no drop
+    until(&mut [&mut t], "the Wayland program told the drag left", |l| l.left);
+    assert!(!log(|l| l.dropped), "the Wayland program told of a drop its source gave up");
+    // the offer is called off: what it is asked for never comes, and the X11 program is not asked
+    let (_, offer) = log(|l| l.entered.clone()).unwrap();
+    let (read, write) = std::io::pipe().unwrap();
+    offer.receive(URI_MIME.into(), write.as_fd());
+    drop(write);
+    t.roundtrip();
+    assert!(read_all(read).is_empty(), "data from a drag given up");
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_millis(300) {
+        while let Some(e) = x.conn.poll_for_event().expect("the X11 connection") {
+            assert!(!matches!(e, Event::SelectionRequest(r) if r.selection == x.selection), "the X11 program asked for a drag it gave up");
+        }
+        t.roundtrip();
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// A Wayland program drags a file onto an X11 program, which says it takes it; the X11 program then ends (it crashed, or hung

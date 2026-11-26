@@ -414,8 +414,9 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     handle.insert_source(notifier, move |event, _, app| match event {
         SessionEvent::PauseSession => {
             let mut b = u.borrow_mut();
-            // a switch not made with Ctrl+Alt+Fn (chvt, another session started): the tint is tried here, but Smithay has
-            // already let the seat go by now, so the GPU usually refuses (said once per switch; ActivateSession sets it again)
+            // a switch not made with Ctrl+Alt+Fn (chvt, another session started): the tint comes off here. Under seatd the seat
+            // is still ours (our Smithay fork runs this before it lets the seat go, as wlroots does); under logind, which takes
+            // the GPU away itself, the GPU may refuse (said once per switch; ActivateSession sets it again)
             if b.devices.values().any(|d| !d.tinted.is_empty()) {
                 for d in b.devices.values_mut() {
                     untint(d);

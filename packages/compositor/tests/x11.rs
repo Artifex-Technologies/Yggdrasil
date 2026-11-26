@@ -154,7 +154,8 @@ fn an_x11_window_opens_as_it_asked_before_it_was_shown() {
             std::thread::sleep(Duration::from_millis(50));
         }
     };
-    until("told it is minimized", &|_, wm| wm == Some(3));
+    // and hidden from the start (_NET_WM_STATE_HIDDEN): Smithay marked it so only in its own copy of the state (YGG-176)
+    until("told it is minimized and hidden", &|states, wm| states.contains(&hidden) && wm == Some(3));
     // brought back (the dock): shown, told so, with the keyboard; minimized again: told Iconic and hidden
     comp.must(&format!("activate {}", client_of(&comp, "Iconic")));
     comp.wait(10, "the window shown", |c| c.window("Iconic").is_some_and(|w| !w.has("minimized")));
@@ -162,6 +163,75 @@ fn an_x11_window_opens_as_it_asked_before_it_was_shown() {
     until("told it is shown", &|states, wm| !states.contains(&hidden) && wm == Some(1));
     comp.must(&format!("minimize {}", client_of(&comp, "Iconic")));
     until("told it is minimized again", &|states, wm| states.contains(&hidden) && wm == Some(3));
+}
+
+/// An X11 window that asked to be full screen or maximized before it was shown is laid out by that state from the start, as a
+/// Wayland window whose state is still pending is (YGG-164): every place the window manager tells it (ConfigureNotify) is the
+/// whole screen at 0,0 for full screen, and the free room for maximized; it is never told first the place and size a floating
+/// window would have had (before, it was told its centred floating place, then the full screen one).
+#[test]
+fn an_x11_window_that_maps_full_screen_or_maximized_is_told_only_that_place() {
+    if !xwayland_installed() {
+        eprintln!("skipped: XWayland is not installed");
+        return;
+    }
+    let _l = limit(60, "an X11 window laid out by its state from the start");
+    let (comp, display) = with_xwayland_on(&["--size", "800x600"], |_| {});
+    let (conn, screen) = x11rb::connect(Some(&display)).expect("connect to XWayland");
+    let root = conn.setup().roots[screen].root;
+    let atom = |n: &[u8]| conn.intern_atom(false, n).unwrap().reply().unwrap().atom;
+    let (net_state, full, vert, horz) = (
+        atom(b"_NET_WM_STATE"),
+        atom(b"_NET_WM_STATE_FULLSCREEN"),
+        atom(b"_NET_WM_STATE_MAXIMIZED_VERT"),
+        atom(b"_NET_WM_STATE_MAXIMIZED_HORZ"),
+    );
+    // a 300x200 window of this class with these states set before it is mapped, hearing where it is put
+    let open = |class: &[u8], states: &[u32]| {
+        let win = conn.generate_id().unwrap();
+        let aux = CreateWindowAux::new().event_mask(EventMask::STRUCTURE_NOTIFY);
+        conn.create_window(0, win, root, 0, 0, 300, 200, 0, WindowClass::INPUT_OUTPUT, 0, &aux).unwrap();
+        conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, class).unwrap();
+        conn.change_property32(PropMode::REPLACE, win, net_state, AtomEnum::ATOM, states).unwrap();
+        conn.map_window(win).unwrap();
+        conn.flush().unwrap();
+        win
+    };
+    // what the window was told after it was mapped (0.3 s for the last of it): the sizes of every ConfigureNotify, and the
+    // places of the window manager's own (sent, in the root's coordinates; the server's are within the window's frame)
+    let told = |win: u32| {
+        let (mut sizes, mut places) = (vec![], vec![]);
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_millis(300) {
+            while let Some(e) = conn.poll_for_event().unwrap() {
+                if let x11rb::protocol::Event::ConfigureNotify(c) = e {
+                    if c.window == win {
+                        sizes.push((c.width, c.height));
+                        if c.response_type & 0x80 != 0 {
+                            places.push((c.x, c.y));
+                        }
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        (sizes, places)
+    };
+
+    let f = open(b"full\0Full\0", &[full]);
+    comp.wait(10, "the window full screen", |c| c.window("Full").is_some_and(|w| w.has("fullscreen") && w.rect() == (0, 0, 800, 600)));
+    let (sizes, places) = told(f);
+    assert!(!places.is_empty(), "the full screen window told where it is");
+    assert!(sizes.iter().all(|s| *s == (800, 600)), "the full screen window told only the screen's size: {sizes:?}");
+    assert!(places.iter().all(|p| *p == (0, 0)), "the full screen window told only 0,0: {places:?}");
+
+    let m = open(b"max\0Max\0", &[vert, horz]);
+    comp.wait(10, "the window maximized", |c| c.window("Max").is_some_and(|w| w.has("maximized") && w.size.0 > 700 && w.size.1 > 500));
+    let r = comp.window("Max").unwrap().rect();
+    let (sizes, places) = told(m);
+    assert!(!places.is_empty(), "the maximized window told where it is");
+    assert!(sizes.iter().all(|s| (s.0 as i32, s.1 as i32) == (r.2, r.3)), "the maximized window told only its size {r:?}: {sizes:?}");
+    assert!(places.iter().all(|p| (p.0 as i32, p.1 as i32) == (r.0, r.1)), "the maximized window told only its place {r:?}: {places:?}");
 }
 
 /// Under variable refresh on the hardware backend only a full screen window's own frames start a refresh of its screen
