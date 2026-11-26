@@ -66,7 +66,8 @@ Settings too, so nothing shows a rate the screen is not running. `highrr` and `h
 cinema 4096x2160 or a monitor's 800x600 at 60.32 Hz is never chosen. The GL context is asked for at high priority, with the
 default as the fallback, and each GPU's line says what EGL granted. `YGGDRASIL_COMPOSITOR_CURSOR_PLANE=0` draws the pointer
 into each frame instead of on a cursor plane. A laptop's or handheld's panel mounted turned in its case starts upright from its
-'panel orientation'; where the session runs the tablet watcher (a machine with an accelerometer or a tablet-mode switch), the
+'panel orientation' unless monitors.lua gives it a turn (Settings writes `transform = 0` once no turn was chosen there, so
+that choice lasts); where the session runs the tablet watcher (a machine with an accelerometer or a tablet-mode switch), the
 watcher's turn, counted from a panel that sits upright, replaces it a moment later. When the compositor
 ends, the Night Light tint is taken off the CRTCs before the GPUs are let go, so the next session is not tinted; the same
 before Ctrl+Alt+Fn shows another terminal, and the tint goes back on when the compositor's terminal shows again. The GPU

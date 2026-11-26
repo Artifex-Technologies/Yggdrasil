@@ -367,6 +367,8 @@ impl Change {
             Change::Turn(n, t) => {
                 let i = find(outs, n)?;
                 outs[i].transform = *t % 4;
+                // chosen here: written even when it is none (Output::turn_kept)
+                outs[i].turn_kept = true;
             }
             Change::Vrr(n, v) => {
                 let i = find(outs, n)?;
@@ -420,6 +422,7 @@ pub mod tests {
             x,
             y,
             transform: 0,
+            turn_kept: false,
             mirror_of: None,
             vrr: None,
         }
@@ -577,6 +580,9 @@ pub mod tests {
         assert!(Change::Resolution("DP-1".into(), "1x1@60.00".into()).apply(&mut outs).is_err(), "a mode it does not offer");
         Change::Turn("HDMI-A-1".into(), 1).apply(&mut outs).unwrap();
         assert_eq!(rect_of(&outs[1]), Rect { x: 3440, y: -720, w: 2880, h: 2560 }, "turned: wide, still against the main one");
+        // turned back to none: still written (a panel mounted turned keeps "none" at the next start)
+        Change::Turn("DP-1".into(), 0).apply(&mut outs).unwrap();
+        assert!(outs[0].turn_kept && outs[0].transform == 0 && !outs[2].turn_kept, "only the screen turned here");
         Change::Scale("DP-1".into(), 2.0).apply(&mut outs).unwrap();
         assert_eq!(at(&outs, "HDMI-A-1"), (1720, -720), "the main one smaller: its neighbour comes in");
         Change::Vrr("DP-1".into(), Some(9)).apply(&mut outs).unwrap();

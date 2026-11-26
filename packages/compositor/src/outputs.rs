@@ -624,6 +624,10 @@ mod tests {
             hl.monitor({ output = \"DP-1\", transform = 7 })\nhl.monitor({ output = \"DP-2\", transform = 9 })\n",
         );
         assert_eq!(r.iter().map(|r| r.transform).collect::<Vec<_>>(), [Some(Transform::_90), Some(Transform::Flipped270), None]);
+        // "none" said (Settings writes it once chosen): a turn of its own, so a panel's 'panel orientation' does not turn it
+        let r = parse_rules("hl.monitor({ output = \"eDP-1\", transform = 0 })\n");
+        assert_eq!(r[0].transform, Some(Transform::Normal));
+        assert_eq!(want_from_rules(&r, "eDP-1", mode(1920, 1200, 60_000), &[], 1.0).transform, Some(Transform::Normal));
         assert_eq!(
             (0..9).map(|n| transform_from(n).map(transform_number)).collect::<Vec<_>>()[..8],
             (0..8).map(Some).collect::<Vec<_>>()[..]
