@@ -111,6 +111,10 @@ shots() {
     shot settings-about                 desktop settings about system
     shot minos-explorer                 desktop app minos /home/alex/Documents
     shot minos-privacy-menu             desktop app minos /home/alex/Music
+    shot minos-transfers                desktop app minos /home/alex/Documents --demo-transfers
+    shot minos-transfers-collapsed      desktop app minos /home/alex/Documents --demo-transfers=collapsed
+    shot minos-transfers-failed         desktop app minos /home/alex/Documents --demo-transfers=failed
+    shot minos-transfers-light          desktop app minos /home/alex/Documents --demo-transfers
     shot taskmanager-processes          desktop app yggdrasil-taskmanager
     shot taskmanager                    desktop app yggdrasil-taskmanager
     shot marketplace                    desktop app agora

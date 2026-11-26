@@ -1,5 +1,6 @@
 //! File operations: copy, move, rename, new folder, trash.
 
+use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -56,6 +57,155 @@ pub struct Progress {
     /// Set by the Cancel button; the transfer stops at the next chunk.
     pub cancel: AtomicBool,
     pub current: Mutex<String>,
+    /// Every file the worker has reached and what became of it (the transfer panel's list).
+    pub log: Mutex<FileLog>,
+}
+
+/// What became of one file (or folder) of a transfer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FileState {
+    /// Being copied now: `FileEntry::done` bytes of `FileEntry::size`.
+    Copying,
+    /// Put in place (it was not there before).
+    Done,
+    /// Put over the one that was there, as asked.
+    Replaced,
+    /// Put beside the one that was there, under a numbered name.
+    KeptBoth,
+    /// Left alone because you said so.
+    Skipped,
+    /// Left alone because the same file was already there.
+    Same,
+    /// Cancel stopped it halfway (the half-written copy was removed).
+    Stopped,
+    /// It could not be copied or moved: why.
+    Failed(String),
+}
+
+impl FileState {
+    /// The short reason line under the file's name.
+    pub fn reason(&self) -> &str {
+        match self {
+            FileState::Copying => "Copying",
+            FileState::Done => "Done",
+            FileState::Replaced => "Replaced the one that was there",
+            FileState::KeptBoth => "Kept both: the new one has a number",
+            FileState::Skipped => "Skipped",
+            FileState::Same => "Already there",
+            FileState::Stopped => "Stopped",
+            FileState::Failed(why) => why,
+        }
+    }
+}
+
+/// One line of the transfer panel: a file the worker reached.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileEntry {
+    /// Its name, ready to draw.
+    pub name: String,
+    /// Where it comes from.
+    pub src: PathBuf,
+    /// Where it was going.
+    pub dst: PathBuf,
+    pub is_dir: bool,
+    pub size: u64,
+    /// Bytes written so far (while it is being copied).
+    pub done: u64,
+    pub state: FileState,
+}
+
+/// How many lines of each kind a transfer keeps (the files done before them are only counted).
+pub const LOG_CAP: usize = 5000;
+
+/// The files a transfer has reached, newest last. A copy of millions of files keeps only the last [`LOG_CAP`] (and every
+/// failure up to [`LOG_CAP`] of them, however long ago it happened), with a count of the rest.
+#[derive(Default, Debug)]
+pub struct FileLog {
+    /// The newest files that did not fail, oldest first.
+    pub recent: VecDeque<FileEntry>,
+    /// The files that failed, oldest first.
+    pub failed: Vec<FileEntry>,
+    /// Lines no longer kept (older files that did not fail, and failures past the cap).
+    pub dropped: u64,
+    /// All failures, also those past the cap.
+    pub failures: u64,
+    /// How many were skipped and how many were already there (all of them, not only those kept).
+    pub skipped: u64,
+    pub same: u64,
+}
+
+impl FileLog {
+    /// Lines kept: failures and the others.
+    pub fn len(&self) -> usize {
+        self.failed.len() + self.recent.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The `i`th line as the panel lists them: the failures first (newest first), then the others, newest first.
+    pub fn row(&self, i: usize) -> Option<&FileEntry> {
+        let nf = self.failed.len();
+        if i < nf {
+            return self.failed.get(nf - 1 - i);
+        }
+        let j = i - nf;
+        let nr = self.recent.len();
+        if j < nr {
+            self.recent.get(nr - 1 - j)
+        } else {
+            None
+        }
+    }
+
+    fn push(&mut self, e: FileEntry) {
+        if self.recent.len() >= LOG_CAP {
+            self.recent.pop_front();
+            self.dropped += 1;
+        }
+        self.recent.push_back(e);
+    }
+
+    /// The newest line ends in `state` (a failure moves to the failures).
+    fn finish_last(&mut self, src: &Path, state: FileState) {
+        match &state {
+            FileState::Skipped => self.skipped += 1,
+            FileState::Same => self.same += 1,
+            _ => {}
+        }
+        let last_is_it = self.recent.back().is_some_and(|e| e.src == src && e.state == FileState::Copying);
+        if let FileState::Failed(_) = state {
+            self.failures += 1;
+            let entry = if last_is_it { self.recent.pop_back() } else { None };
+            if self.failed.len() >= LOG_CAP {
+                self.dropped += 1;
+                return;
+            }
+            let mut e = entry.unwrap_or_else(|| FileEntry {
+                name: name_of(src),
+                src: src.to_path_buf(),
+                dst: PathBuf::new(),
+                is_dir: false,
+                size: 0,
+                done: 0,
+                state: FileState::Copying,
+            });
+            e.state = state;
+            self.failed.push(e);
+        } else if last_is_it {
+            if let Some(e) = self.recent.back_mut() {
+                if !matches!(state, FileState::Stopped) {
+                    e.done = e.size;
+                }
+                e.state = state;
+            }
+        }
+    }
+}
+
+fn name_of(p: &Path) -> String {
+    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string())
 }
 
 impl Progress {
@@ -72,6 +222,48 @@ impl Progress {
         if let Ok(mut c) = self.current.lock() {
             *c = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         }
+    }
+    /// A file (or folder) reached: its line, as being copied.
+    fn begin(&self, src: &Path, dst: &Path, is_dir: bool, size: u64) {
+        if let Ok(mut log) = self.log.lock() {
+            log.push(FileEntry {
+                name: name_of(src),
+                src: src.to_path_buf(),
+                dst: dst.to_path_buf(),
+                is_dir,
+                size,
+                done: 0,
+                state: FileState::Copying,
+            });
+        }
+    }
+    /// How far the file being copied is.
+    fn copied(&self, src: &Path, bytes: u64) {
+        if let Ok(mut log) = self.log.lock() {
+            if let Some(e) = log.recent.back_mut().filter(|e| e.src == src) {
+                e.done = bytes;
+            }
+        }
+    }
+    /// The line for `src` ends: what became of it.
+    fn end(&self, src: &Path, state: FileState) {
+        if let Ok(mut log) = self.log.lock() {
+            log.finish_last(src, state);
+        }
+    }
+    /// The line for `src` ends with `err`: stopped (cancelled) or failed with the reason.
+    fn end_err(&self, src: &Path, err: &io::Error) {
+        let state = if err.kind() == io::ErrorKind::Interrupted { FileState::Stopped } else { FileState::Failed(reason(err)) };
+        self.end(src, state);
+    }
+}
+
+/// An error as a person reads it: "Permission denied", without "(os error 13)".
+pub fn reason(err: &io::Error) -> String {
+    let s = err.to_string();
+    match s.find(" (os error") {
+        Some(i) => s[..i].to_string(),
+        None => s,
     }
 }
 
@@ -155,6 +347,7 @@ fn copy_file(src: &Path, dst: &Path, prog: &Progress) -> io::Result<()> {
     let mut r = std::fs::File::open(src)?;
     let mut w = std::fs::File::create_new(dst)?;
     let mut buf = vec![0u8; 1 << 20];
+    let mut written = 0u64;
     loop {
         if prog.cancelled() {
             drop(w);
@@ -178,6 +371,8 @@ fn copy_file(src: &Path, dst: &Path, prog: &Progress) -> io::Result<()> {
             return Err(e);
         }
         prog.add(n as u64);
+        written += n as u64;
+        prog.copied(src, written);
     }
     let _ = std::fs::set_permissions(dst, meta.permissions());
     if let Ok(m) = meta.modified() {
@@ -228,18 +423,32 @@ pub fn transfer(
     stats: &mut Stats,
     prog: &Progress,
 ) -> io::Result<PathBuf> {
-    refuse_root(src)?;
-    if src.is_dir() && dest_dir.starts_with(src) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "cannot copy or move a folder into itself"));
-    }
-    let name = src.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?;
+    let refused = refuse_root(src).and_then(|()| {
+        if src.is_dir() && dest_dir.starts_with(src) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "cannot copy or move a folder into itself"));
+        }
+        src.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))
+    });
+    let name = match refused {
+        Ok(n) => n,
+        Err(e) => {
+            prog.begin(src, dest_dir, src.is_dir(), 0);
+            prog.end_err(src, &e);
+            return Err(e);
+        }
+    };
     if src.parent() == Some(dest_dir) {
         if mv {
             return Ok(src.to_path_buf());
         }
         // copying into the folder it is already in: a numbered copy, as before
         let dst = unique_path(dest_dir, &name.to_string_lossy());
-        copy_recursive(src, &dst)?;
+        prog.begin(src, &dst, src.is_dir(), 0);
+        if let Err(e) = copy_recursive(src, &dst) {
+            prog.end_err(src, &e);
+            return Err(e);
+        }
+        prog.end(src, FileState::Done);
         stats.copied += 1;
         return Ok(dst);
     }
@@ -256,7 +465,14 @@ fn merge(
     stats: &mut Stats,
     prog: &Progress,
 ) -> io::Result<()> {
-    let sm = std::fs::symlink_metadata(src)?;
+    let sm = match std::fs::symlink_metadata(src) {
+        Ok(m) => m,
+        Err(err) => {
+            prog.begin(src, dst, false, 0);
+            prog.end_err(src, &err);
+            return Err(err);
+        }
+    };
     let parent = dst.parent().unwrap_or(Path::new("/"));
     let name = dst.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     if sm.is_dir() {
@@ -268,6 +484,8 @@ fn merge(
                     Decision::Skip | Decision::Replace => {
                         // a file is never silently swapped for a folder
                         stats.skipped += 1;
+                        prog.begin(src, dst, true, 0);
+                        prog.end(src, FileState::Skipped);
                         return Ok(());
                     }
                     Decision::KeepBoth => {
@@ -279,13 +497,30 @@ fn merge(
             Err(_) => {
                 if mv && std::fs::rename(src, dst).is_ok() {
                     stats.copied += 1;
+                    prog.begin(src, dst, true, 0);
+                    prog.end(src, FileState::Done);
                     return Ok(());
                 }
             }
         }
-        std::fs::create_dir_all(dst)?;
-        for e in std::fs::read_dir(src)? {
-            let e = e?;
+        let opened = std::fs::create_dir_all(dst).and_then(|()| std::fs::read_dir(src));
+        let entries = match opened {
+            Ok(rd) => rd,
+            Err(err) => {
+                prog.begin(src, dst, true, 0);
+                prog.end_err(src, &err);
+                return Err(err);
+            }
+        };
+        for e in entries {
+            let e = match e {
+                Ok(e) => e,
+                Err(err) => {
+                    prog.begin(src, dst, true, 0);
+                    prog.end_err(src, &err);
+                    return Err(err);
+                }
+            };
             let (from, to) = (e.path(), dst.join(e.file_name()));
             match merge(&from, &to, mv, ask, stats, prog) {
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => return Err(err),
@@ -299,37 +534,68 @@ fn merge(
         return Ok(());
     }
     prog.at(src);
-    match std::fs::symlink_metadata(dst) {
+    prog.begin(src, dst, false, sm.len());
+    match put_file(src, dst, &sm, parent, &name, mv, ask, stats, prog) {
+        Ok(state) => {
+            prog.end(src, state);
+            prog.file_done();
+            Ok(())
+        }
+        Err(err) => {
+            prog.end_err(src, &err);
+            Err(err)
+        }
+    }
+}
+
+/// The file part of [`merge`]: put the file `src` at `dst`, asking when another is there; what became of it.
+#[allow(clippy::too_many_arguments)]
+fn put_file(
+    src: &Path,
+    dst: &Path,
+    sm: &std::fs::Metadata,
+    parent: &Path,
+    name: &str,
+    mv: bool,
+    ask: &mut dyn FnMut(&Path, &Path) -> Option<Decision>,
+    stats: &mut Stats,
+    prog: &Progress,
+) -> io::Result<FileState> {
+    Ok(match std::fs::symlink_metadata(dst) {
         Err(_) => {
             put(src, dst, mv, prog)?;
             stats.copied += 1;
+            FileState::Done
         }
         Ok(dm) if dm.is_dir() => {
             // a folder is in the way of this file: keep both, never touch the folder
-            put(src, &unique_path(parent, &name), mv, prog)?;
+            put(src, &unique_path(parent, name), mv, prog)?;
             stats.kept_both += 1;
+            FileState::KeptBoth
         }
-        Ok(dm) if identical(src, dst, &sm, &dm) => {
+        Ok(dm) if identical(src, dst, sm, &dm) => {
             stats.same += 1;
             prog.add(sm.len());
+            FileState::Same
         }
         Ok(_) => match ask(src, dst).ok_or_else(cancelled)? {
             Decision::Replace => {
                 put_over(src, dst, mv, prog)?;
                 stats.replaced += 1;
+                FileState::Replaced
             }
             Decision::Skip => {
                 stats.skipped += 1;
                 prog.add(sm.len());
+                FileState::Skipped
             }
             Decision::KeepBoth => {
-                put(src, &unique_path(parent, &name), mv, prog)?;
+                put(src, &unique_path(parent, name), mv, prog)?;
                 stats.kept_both += 1;
+                FileState::KeptBoth
             }
         },
-    }
-    prog.file_done();
-    Ok(())
+    })
 }
 
 pub fn rename(path: &Path, new_name: &str) -> io::Result<PathBuf> {
@@ -554,5 +820,126 @@ mod tests {
         let r = transfer(&d.join("src"), &d.join("dest"), false, &mut |_, _| Some(Decision::Skip), &mut Stats::default(), &prog);
         assert_eq!(r.unwrap_err().kind(), io::ErrorKind::Interrupted);
         assert!(!d.join("dest/src/a.bin").exists());
+    }
+
+    fn rows(prog: &Progress) -> Vec<(String, FileState)> {
+        let log = prog.log.lock().unwrap();
+        (0..log.len()).map(|i| log.row(i).unwrap()).map(|e| (e.name.clone(), e.state.clone())).collect()
+    }
+
+    #[test]
+    fn the_log_lists_each_file_and_what_became_of_it() {
+        let d = tmp("log");
+        std::fs::create_dir_all(d.join("src/sub")).unwrap();
+        std::fs::create_dir_all(d.join("dest/src")).unwrap();
+        std::fs::write(d.join("src/new.txt"), "new").unwrap();
+        std::fs::write(d.join("src/sub/same.txt"), "same").unwrap();
+        std::fs::write(d.join("src/clash.txt"), "mine").unwrap();
+        std::fs::write(d.join("dest/src/clash.txt"), "theirs").unwrap();
+        // copy sub/same.txt first, so it is already there (same size, time and bytes) the second time
+        std::fs::create_dir_all(d.join("dest/src/sub")).unwrap();
+        let prog0 = Progress::default();
+        transfer(&d.join("src/sub"), &d.join("dest/src"), false, &mut |_, _| Some(Decision::Skip), &mut Stats::default(), &prog0).unwrap();
+        assert_eq!(rows(&prog0), vec![("same.txt".into(), FileState::Done)]);
+
+        let prog = Progress::default();
+        transfer(&d.join("src"), &d.join("dest"), false, &mut |_, _| Some(Decision::Skip), &mut Stats::default(), &prog).unwrap();
+        let mut got = rows(&prog);
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            got,
+            vec![("clash.txt".into(), FileState::Skipped), ("new.txt".into(), FileState::Done), ("same.txt".into(), FileState::Same),]
+        );
+        let log = prog.log.lock().unwrap();
+        assert_eq!((log.skipped, log.same, log.failures), (1, 1, 0));
+        let new = log.recent.iter().find(|e| e.name == "new.txt").unwrap();
+        assert_eq!((new.size, new.done), (3, 3), "a finished file shows all its bytes");
+        assert_eq!(new.dst, d.join("dest/src/new.txt"));
+    }
+
+    #[test]
+    fn failures_are_kept_listed_first_with_the_reason() {
+        let d = tmp("logfail");
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::create_dir(d.join("dest")).unwrap();
+        std::fs::write(d.join("src/ok.txt"), "ok").unwrap();
+        // a file in the way of the destination folder's own creation: the folder "src" cannot be made under it
+        std::fs::write(d.join("blocker"), "x").unwrap();
+        let prog = Progress::default();
+        let r = transfer(&d.join("src"), &d.join("blocker"), false, &mut |_, _| Some(Decision::Skip), &mut Stats::default(), &prog);
+        assert!(r.is_err());
+        // a source that is gone
+        let r = transfer(&d.join("missing.txt"), &d.join("dest"), false, &mut |_, _| Some(Decision::Skip), &mut Stats::default(), &prog);
+        assert!(r.is_err());
+        transfer(&d.join("src/ok.txt"), &d.join("dest"), false, &mut |_, _| Some(Decision::Skip), &mut Stats::default(), &prog).unwrap();
+        let got = rows(&prog);
+        assert_eq!(got.len(), 3);
+        // failures first (newest first), then the rest
+        assert_eq!(got[0].0, "missing.txt");
+        assert!(matches!(&got[0].1, FileState::Failed(why) if why.contains("No such file")), "{:?}", got[0]);
+        assert!(!got[0].1.reason().contains("os error"));
+        assert_eq!(got[1].0, "src");
+        assert!(matches!(got[1].1, FileState::Failed(_)));
+        assert_eq!(got[2], ("ok.txt".into(), FileState::Done));
+        assert_eq!(prog.log.lock().unwrap().failures, 2);
+        // a folder into itself is refused and listed
+        let prog = Progress::default();
+        assert!(copy_to_with(&d.join("src"), &d.join("src"), &prog).is_err());
+        assert!(matches!(rows(&prog)[0].1, FileState::Failed(_)));
+    }
+
+    fn copy_to_with(src: &Path, dest: &Path, prog: &Progress) -> io::Result<PathBuf> {
+        transfer(src, dest, false, &mut |_, _| Some(Decision::Skip), &mut Stats::default(), prog)
+    }
+
+    #[test]
+    fn the_log_is_capped_and_counts_the_rest() {
+        let mut log = FileLog::default();
+        let entry = |i: usize, state: FileState| FileEntry {
+            name: format!("f{i}"),
+            src: PathBuf::from(format!("/s/f{i}")),
+            dst: PathBuf::new(),
+            is_dir: false,
+            size: 1,
+            done: 0,
+            state,
+        };
+        for i in 0..LOG_CAP + 10 {
+            log.push(entry(i, FileState::Copying));
+            let state = if i % 2 == 0 { FileState::Done } else { FileState::Failed("nope".into()) };
+            log.finish_last(Path::new(&format!("/s/f{i}")), state);
+        }
+        // half failed: all of those kept (under the cap), the others too (under the cap)
+        assert_eq!(log.failures as usize, (LOG_CAP + 10) / 2);
+        assert_eq!(log.failed.len(), (LOG_CAP + 10) / 2);
+        assert_eq!(log.recent.len(), (LOG_CAP + 10) / 2);
+        for i in 0..LOG_CAP * 2 {
+            log.push(entry(i, FileState::Copying));
+            log.finish_last(Path::new(&format!("/s/f{i}")), FileState::Done);
+        }
+        assert_eq!(log.recent.len(), LOG_CAP);
+        assert!(log.dropped > 0);
+        assert_eq!(log.row(0).unwrap().state, FileState::Failed("nope".into()));
+        assert_eq!(log.row(log.failed.len()).unwrap().name, format!("f{}", LOG_CAP * 2 - 1), "the newest first after the failures");
+        assert!(log.row(log.len()).is_none());
+        // past the cap, failures are counted, not kept
+        for i in 0..LOG_CAP {
+            log.push(entry(i, FileState::Copying));
+            log.finish_last(Path::new(&format!("/s/f{i}")), FileState::Failed("late".into()));
+        }
+        assert_eq!(log.failed.len(), LOG_CAP);
+        assert_eq!(log.failures as usize, (LOG_CAP + 10) / 2 + LOG_CAP);
+    }
+
+    #[test]
+    fn a_cancelled_file_is_listed_as_stopped() {
+        let d = tmp("logstop");
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::create_dir(d.join("dest")).unwrap();
+        std::fs::write(d.join("src/big.bin"), vec![0u8; 10]).unwrap();
+        let prog = Progress::default();
+        prog.cancel.store(true, Ordering::Relaxed);
+        assert!(copy_to_with(&d.join("src/big.bin"), &d.join("dest"), &prog).is_err());
+        assert_eq!(rows(&prog), vec![("big.bin".into(), FileState::Stopped)]);
     }
 }
