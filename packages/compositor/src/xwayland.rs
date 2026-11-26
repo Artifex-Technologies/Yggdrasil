@@ -554,7 +554,14 @@ impl XwmHandler for App {
         } else {
             self.remembered_place(&w).unwrap_or_else(|| fit_in(zone, Rectangle::new(start, geo.size)) - shadow)
         };
-        state::x11_place(&w, place.loc, place.size);
+        // One that asked to be full screen or maximized is laid out by that state from the start, as place_new leaves a Wayland
+        // window whose state is still pending (YGG-164): it is told only that place (fit_window, below), never this floating one
+        // first; `place` is kept as where it goes back to.
+        let full = game_full || window.is_fullscreen();
+        let maximized = !full && window.is_maximized() && !crate::state::ignores_maximize(&w);
+        if !full && !maximized {
+            state::x11_place(&w, place.loc, place.size);
+        }
         self.space.map_element(w.clone(), place.loc, true);
         // its own icon, for the dock (x11asked.rs)
         if let Some(r) = &self.x11_reader {
@@ -565,10 +572,9 @@ impl XwmHandler for App {
         // for games). Steam's maximize is ignored, as its maximize requests are, and it is told so: a window marked maximized is
         // held at its place and size. Leaving full screen or maximized, it goes back to `place` (adopt keeps it for that, once
         // XWayland has made the surface the compositor keeps places by).
-        let full = game_full || window.is_fullscreen();
-        if !full && window.is_maximized() && crate::state::ignores_maximize(&w) {
+        if !full && !maximized && window.is_maximized() {
             let _ = window.set_maximized(false);
-        } else if full || window.is_maximized() {
+        } else if full || maximized {
             w.user_data().insert_if_missing(|| PlaceBefore(place));
             if full {
                 self.fullscreen(&w);
