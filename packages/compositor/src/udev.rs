@@ -14,10 +14,11 @@
 //!   Settings > Displays' monitors.lua then sets its mode, scale and place (outputs.rs, the same code as headless; a screen it
 //!   does not name runs at its own size at the fastest rate it has for it, and one it gives no scale gets one from its size,
 //!   laptop.rs). A laptop's panel mounted turned in its case (a handheld's, a tablet's: the connector's "panel orientation")
-//!   starts turned upright unless monitors.lua turns it. A mode changed later (wlr-output-management) is set on the CRTC at
-//!   the next frame (a mode within half a hertz of the one asked: 60 for a panel's 60.003 Hz); one the screen cannot have (its
-//!   GPU refuses it, at the first modeset or later, or it is not one of its modes) leaves the CRTC as it is, and the screen is
-//!   put back at that mode, so programs and Settings never see a mode it does not run. A screen unplugged gives its CRTC
+//!   starts turned upright unless monitors.lua turns it. A mode changed later (wlr-output-management) is first test-committed
+//!   on the CRTC (`test_mode`: a mode its GPU refuses, or one it does not have, is answered 'failed' and nothing changes), then
+//!   set on the CRTC at the next frame (a mode within half a hertz of the one asked: 60 for a panel's 60.003 Hz); one the
+//!   screen cannot have then (its GPU refuses it, at the first modeset or later, or it is not one of its modes) leaves the CRTC
+//!   as it is, and the screen is put back at that mode, so programs and Settings never see a mode it does not run. A screen unplugged gives its CRTC
 //!   back (its DrmCompositor goes, which switches the CRTC off) but stays a screen for 2 s (outputs.rs, UNPLUG_GRACE): a monitor
 //!   whose link bounces comes back with its windows and panels, only its CRTC set up again; one plugged in is set up once its
 //!   link has stayed for 0.7 s (SETTLE). A connector
