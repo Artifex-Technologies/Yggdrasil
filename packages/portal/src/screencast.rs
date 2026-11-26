@@ -111,6 +111,16 @@ fn bar_file() -> std::path::PathBuf {
 
 /// Tells the bar what is shared now (written whole, then moved into place, so the bar never reads half of it).
 pub fn publish(sessions: &Sessions) {
+    publish_to(&bar_file(), sessions);
+}
+
+/// One write at a time, each from the sessions as they are at its turn. Two at once (a screen unplugged: its worker ends as
+/// its session closes) shared the one temporary file, so one could move the other's emptied or half-written file into
+/// place, which the bar then could not read, or an older state could land after a newer one.
+static WRITING: Mutex<()> = Mutex::new(());
+
+fn publish_to(path: &std::path::Path, sessions: &Sessions) {
+    let _turn = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     let shares: Vec<(String, Vec<String>)> = sessions
         .lock()
         .unwrap()
@@ -118,13 +128,12 @@ pub fn publish(sessions: &Sessions) {
         .filter(|s| s.started)
         .map(|s| (s.app.clone(), s.workers.iter().map(|w| w.screen.clone()).collect()))
         .collect();
-    let path = bar_file();
     if let Some(d) = path.parent() {
         let _ = std::fs::create_dir_all(d);
     }
     let tmp = path.with_extension("json.new");
     if std::fs::write(&tmp, bar_json(&shares)).is_ok() {
-        let _ = std::fs::rename(&tmp, &path);
+        let _ = std::fs::rename(&tmp, path);
     }
 }
 
@@ -478,6 +487,40 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+
+    /// Many writes at once (as when a screen is unplugged: its worker ends while its session closes) never leave the bar a
+    /// file it cannot read.
+    #[test]
+    fn writes_at_once_always_leave_a_whole_file() {
+        let dir = std::env::temp_dir().join(format!("ygg-portal-bar-{}", std::process::id()));
+        let path = dir.join("screen-sharing.json");
+        let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+        publish_to(&path, &sessions);
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = {
+            let (path, stop) = (path.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut bad = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    let text = std::fs::read_to_string(&path).unwrap_or_default();
+                    if serde_json::from_str::<serde_json::Value>(&text).is_err() {
+                        bad += 1;
+                    }
+                }
+                bad
+            })
+        };
+        let writers: Vec<_> = (0..8)
+            .map(|_| {
+                let (path, sessions) = (path.clone(), sessions.clone());
+                std::thread::spawn(move || (0..300).for_each(|_| publish_to(&path, &sessions)))
+            })
+            .collect();
+        writers.into_iter().for_each(|w| w.join().unwrap());
+        stop.store(true, Ordering::Relaxed);
+        assert_eq!(reader.join().unwrap(), 0, "a read found the file empty, half written or missing");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use super::*;
 
     fn screen(name: &str, x: i32, w: u32, h: u32, scale: f64, transform: u32) -> yggdrasil_wm::Screen {
