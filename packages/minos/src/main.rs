@@ -941,6 +941,10 @@ fn entry_interact(
             actions.push(Action::CopyPath(e.path.clone()));
             ui.close();
         }
+        if e.usage.is_none() && !archive::inside(&e.path) && ui.button("Properties").clicked() {
+            actions.push(Action::Properties(cx.pi));
+            ui.close();
+        }
         let avail = drive_avail(cx.st, e);
         if matches!(avail, Some(cloud::Avail::Failed)) && ui.button("Retry sync").clicked() {
             actions.push(Action::RetrySync(e.path.clone()));

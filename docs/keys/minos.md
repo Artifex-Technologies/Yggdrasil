@@ -29,7 +29,7 @@ Share is greyed: the system has no file sharing service. In split view each pane
 bar, and a narrow pane puts Sort, Group, the layout and the preview pane in one menu. Code: `src/topbar.rs`, the rules in
 `src/commandbar.rs`, Group by in `src/grouping.rs`.
 
-**Properties** (Alt+Enter, or the wrench): name, type, size, where it is, when it was made and changed, its permissions in
+**Properties** (Alt+Enter, the wrench, or right-click > Properties): name, type, size, where it is, when it was made and changed, its permissions in
 letters and words, and its owner; with nothing selected, the folder's. A folder's size (and several items') is counted on a
 thread and fills in as it goes; on a network or cloud drive it is not counted (it would fetch every file). Code: `src/props.rs`.
 
