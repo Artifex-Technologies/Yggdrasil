@@ -187,6 +187,8 @@ smithay::delegate_dispatch2!(App);
 pub type DmabufImport = Box<dyn FnMut(&smithay::backend::allocator::dmabuf::Dmabuf) -> bool>;
 /// Shows the pointer the way it should look.
 pub type CursorHook = Box<dyn FnMut(&CursorImageStatus)>;
+/// Whether a screen (by name) can have a mode now: Err with the reason when its GPU refuses it.
+pub type ModeCheck = Box<dyn FnMut(&str, smithay::output::Mode) -> Result<(), String>>;
 
 /// How many times the full screen windows on a screen committed, and when the last time was (`App::game_commits`).
 #[derive(Clone, Copy, Debug, Default)]
@@ -219,6 +221,10 @@ pub struct App {
     pub cursor_hook: Option<CursorHook>,
     /// Switches to another virtual terminal (Ctrl+Alt+Fn): set by the hardware backend (udev.rs), which owns the session.
     pub vt_switch: Option<Box<dyn FnMut(i32)>>,
+    /// Asks the backend whether a screen can have a mode now, before a program is told its change succeeded
+    /// (wlr-output-management, `App::modes_taken`): the hardware backend test-commits it on the screen's CRTC (udev.rs), the
+    /// headless one refuses the modes `refuse-mode` named. None: any mode goes.
+    pub mode_check: Option<ModeCheck>,
     /// Wakes the drawing: the screen is drawn only when something changed (a program committed a picture, input, a setting).
     ping: smithay::reexports::calloop::ping::Ping,
     pub display_handle: DisplayHandle,
@@ -841,6 +847,7 @@ impl App {
             _tablet_state: smithay::wayland::tablet_manager::TabletManagerState::new::<Self>(dh),
             cursor_hook: None,
             vt_switch: None,
+            mode_check: None,
             seat_state,
             data_device_state: DataDeviceState::new::<Self>(dh),
             _output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(dh),

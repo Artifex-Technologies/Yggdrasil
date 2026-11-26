@@ -372,6 +372,11 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
         }
     }));
 
+    // a program's mode change (wlr-output-management) is answered only once the screen's GPU has taken the mode in a test
+    // commit (`test_mode`)
+    let u = udev.clone();
+    app.mode_check = Some(Box::new(move |name, mode| test_mode(&u, name, mode)));
+
     // a wake-up (a commit, input, a setting): draw the screens that changed, once per pass of the loop
     let u = udev.clone();
     handle.insert_source(ping_source, move |_, _, app| {
@@ -2021,6 +2026,44 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
         }
     }
     None
+}
+
+/// Whether the screen `name` can have `mode` now, asked before a program is told its change succeeded (`App::modes_taken`): a
+/// mode it does not have is refused, and one it has is test-committed on its CRTC (Smithay's `use_mode` makes an atomic
+/// TEST_ONLY commit with a modeset), after which the CRTC's pending mode is put back as it was: the change itself is set at the
+/// next frame (`follow_mode`), which still puts the screen back if the GPU refuses it then. Ok when nothing can be asked now
+/// (another terminal has the screens, the backend is busy, a legacy-only GPU, which cannot test without setting): the frame
+/// decides then, as before.
+fn test_mode(udev: &Rc<RefCell<Udev>>, name: &str, mode: Mode) -> Result<(), String> {
+    let Ok(b) = udev.try_borrow() else { return Ok(()) };
+    if !b.session.is_active() {
+        return Ok(());
+    }
+    let Some(screen) = b.devices.values().flat_map(|d| d.screens.values()).find(|s| s.output.name() == name) else {
+        return Ok(());
+    };
+    let offered: Vec<Mode> = screen.modes.iter().map(|m| Mode::from(*m)).collect();
+    let i = match mode_to_set(Some(mode), screen.mode, None, &offered) {
+        None => return Ok(()),
+        Some((_, Err(e))) => return Err(e.into()),
+        Some((_, Ok(i))) => i,
+    };
+    let drm_mode = screen.modes[i];
+    let try_it = |surface: &smithay::backend::drm::DrmSurface| {
+        let before = surface.pending_mode();
+        let tried = surface.use_mode(drm_mode).map_err(|e| format!("its GPU refused it ({e})"));
+        if tried.is_ok() && before != drm_mode {
+            // put back: the frame sets the mode (follow_mode), with its own buffers
+            if let Err(e) = surface.use_mode(before) {
+                eprintln!("yggdrasil-compositor: {name}: its pending mode not put back after a test: {e}");
+            }
+        }
+        tried
+    };
+    match &screen.drm {
+        Out::Gles(o) => o.with_compositor(|c| try_it(c.surface())),
+        Out::Pixman(o) => o.with_compositor(|c| try_it(c.surface())),
+    }
 }
 
 /// Whether a program's buffer may go to the screen directly: `YGGDRASIL_COMPOSITOR_SCANOUT` 0 (no, off, false) keeps every

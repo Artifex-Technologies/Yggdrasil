@@ -394,6 +394,28 @@ impl App {
         }
     }
 
+    /// Whether every screen that is on and stays on can have the mode `changes` asks for it (matched as `configure_outputs`
+    /// matches it), as its backend says (`mode_check`: the hardware backend's test commit). A program applying or testing a
+    /// configuration through wlr-output-management is answered 'failed' when one cannot, and nothing changes; before, it was
+    /// told 'succeeded' and the screen put back a frame later (`mode_kept`).
+    pub fn modes_taken(&mut self, changes: &[(String, Want)]) -> Result<(), String> {
+        for (name, w) in changes {
+            let Some(h) = self.heads.list.iter().find(|h| h.output.name() == *name) else { continue };
+            if !w.enabled || !h.enabled {
+                continue;
+            }
+            let mode = closest_mode(&h.output.modes(), w.mode).unwrap_or(w.mode);
+            if h.output.current_mode() == Some(mode) {
+                continue;
+            }
+            if let Some(check) = self.mode_check.as_mut() {
+                check(name, mode)
+                    .map_err(|e| format!("{name}: {}x{} at {} Hz: {e}", mode.size.w, mode.size.h, mode.refresh as f64 / 1000.0))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Set screens to what `changes` says (the others stay as they are). With `test_only` nothing changes: only whether it could.
     /// A mode is matched to the screen's own within half a hertz (`closest_mode`).
     pub fn configure_outputs(&mut self, changes: Vec<(String, Want)>, test_only: bool) -> Result<(), String> {
