@@ -2,7 +2,7 @@
 name = "yggdrasil-clouddrives"
 version = "0.1.0"
 edition = "2021"
-description = "Cloud drives: rclone remotes mounted as folders by a systemd user unit, and folders a sync app keeps; shared by Settings > Apps > Minos > Cloud drives and Minos's Cloud Storage"
+description = "Cloud drives: rclone remotes mounted as folders by a systemd user unit, and folders a sync app keeps; shared by Settings > Cloud Storage and Minos's Cloud Storage"
 license = "MPL-2.0"
 
 [lib]

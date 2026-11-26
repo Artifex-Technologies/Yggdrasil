@@ -7,6 +7,7 @@ use yggdrasil_ui::dnd;
 
 mod cloudside;
 mod icons;
+mod settings_win;
 mod statusbar;
 mod topbar;
 mod transfers;
@@ -312,8 +313,10 @@ enum Action {
     /// A cloud drive under Cloud Storage: mount it (and open it once mounted, when the bool says so), or unmount it.
     CloudMount(String, bool),
     CloudUnmount(String),
-    /// Settings > Apps > Minos > Cloud drives.
+    /// Settings > Cloud Storage.
     ManageCloud,
+    /// Menu > Settings...: Minos's own settings window (settings_win.rs).
+    OpenSettings,
 }
 
 /// What the drive watcher and drive jobs report back.
@@ -2280,6 +2283,8 @@ struct App {
     /// Proton Drive sign-in form: email, password, mailbox password, 2FA code.
     proton_form: Option<[String; 4]>,
     proton_busy: bool,
+    /// Menu > Settings...: Minos's own settings, while the window is open.
+    settings_win: Option<settings_win::SettingsWin>,
     /// Whether Proton Drive was added (cloud::proton_added): read at start, after a sign-in and when Settings changed something.
     proton_added: bool,
     /// Until when the mount is looked for after a sign-in (every 2 s); never longer, so an added Proton Drive that is simply not
@@ -2428,6 +2433,7 @@ impl App {
             verify_rx,
             proton_form: None,
             proton_busy: false,
+            settings_win: None,
             proton_added,
             proton_wait: None,
             dev_tx,
@@ -3333,6 +3339,7 @@ impl App {
                         self.status = e;
                     }
                 }
+                Action::OpenSettings => self.settings_win = Some(settings_win::SettingsWin::open()),
                 Action::Install(pkg) => {
                     if let Err(e) = run::install_in_terminal(&pkg) {
                         self.status = format!("Could not install {pkg}: {e}");
@@ -4067,7 +4074,7 @@ impl App {
                     }
                 });
             }
-            if any_cloud && ui.small_button("Manage cloud drives").on_hover_text("Settings > Apps > Minos > Cloud drives").clicked() {
+            if any_cloud && ui.small_button("Manage cloud drives").on_hover_text("Settings > Cloud Storage").clicked() {
                 actions.push(Action::ManageCloud);
             }
         });
@@ -4111,7 +4118,7 @@ impl eframe::App for App {
                 self.st.show_hidden = show;
                 self.reload_all();
             }
-            // Settings > Apps > Minos > Cloud drives writes its list into the same folder (Proton Drive added or removed there too)
+            // Settings > Cloud Storage writes its list into the same folder (Proton Drive added or removed there too)
             self.cloud_drives.reload_list();
             self.proton_added = cloud::proton_added();
             self.cloud = places::proton_drive(self.proton_added);
@@ -4420,6 +4427,10 @@ impl eframe::App for App {
                     if ui.checkbox(&mut side, "Sidebar").changed() {
                         actions.push(Action::ToggleSidebar);
                     }
+                    ui.separator();
+                    if ui.button("Settings...").clicked() {
+                        actions.push(Action::OpenSettings);
+                    }
                 });
                 ui.add_space(6.0);
                 // the tabs, as the Files app has them in its title bar (in split view each pane keeps its own above it)
@@ -4711,6 +4722,17 @@ impl eframe::App for App {
 
         let mut proton_go = false;
         let mut proton_cancel = false;
+        if let Some(w) = &mut self.settings_win {
+            let mut manage = false;
+            if !w.show(&ctx, &pal, self.proton_added, &mut manage) {
+                self.settings_win = None;
+            }
+            if manage {
+                if let Err(e) = cloudside::open_settings() {
+                    self.status = e;
+                }
+            }
+        }
         if let Some(f) = &mut self.proton_form {
             let busy = self.proton_busy;
             egui::Window::new("Connect Proton Drive").collapsible(false).show(&ctx, |ui| {

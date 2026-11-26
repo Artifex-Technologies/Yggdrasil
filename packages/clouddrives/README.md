@@ -1,6 +1,6 @@
 # Cloud drives (yggdrasil-clouddrives)
 
-The cloud drives that Settings > Apps > Minos > Cloud drives adds, mounts and removes, and that Minos lists under Cloud
+The cloud drives that Settings > Cloud Storage adds, mounts and removes, and that Minos lists under Cloud
 Storage in its sidebar. A library shared by both; it has no window of its own.
 
 ## What a drive is

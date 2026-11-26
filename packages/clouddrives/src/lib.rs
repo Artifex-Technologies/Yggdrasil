@@ -1,4 +1,4 @@
-//! Cloud drives, shared by Settings > Apps > Minos > Cloud drives (which adds, mounts and removes them) and Minos (which lists
+//! Cloud drives, shared by Settings > Cloud Storage (which adds, mounts and removes them) and Minos (which lists
 //! them under Cloud Storage in its sidebar).
 //!
 //! Linux has no single cloud API, so a drive is one of two things:
@@ -265,7 +265,7 @@ pub fn parse_list(text: &str) -> Vec<Drive> {
 /// The list as its file holds it.
 pub fn write_list(drives: &[Drive]) -> String {
     let mut s = String::from(
-        "# Cloud drives: written by Settings > Apps > Minos > Cloud drives; Minos lists them under Cloud Storage.\n\
+        "# Cloud drives: written by Settings > Cloud Storage; Minos lists them under Cloud Storage.\n\
          # [remote NAME] is an rclone remote mounted at `mount`; [folder NAME] is a folder a sync app keeps.\n",
     );
     for d in drives {
@@ -401,7 +401,7 @@ pub fn unit_text(name: &str, mount: &Path, rclone: &Path, fusermount: &Path) -> 
     let m = sd_arg(&mount.to_string_lossy());
     let (rc, fm) = (sd_arg(&rclone.to_string_lossy()), sd_arg(&fusermount.to_string_lossy()));
     Some(format!(
-        "# Written by Settings > Apps > Minos > Cloud drives: mounts the rclone remote \"{name}\" at {mount}. Removing the drive there\n\
+        "# Written by Settings > Cloud Storage: mounts the rclone remote \"{name}\" at {mount}. Removing the drive there\n\
          # removes this file and the remote; the files in the cloud are never touched.\n\
          [Unit]\n\
          Description=Cloud drive {name} (rclone mount)\n\

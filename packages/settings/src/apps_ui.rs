@@ -118,7 +118,7 @@ pub fn by_letter<'a>(list: &[&'a AppInfo]) -> Vec<(String, Vec<&'a AppInfo>)> {
 }
 
 impl App {
-    /// Apps, as on a tablet: Default Apps (and the system's optional software and Minos) on a card at the top, then every
+    /// Apps, as on a tablet: Default Apps (and the system's optional software) on a card at the top, then every
     /// installed app, A to Z under its letter, with a search.
     pub(crate) fn page_apps(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         if self.app_sel.is_none() && self.app_tab == 0 {
@@ -127,9 +127,6 @@ impl App {
                 open_defaults = ui::nav_row(ui, pal, true, "Default Apps", Some("Manage default apps"), |_| {});
                 if ui::nav_row(ui, pal, false, "Optional software", Some("Parts of the system you can add or take away"), |_| {}) {
                     self.app_tab = 1;
-                }
-                if ui::nav_row(ui, pal, false, "Minos", Some("The file manager's windows and tabs"), |_| {}) {
-                    self.app_tab = 2;
                 }
             });
             if open_defaults {
@@ -140,12 +137,7 @@ impl App {
         match (self.app_tab, self.app_sel.clone()) {
             (0, Some(id)) => self.app_detail(ui, pal, ctx, &id),
             (0, None) => self.app_list(ui, pal, ctx),
-            (1, _) => self.page_apps_software(ui, pal),
-            (3, _) => match self.cloud_panel.as_mut() {
-                Some(p) => p.show(ui, pal, ctx),
-                None => self.cloud_panel = Some(crate::clouddrives_ui::Panel::new(ctx)),
-            },
-            _ => self.page_apps_minos(ui, pal, ctx),
+            _ => self.page_apps_software(ui, pal),
         }
         self.app_confirm_window(ctx, pal);
     }

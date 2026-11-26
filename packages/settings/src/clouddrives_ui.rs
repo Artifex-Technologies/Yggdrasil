@@ -1,4 +1,4 @@
-//! Settings > Apps > Minos > Cloud drives (YGG-170): the cloud drives Minos lists under Cloud Storage, with their state (mounted,
+//! Settings > Cloud Storage (YGG-170): the cloud drives Minos lists under Cloud Storage, with their state (mounted,
 //! not mounted, an error), Add, Mount / Unmount, "Mount at sign-in" and Remove. The drives, their units and rclone's remotes are
 //! `yggdrasil_clouddrives`; this is the page.
 //!
@@ -25,7 +25,6 @@ use eframe::egui::{self, vec2, RichText};
 use yggdrasil_clouddrives::{self as cd, Drive, Kind, Provider, Remote, SignIn, State, Sys};
 use yggdrasil_ui::theme::Palette;
 
-use crate::icons::Icon;
 use crate::ui;
 
 /// How often the state is read again while the page is open.
@@ -59,6 +58,9 @@ impl cd::Sys for SettingsSys {
         }
     }
 }
+
+/// A change asked for on a drive's page: the drive, and on (mount, mount at sign-in) or off.
+type Change = (Drive, bool);
 
 /// One drive as shown: the drive, its state, and whether it is mounted at sign-in.
 #[derive(Clone, Debug)]
@@ -117,6 +119,8 @@ pub struct Panel {
     add: Option<AddForm>,
     confirm_remove: Option<Drive>,
     home: PathBuf,
+    /// The drive whose own page is open (its name), from its row or its (i).
+    open: Option<String>,
 }
 
 /// The drives with their states, read on a thread. rclone's remotes are asked for when `cached` has none (the page opened, a
@@ -147,14 +151,6 @@ fn load(cached: Option<Result<Vec<Remote>, String>>) -> Msg {
     Msg::Loaded { drives: shown, remotes: asked, rclone }
 }
 
-/// A choice in "What to add": filled with the accent when chosen.
-fn chip<'a>(on: bool, pal: &Palette, label: &'a str) -> egui::Button<'a> {
-    egui::Button::new(RichText::new(label).color(if on { pal.on_accent() } else { pal.text }))
-        .fill(if on { pal.accent } else { pal.hover })
-        .corner_radius(egui::CornerRadius::same(8))
-        .min_size(vec2(0.0, 28.0))
-}
-
 /// `~/x` as a path under home; anything else as typed.
 fn expand(home: &Path, typed: &str) -> PathBuf {
     match typed.trim().strip_prefix("~/") {
@@ -169,40 +165,6 @@ fn short(home: &Path, p: &Path) -> String {
     match p.strip_prefix(home) {
         Ok(rest) => format!("~/{}", rest.display()),
         Err(_) => p.display().to_string(),
-    }
-}
-
-/// The names of the cloud drives that have been added, for Settings > Apps > Minos: its Cloud Storage group is there only when one
-/// was added, and names only those. Read once on a thread when that page opens (rclone is asked for its remotes).
-pub struct Added {
-    rx: Receiver<(Vec<String>, bool)>,
-    /// The names, and whether Proton Drive is one of them.
-    read: Option<(Vec<String>, bool)>,
-}
-
-impl Added {
-    pub fn read(ctx: &egui::Context) -> Added {
-        let (tx, rx) = channel();
-        let ctx = ctx.clone();
-        std::thread::spawn(move || {
-            let found = match load(None) {
-                Msg::Loaded { drives, .. } => {
-                    (drives.iter().map(|s| s.drive.label().to_string()).collect(), drives.iter().any(|s| s.drive.is_proton()))
-                }
-                _ => (Vec::new(), false),
-            };
-            let _ = tx.send(found);
-            ctx.request_repaint();
-        });
-        Added { rx, read: None }
-    }
-
-    /// The added drives' names, and whether Proton Drive is one of them; None until they have been read.
-    pub fn get(&mut self) -> Option<&(Vec<String>, bool)> {
-        if let Ok(r) = self.rx.try_recv() {
-            self.read = Some(r);
-        }
-        self.read.as_ref()
     }
 }
 
@@ -222,9 +184,22 @@ impl Panel {
             add: None,
             confirm_remove: None,
             home: cd::Paths::user().home,
+            open: None,
         };
         p.refresh(ctx, true);
         p
+    }
+
+    /// The open drive's name for the header's path (Cloud Storage › Google Drive), while a drive's page is open.
+    pub fn open_label(&self) -> Option<String> {
+        let name = self.open.as_ref()?;
+        let shown = self.drives.iter().flatten().find(|s| &s.drive.name == name);
+        Some(shown.map(|s| s.drive.label().to_string()).unwrap_or_else(|| name.clone()))
+    }
+
+    /// Back from a drive's page to the list.
+    pub fn close_drive(&mut self) {
+        self.open = None;
     }
 
     fn refresh(&mut self, ctx: &egui::Context, full: bool) {
@@ -320,9 +295,19 @@ impl Panel {
             ui.label(RichText::new("Reading your cloud drives...").color(pal.dim));
             return;
         };
-        let busy = self.busy.is_some();
-        let mut mount: Option<(Drive, bool)> = None;
-        let mut login: Option<(Drive, bool)> = None;
+        // a drive's own page, from its row or its (i): what it is, its folder, its state, Mount / Unmount, At sign-in, Remove
+        match self.open.as_ref().and_then(|n| drives.iter().find(|s| &s.drive.name == n)).cloned() {
+            Some(s) => {
+                let (mount, login) = self.drive_page(ui, pal, &s);
+                self.apply(ctx, mount, login);
+                self.status_line(ui, pal);
+                self.remove_window(ctx, pal);
+                return;
+            }
+            // gone (removed): back to the list
+            None => self.open = None,
+        }
+        let mut open = None;
         ui::group(ui, pal, Some("Cloud drives"), |ui| {
             if drives.is_empty() {
                 ui::row(ui, pal, true, "No cloud drives yet", Some("Add one below; it appears in Minos under Cloud Storage"), |_| {});
@@ -330,76 +315,22 @@ impl Panel {
             for (i, s) in drives.iter().enumerate() {
                 let d = &s.drive;
                 let kind = d.provider().map(cd::provider_label).unwrap_or("Folder kept by a sync app");
-                let sub = format!("{kind} \u{b7} {} \u{b7} {}", short(&self.home, d.path()), s.state.label());
-                ui::row_with(
-                    ui,
-                    pal,
-                    i == 0,
-                    |ui| {
-                        ui.horizontal(|ui| {
-                            let dot = match s.state {
-                                State::Mounted | State::Ready => pal.green,
-                                st if st.is_error() => pal.red,
-                                State::Starting => pal.amber,
-                                _ => pal.dim,
-                            };
-                            let (r, _) = ui.allocate_exact_size(vec2(10.0, 16.0), egui::Sense::hover());
-                            ui.painter().circle_filled(r.center(), 4.0, dot);
-                            ui.add(egui::Label::new(RichText::new(d.label()).size(14.0)).wrap());
-                        });
-                    },
-                    Some(&sub),
-                    |ui| {
-                        if ui::icon_button(ui, pal, Icon::Trash, "Remove from this computer", !busy, true).clicked() {
-                            self.confirm_remove = Some(d.clone());
-                        }
-                        if matches!(d.kind, Kind::Remote { .. }) {
-                            let up = s.state == State::Mounted;
-                            let label = if up { "Unmount" } else { "Mount" };
-                            if ui
-                                .add_enabled_ui(!busy && self.rclone && s.state != State::Starting, |ui| ui::quiet(ui, pal, label))
-                                .inner
-                                .clicked()
-                            {
-                                mount = Some((d.clone(), !up));
-                            }
-                            ui.add_space(8.0);
-                            let mut on = s.at_login;
-                            let r = ui.add_enabled_ui(!busy && self.rclone, |ui| ui::switch(ui, pal, &mut on)).inner;
-                            if r.changed() {
-                                login = Some((d.clone(), on));
-                            }
-                            ui.label(RichText::new("At sign-in").color(pal.dim));
-                        }
-                    },
-                );
+                let sub = format!("{kind} \u{b7} {}", short(&self.home, d.path()));
+                if ui::status_row(ui, pal, i == 0, d.label(), Some(&sub), s.state.label(), true) != ui::NetClick::None {
+                    open = Some(d.name.clone());
+                }
             }
         });
+        if open.is_some() {
+            self.open = open;
+            ctx.request_repaint();
+        }
         ui::footnote(
             ui,
             pal,
-            "Mounted drives appear in Minos under Cloud Storage. Each one is mounted with rclone (rclone mount --vfs-cache-mode full) \
-             by a service of your own account, so it stays mounted when Minos is closed; \"At sign-in\" mounts it whenever you sign \
-             in. Removing a drive removes its sign-in and its mount from this computer, never your files in the cloud.",
+            "Mounted drives appear in Minos under Cloud Storage. A drive's (i) opens its settings: mounting it, mounting it at \
+             sign-in, and removing it from this computer.",
         );
-        if let Some((d, up)) = mount {
-            let what = format!("{} {}", if up { "Mounting" } else { "Unmounting" }, d.label());
-            self.act(ctx, what, move || {
-                let r = if up { cd::mount(&SettingsSys, &cd::Paths::user(), &d) } else { cd::unmount(&SettingsSys, &d) };
-                r.map(|()| format!("{} is {}", d.label(), if up { "mounted" } else { "unmounted" }))
-            });
-        }
-        if let Some((d, on)) = login {
-            self.act(ctx, format!("Changing {}", d.label()), move || {
-                cd::set_at_login(&SettingsSys, &cd::Paths::user(), &d, on).map(|()| {
-                    if on {
-                        format!("{} is mounted whenever you sign in", d.label())
-                    } else {
-                        format!("{} is no longer mounted at sign-in", d.label())
-                    }
-                })
-            });
-        }
 
         ui.add_space(10.0);
         if self.add.is_none() {
@@ -425,6 +356,12 @@ impl Panel {
         } else {
             self.add_form(ui, pal, ctx);
         }
+        self.status_line(ui, pal);
+        self.remove_window(ctx, pal);
+    }
+
+    /// What the last change did, or what went wrong.
+    fn status_line(&self, ui: &mut egui::Ui, pal: &Palette) {
         match &self.status {
             Ok(s) if !s.is_empty() => {
                 ui.add_space(8.0);
@@ -436,7 +373,109 @@ impl Panel {
             }
             _ => {}
         }
-        self.remove_window(ctx, pal);
+    }
+
+    /// Runs a Mount / Unmount and an At sign-in change asked for on a drive's page.
+    fn apply(&mut self, ctx: &egui::Context, mount: Option<Change>, login: Option<Change>) {
+        if let Some((d, up)) = mount {
+            let what = format!("{} {}", if up { "Mounting" } else { "Unmounting" }, d.label());
+            self.act(ctx, what, move || {
+                let r = if up { cd::mount(&SettingsSys, &cd::Paths::user(), &d) } else { cd::unmount(&SettingsSys, &d) };
+                r.map(|()| format!("{} is {}", d.label(), if up { "mounted" } else { "unmounted" }))
+            });
+        }
+        if let Some((d, on)) = login {
+            self.act(ctx, format!("Changing {}", d.label()), move || {
+                cd::set_at_login(&SettingsSys, &cd::Paths::user(), &d, on).map(|()| {
+                    if on {
+                        format!("{} is mounted whenever you sign in", d.label())
+                    } else {
+                        format!("{} is no longer mounted at sign-in", d.label())
+                    }
+                })
+            });
+        }
+    }
+
+    /// A drive's own page: what it is, its folder (open it in Minos), its state, Mount / Unmount and At sign-in (rclone
+    /// remotes), and Remove. Returns the Mount / Unmount and At sign-in asked for.
+    fn drive_page(&mut self, ui: &mut egui::Ui, pal: &Palette, s: &Shown) -> (Option<Change>, Option<Change>) {
+        let d = &s.drive;
+        let busy = self.busy.is_some();
+        let rclone = self.rclone;
+        let remote = matches!(d.kind, Kind::Remote { .. });
+        let (mut mount, mut login) = (None, None);
+        let kind = d.provider().map(cd::provider_label).unwrap_or("Folder kept by a sync app");
+        let folder = short(&self.home, d.path());
+        ui::group(ui, pal, None, |ui| {
+            ui::row(ui, pal, true, "Kind", None, |ui| {
+                ui.label(RichText::new(kind).color(pal.dim));
+            });
+            ui::row(ui, pal, false, "Folder", Some(&folder), |ui| {
+                if ui.add_enabled_ui(s.state.usable(), |ui| ui::quiet(ui, pal, "Open in Minos")).inner.clicked() {
+                    let _ = Command::new("minos").arg(d.path()).spawn();
+                }
+            });
+            ui::row(ui, pal, false, "State", None, |ui| {
+                let colour = match s.state {
+                    State::Mounted | State::Ready => pal.green,
+                    st if st.is_error() => pal.red,
+                    State::Starting => pal.amber,
+                    _ => pal.dim,
+                };
+                ui.label(RichText::new(s.state.label()).color(colour));
+            });
+        });
+        if remote {
+            ui::group(ui, pal, Some("Mounting"), |ui| {
+                let up = s.state == State::Mounted;
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    if up { "Mounted" } else { "Not mounted" },
+                    Some("Mounted, its files show in Minos; rclone fetches each one when it is opened"),
+                    |ui| {
+                        let label = if up { "Unmount" } else { "Mount" };
+                        if ui.add_enabled_ui(!busy && rclone && s.state != State::Starting, |ui| ui::quiet(ui, pal, label)).inner.clicked()
+                        {
+                            mount = Some((d.clone(), !up));
+                        }
+                    },
+                );
+                ui::row(ui, pal, false, "At sign-in", Some("Mount it whenever you sign in"), |ui| {
+                    let mut on = s.at_login;
+                    if ui.add_enabled_ui(!busy && rclone, |ui| ui::switch(ui, pal, &mut on)).inner.changed() {
+                        login = Some((d.clone(), on));
+                    }
+                });
+            });
+        }
+        let mut remove = false;
+        ui::group(ui, pal, None, |ui| {
+            let what = if remote {
+                "Its sign-in and its mount go from this computer; your files in the cloud stay"
+            } else {
+                "It is no longer listed; the folder and its files stay"
+            };
+            ui::row(ui, pal, true, "Remove from this computer", Some(what), |ui| {
+                remove = ui.add_enabled_ui(!busy, |ui| ui::quiet(ui, pal, "Remove")).inner.clicked();
+            });
+        });
+        if remove {
+            self.confirm_remove = Some(d.clone());
+        }
+        ui::footnote(
+            ui,
+            pal,
+            if remote {
+                "Mounted with rclone (rclone mount --vfs-cache-mode full) by a service of your own account, so it stays mounted \
+                 when Minos is closed."
+            } else {
+                "The cloud's own desktop app keeps this folder; Minos lists it and nothing mounts it."
+            },
+        );
+        (mount, login)
     }
 
     /// Add a cloud drive: choose what, name it, sign in (or add it at once).
@@ -459,43 +498,70 @@ impl Panel {
         let mut add_now: Option<Drive> = None;
         ui::group(ui, pal, Some("Add a cloud drive"), |ui| {
             ui.add_space(8.0);
-            ui.label(RichText::new("What to add").color(pal.dim));
-            ui.horizontal_wrapped(|ui| {
-                let running = f.run.is_some();
-                for p in cd::PROVIDERS.iter() {
-                    let on = f.choice.as_ref() == Some(&Choice::Provider(p));
-                    if ui.add_enabled(!running && rclone, chip(on, pal, p.label)).on_hover_text(p.about).clicked() {
-                        f.choice = Some(Choice::Provider(p));
-                        f.name = if p.kind == cd::PROTON_TYPE { cd::PROTON_REMOTE.into() } else { cd::default_name(p, &taken) };
-                        f.folder_edited = false;
-                        f.error.clear();
-                    }
-                }
-                let on = matches!(f.choice, Some(Choice::Existing(_)));
-                if ui
-                    .add_enabled(!running && rclone && !existing.is_empty(), chip(on, pal, "An existing rclone remote"))
-                    .on_hover_text("A remote you set up with rclone before")
-                    .on_disabled_hover_text("rclone has no remote that is not listed already")
-                    .clicked()
-                {
-                    f.choice = existing.first().map(|r| Choice::Existing(r.name.clone()));
-                    f.name = existing.first().map(|r| r.name.clone()).unwrap_or_default();
+            // what to add, as a drop-down: the providers, an rclone remote set up before, or a sync app's folder
+            let running = f.run.is_some();
+            const EXISTING: &str = "An existing rclone remote";
+            const FOLDER: &str = "A folder a sync app keeps";
+            let current = match &f.choice {
+                Some(Choice::Provider(p)) => p.label,
+                Some(Choice::Existing(_)) => EXISTING,
+                Some(Choice::Folder) => FOLDER,
+                None => "Choose...",
+            };
+            let mut picked: Option<Choice> = None;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("What to add").color(pal.dim));
+                ui.add_space(8.0);
+                ui.add_enabled_ui(!running, |ui| {
+                    egui::ComboBox::from_id_salt("cloud-add-what").selected_text(current).width(260.0).height(400.0).show_ui(ui, |ui| {
+                        for p in cd::PROVIDERS.iter() {
+                            let on = f.choice.as_ref() == Some(&Choice::Provider(p));
+                            if ui.add_enabled_ui(rclone, |ui| ui.selectable_label(on, p.label)).inner.on_hover_text(p.about).clicked() {
+                                picked = Some(Choice::Provider(p));
+                            }
+                        }
+                        let on = matches!(f.choice, Some(Choice::Existing(_)));
+                        let r = ui
+                            .add_enabled_ui(rclone && !existing.is_empty(), |ui| ui.selectable_label(on, EXISTING))
+                            .inner
+                            .on_hover_text("A remote you set up with rclone before")
+                            .on_disabled_hover_text("rclone has no remote that is not listed already");
+                        if r.clicked() {
+                            picked = existing.first().map(|r| Choice::Existing(r.name.clone()));
+                        }
+                        let on = f.choice == Some(Choice::Folder);
+                        if ui
+                            .selectable_label(on, FOLDER)
+                            .on_hover_text("The folder of a cloud's own desktop app (Proton Drive, Nextcloud...): listed, not mounted")
+                            .clicked()
+                        {
+                            picked = Some(Choice::Folder);
+                        }
+                    });
+                });
+            });
+            match picked {
+                Some(Choice::Provider(p)) => {
+                    f.choice = Some(Choice::Provider(p));
+                    f.name = if p.kind == cd::PROTON_TYPE { cd::PROTON_REMOTE.into() } else { cd::default_name(p, &taken) };
                     f.folder_edited = false;
                     f.error.clear();
                 }
-                let on = f.choice == Some(Choice::Folder);
-                if ui
-                    .add_enabled(!running, chip(on, pal, "A folder a sync app keeps"))
-                    .on_hover_text("The folder of a cloud's own desktop app (Proton Drive, Nextcloud...): listed, not mounted")
-                    .clicked()
-                {
+                Some(Choice::Existing(name)) => {
+                    f.choice = Some(Choice::Existing(name.clone()));
+                    f.name = name;
+                    f.folder_edited = false;
+                    f.error.clear();
+                }
+                Some(Choice::Folder) => {
                     f.choice = Some(Choice::Folder);
                     f.name.clear();
                     f.folder.clear();
                     f.folder_edited = true;
                     f.error.clear();
                 }
-            });
+                None => {}
+            }
             ui.add_space(8.0);
             let Some(choice) = f.choice.clone() else {
                 ui.label(RichText::new("Choose a provider: you sign in on its own page, through rclone.").color(pal.dim));

@@ -40,6 +40,8 @@ pub enum Icon {
     Key,
     /// Accessibility: a person with open arms in a circle.
     Accessibility,
+    /// Cloud Storage: a cloud's outline.
+    Cloud,
 }
 
 fn arc(c: Pos2, r: f32, from: f32, to: f32) -> Vec<Pos2> {
@@ -107,6 +109,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 // the outer two a little bigger, as in the icon
                 p.circle_filled(star, if i == 0 || i == 3 { 0.115 * w } else { 0.105 * w }, color);
             }
+        }
+        Icon::Cloud => {
+            // two small bumps at the sides and a big one on top, over a flat base
+            let mut pts = arc(at(0.3, 0.6), 0.16 * w, 90.0, 270.0);
+            pts.extend(arc(at(0.7, 0.6), 0.16 * w, -90.0, 90.0));
+            pts.extend(arc(at(0.5, 0.48), 0.22 * w, 20.0, 160.0));
+            p.add(Shape::closed_line(pts, s));
         }
         Icon::Shield => {
             p.add(Shape::closed_line(vec![at(0.5, 0.1), at(0.84, 0.24), at(0.8, 0.56), at(0.5, 0.9), at(0.2, 0.56), at(0.16, 0.24)], s));

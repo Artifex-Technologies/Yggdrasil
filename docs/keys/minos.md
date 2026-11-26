@@ -41,14 +41,20 @@ thread by the status bar's walker (`src/foldersize.rs`); on a network or cloud d
 
 **Cloud Storage** (the sidebar): only what has been added, and nothing at all (no heading, no Manage link) before that: Proton
 Drive once it is signed in or added in Settings (or its folder holds a synced copy), and every cloud drive added in Settings >
-Apps > Minos > Cloud drives (packages/clouddrives). Whether Proton Drive was added is read from Settings' list and rclone's config
+Cloud Storage (packages/clouddrives). Whether Proton Drive was added is read from Settings' list and rclone's config
 file at start and when Settings changes something, never on the frame. A mounted drive, or a sync app's folder that is there, opens on a click; a drive that is not mounted is
 greyed and mounts on a click or with right-click > Mount (and opens once it is up); right-click > Unmount, and Manage cloud
 drives opens the Settings page. A green dot is a mounted drive, a red one an error (the tooltip says which). The list follows
 Settings without a restart; whether a drive is mounted is read from the mount table every few seconds on a thread. Code:
 `src/cloudside.rs`.
 
-**Where it opens:** Settings > Apps > Minos sets the first window (Home or where you left off), a window opened while another is open (Home or a copy of that window's folder) and a new tab (Home or a copy of the current tab). Open windows list their folder in $XDG_RUNTIME_DIR/minos/.
+**Menu > Settings...** (Minos's own settings, in a window over Minos; they moved here from Settings on 2026-11-26): where it
+opens, Browsing (search inside subfolders, show hidden items, and Proton Drive's file marks once Proton Drive was added), the
+see-through window and how solid it is, and a button to Settings > Cloud Storage. Each change is saved at once into the
+desktop's settings file (read again first, so another program's changes stay) and every open Minos window follows within a
+second. Code: `src/settings_win.rs`.
+
+**Where it opens:** Menu > Settings... sets the first window (Home or where you left off), a window opened while another is open (Home or a copy of that window's folder) and a new tab (Home or a copy of the current tab). Open windows list their folder in $XDG_RUNTIME_DIR/minos/.
 
 **Right-click > Scrub location sounds** (on one file with sound in it: an audio file, or a video with an audio track): Heimdall's
 `heimdall-scrub` writes a copy beside it, "name (scrubbed).ext" ("name (scrubbed 2).ext" when that is taken; the original is never

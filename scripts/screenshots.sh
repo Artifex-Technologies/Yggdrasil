@@ -55,7 +55,9 @@ declare -A ACTIONS=(
     [minos-top]="tap 657 354"
     [minos-top-light]="tap 657 354; tap 1224 251; wait 1; tap 1225 322; wait 1"
     [minos-properties]="tap 657 354; key alt+Return; wait 2"
-    [settings-cloud-drives-add]="tap 769 622; wait 2; tap 855 696; wait 1"
+    [minos-settings]="tap 382 155; wait 1; tap 404 341; wait 2"
+    [settings-cloud-drives-add]="tap 769 603; wait 2; tap 940 653; wait 1"
+    [settings-cloud-drive-page]="tap 1435 371; wait 2"
 )
 shots() {
     shot desktop                        desktop panel desktop
@@ -99,9 +101,10 @@ shots() {
     shot settings-wallpaper             desktop settings appearance:wallpaper system
     shot settings-assistant             desktop settings assistant system
     shot settings-apps-list             desktop settings apps system
-    shot settings-cloud-drives          desktop settings apps:cloud-drives system
-    shot settings-cloud-drives-light    desktop settings apps:cloud-drives system
-    shot settings-cloud-drives-add      desktop settings apps:cloud-drives system
+    shot settings-cloud-drives          desktop settings cloudstorage system
+    shot settings-cloud-drives-light    desktop settings cloudstorage system
+    shot settings-cloud-drives-add      desktop settings cloudstorage system
+    shot settings-cloud-drive-page      desktop settings cloudstorage system
     shot settings-default-apps          desktop settings default system
     shot settings-games                 desktop settings games system
     shot settings-security              desktop settings security system
@@ -121,6 +124,7 @@ shots() {
     shot minos-top                      desktop app minos /home/alex/Documents
     shot minos-top-light                desktop app minos /home/alex/Documents
     shot minos-properties               desktop app minos /home/alex/Documents
+    shot minos-settings                 desktop app minos /home/alex/Documents
     shot minos-transfers                desktop app minos /home/alex/Documents --demo-transfers
     shot minos-transfers-collapsed      desktop app minos /home/alex/Documents --demo-transfers=collapsed
     shot minos-transfers-failed         desktop app minos /home/alex/Documents --demo-transfers=failed

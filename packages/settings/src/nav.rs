@@ -105,12 +105,10 @@ impl App {
                 };
                 l.extend(t);
             }
+            Page::CloudStorage => l.extend(self.cloud_panel.as_ref().and_then(|p| p.open_label())),
             Page::Apps => {
-                match self.app_tab {
-                    1 => l.push("Optional software".into()),
-                    2 => l.push("Minos".into()),
-                    3 => l.extend(["Minos".into(), "Cloud drives".into()]),
-                    _ => {}
+                if self.app_tab == 1 {
+                    l.push("Optional software".into());
                 }
                 if let Some(id) = &self.app_sel {
                     let name = self.data.installed.as_ref().and_then(|a| a.iter().find(|a| &a.id == id)).map(|a| a.name.clone());
@@ -199,8 +197,12 @@ impl App {
                     self.app_sel = None;
                     self.app_confirm = None;
                 } else {
-                    // Cloud drives is a page of Minos's
-                    self.app_tab = if self.app_tab == 3 { 2 } else { 0 };
+                    self.app_tab = 0;
+                }
+            }
+            Page::CloudStorage => {
+                if let Some(p) = self.cloud_panel.as_mut() {
+                    p.close_drive();
                 }
             }
             Page::Peripherals => match (self.peri.sub, self.key_sub) {
@@ -257,6 +259,11 @@ impl App {
                 self.app_sel = None;
                 self.app_confirm = None;
                 self.app_tab = 0;
+            }
+            Page::CloudStorage => {
+                if let Some(p) = self.cloud_panel.as_mut() {
+                    p.close_drive();
+                }
             }
             Page::Peripherals => {
                 self.peri.sub = peripherals::Sub::Main;
@@ -328,7 +335,6 @@ fn appearance_levels(sub: AppSub) -> &'static [&'static str] {
         AppSub::Bar => &["Top bar and dock"],
         AppSub::Notifs => &["Notifications"],
         AppSub::Wallpaper => &["Wallpaper"],
-        AppSub::Minos => &["Minos"],
         AppSub::Lock => &["Lock screen"],
         AppSub::Workspaces => &["Workspaces"],
         AppSub::Boot => &["Boot screen"],

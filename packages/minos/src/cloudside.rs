@@ -1,4 +1,4 @@
-//! Cloud Storage in the sidebar (YGG-170): every cloud drive Settings > Apps > Minos > Cloud drives keeps
+//! Cloud Storage in the sidebar (YGG-170): every cloud drive Settings > Cloud Storage keeps
 //! (`yggdrasil_clouddrives`), with its state. The list is read again when the settings folder changes (Settings wrote it); whether
 //! a drive is mounted is read from /proc/self/mountinfo by a thread every few seconds, and only a change wakes the window.
 //! rclone itself is never asked: mounting and unmounting go through the drive's systemd user unit, on a thread.
@@ -142,7 +142,7 @@ impl CloudDrives {
                         }
                         std::thread::sleep(Duration::from_millis(500));
                     }
-                    Err(format!("{} did not mount (Settings > Apps > Minos > Cloud drives shows why)", d.label()))
+                    Err(format!("{} did not mount (Settings > Cloud Storage shows why)", d.label()))
                 })
             } else {
                 cd::unmount(&sys, &d)
@@ -153,10 +153,10 @@ impl CloudDrives {
     }
 }
 
-/// Opens Settings on the Cloud drives page.
+/// Opens Settings on its Cloud Storage page.
 pub(crate) fn open_settings() -> Result<(), String> {
     std::process::Command::new("yggdrasil-settings")
-        .arg("apps:cloud-drives")
+        .arg("cloudstorage")
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("Could not open Settings: {e}"))

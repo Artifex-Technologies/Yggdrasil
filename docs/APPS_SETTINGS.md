@@ -11,8 +11,11 @@ its tests were kept in `helpers/python/` and `tests/` until 2026-11-15), and, fo
 I reorganised Settings on the model of a tablet's settings (its structure, not its look; the colours stay Yggdrasil's):
 the sidebar holds grouped rows with the open page as a filled pill in the accent colour, and each page is rounded cards of
 rows, a row that opens a page ending in ›, and a small grey note under a card where it needs one. The sidebar's groups, in
-order: Connections, Devices (Battery last, after Power), Personal (General at its top, then Accessibility, Appearance, the
-assistant), Apps, Privacy & security, System. Settings opens on General all the same.
+order: Connections, Devices (Battery last, after Power), Personal (General at its top, then Accessibility, Appearance, Cloud
+Storage), Apps, Privacy & security, System (Users, then the assistant). Settings opens on General all the same. On 2026-11-26 I
+moved Cloud Storage out of Apps > Minos into the sidebar, the assistant (Sarina) from Personal to System, and Minos's own
+settings (where it opens, hidden items, the see-through window) out of Settings into Minos itself (Menu > Settings...,
+[docs/keys/minos.md](keys/minos.md)), since Minos is a system app.
 
 - **The way back** (`src/nav.rs`): one header above every page, outside the scrolling part, shows the path ("Appearance ›
   Wallpaper") and, on a sub-page, Back. Back, the mouse's back button and Alt+Left go up one level at a time; a click on the
@@ -296,16 +299,17 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
 - **An app's page** (click a row, or `yggdrasil-settings apps:ID`): Network (switch; click the name too), open at login,
   status, storage with Clear cache and Clear data (the latter lists the folders and asks for the password), the privacy
   sandbox, Remove.
-- **Optional software** and **Minos** are rows on the card at the top, each its own page. Minos's page has a **Cloud Storage**
-  group only once a cloud drive was added, naming only the added ones (and the Proton Drive file status switch only once Proton
-  Drive was added); with none, Cloud drives is a row of the Minos group ("None added yet").
-- **Minos > Cloud drives** (`yggdrasil-settings apps:cloud-drives`; Minos's sidebar opens it): every cloud drive with its state
-  (a dot: green mounted or ready, red an error), Mount / Unmount, "At sign-in" and Remove (asks first; removes the rclone sign-in
-  and the mount service, never files in the cloud); Add a cloud drive: Proton Drive, Google Drive, OneDrive, Dropbox, Box,
-  WebDAV / Nextcloud, S3, an existing rclone remote, or a folder a sync app keeps. The sign-in is the provider's own through
-  rclone: the browser for Google Drive, OneDrive, Dropbox and Box (what rclone prints is shown on the page), rclone's own
-  questions in a terminal for the others. Without rclone the page says so and shows the install command. The drives appear in
-  Minos under Cloud Storage. Code: `src/clouddrives_ui.rs` and packages/clouddrives ([README](../packages/clouddrives/README.md)).
+- **Optional software** is a row on the card at the top, its own page.
+- **Cloud Storage** (Personal in the sidebar; `yggdrasil-settings cloudstorage`; Minos's sidebar and its settings window open
+  it): every cloud drive as a row with its kind, its folder and its state ("Mounted", "Not mounted", an error) and an (i), as
+  the Wi-Fi list has. The row or its (i) opens the drive's own page (the header shows "Cloud Storage › its name"): its kind, its
+  folder with Open in Minos, its state, Mount / Unmount and "At sign-in" (rclone remotes), and Remove (asks first; removes the
+  rclone sign-in and the mount service, never files in the cloud). **Add a cloud drive**: "What to add" is a drop-down of
+  Proton Drive, Google Drive, OneDrive, Dropbox, Box, WebDAV / Nextcloud, S3, an existing rclone remote, or a folder a sync app
+  keeps. The sign-in is the provider's own through rclone: the browser for Google Drive, OneDrive, Dropbox and Box (what rclone
+  prints is shown on the page), rclone's own questions in a terminal for the others. Without rclone the page says so and shows
+  the install command. The drives appear in Minos under Cloud Storage. Code: `src/clouddrives_ui.rs` and packages/clouddrives
+  ([README](../packages/clouddrives/README.md)).
 - **Developer options** (About: click the logo five times while holding the ` key): adds "Any connection / Ethernet only /
   Wi-Fi only" next to an app's network switch, and the selected power mode's CPU and graphics-card limits under Power. Stored as
   `developer = yes` in ~/.config/yggdrasil/panel.conf.
@@ -440,8 +444,10 @@ About only when switched on, have no picture.
 | **Appearance > Fonts**, further down: the installed fonts as cards, each with a sample, and the search box. | ![Settings > Appearance > Fonts, the installed fonts](../assets/screenshots/settings-fonts-installed.png) |
 | **Appearance > Wallpaper**: the lock screen and the desktop previewed side by side, the wallpapers below. | ![Settings > Appearance > Wallpaper](../assets/screenshots/settings-wallpaper.png) |
 | **Appearance > Lock screen**: the designs with their previews. | ![Settings > Appearance > Lock screen](../assets/screenshots/settings-lock-screen-designs.png) |
-| **Sarina**: the operating system's assistant, from its integration. | ![Settings > Sarina](../assets/screenshots/settings-assistant.png) |
-| **Apps**: Default Apps, Optional software and Minos on a card at the top, then every installed app A to Z under its letter, with a search. | ![Settings > Apps](../assets/screenshots/settings-apps-list.png) |
+| **Cloud Storage**: the cloud drives Minos lists, each with its state and an (i) to its own page (`system.json`'s made-up drives). | ![Settings > Cloud Storage](../assets/screenshots/settings-cloud-drives.png) |
+| **Cloud Storage, a drive's page** (its (i)): kind, folder, state, Mount / Unmount, At sign-in, Remove. | ![Settings > Cloud Storage > a drive](../assets/screenshots/settings-cloud-drive-page.png) |
+| **Cloud Storage, adding one**: What to add (a drop-down), the name and the folder it is mounted at. | ![Settings > Cloud Storage, adding a drive](../assets/screenshots/settings-cloud-drives-add.png) |
+| **Apps**: Default Apps and Optional software on a card at the top, then every installed app A to Z under its letter, with a search. | ![Settings > Apps](../assets/screenshots/settings-apps-list.png) |
 | **Apps > Default Apps**: what opens each kind of file. | ![Settings > Apps > Default Apps](../assets/screenshots/settings-default-apps.png) |
 | **Games**: graphics cards, game fixes, frame generation per game. | ![Settings > Games](../assets/screenshots/settings-games.png) |
 | **Security**: the security monitor, the password logs, the distress password, Limbo, the private microphone. | ![Settings > Security](../assets/screenshots/settings-security.png) |
@@ -451,6 +457,7 @@ About only when switched on, have no picture.
 | **Security > Distress password, the two sections**: Section 1, and Section 2 that asks for your password again. | ![Settings > Security > Distress password, the two sections](../assets/screenshots/settings-distress-sections.png) |
 | **Security > Distress password, saving Section 2**: the warning, and your password once more. | ![Settings > Security > Distress password, saving Section 2](../assets/screenshots/settings-distress-warning.png) |
 | **Firewall**: on or off. | ![Settings > Firewall](../assets/screenshots/settings-firewall.png) |
+| **Sarina** (under System): the operating system's assistant, from its integration. | ![Settings > Sarina](../assets/screenshots/settings-assistant.png) |
 | **Users**: two accounts, the keyring. | ![Settings > Users](../assets/screenshots/settings-users.png) |
 | **Restore points**: Snapper's restore points, and how to go back to one. | ![Settings > Restore points](../assets/screenshots/settings-restore.png) |
 | **Date & Time**: the time zone, set automatically or by hand: click your part of the map, or search the short list (about 80 friendly zones by UTC offset). | ![Settings > Date & Time](../assets/screenshots/settings-date-time.png) |

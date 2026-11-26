@@ -108,6 +108,8 @@ enum Page {
     DefaultApps,
     /// The assistant the operating system provides (only when it has one: its assistant integration).
     Assistant,
+    /// The cloud drives Minos lists under Cloud Storage: add, mount, unmount, remove (clouddrives_ui.rs).
+    CloudStorage,
     /// The mouse and the keyboard (peripherals.rs), the keyboard's shortcuts and spelling inside it.
     Peripherals,
     About,
@@ -150,7 +152,6 @@ enum AppSub {
     Bar,
     Notifs,
     Wallpaper,
-    Minos,
     Lock,
     Workspaces,
     Boot,
@@ -160,7 +161,7 @@ enum AppSub {
 // top. Settings opens on General all the same. The words after the name are
 // what the search also finds the page by: what is inside it, not only its title. A page with a parent (`parent`) is a row on
 // that page instead of in the sidebar; the search still finds it.
-const PAGES: [(Page, &str, Icon, &str, &str); 26] = [
+const PAGES: [(Page, &str, Icon, &str, &str); 27] = [
     (Page::Network, "Wi-Fi & Network", Icon::Wifi, "Connections", "internet ethernet proxy"),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth, "Connections", "headphones controller pair"),
     (Page::Vpn, "VPN", Icon::Key, "Connections", "vpn wireguard openvpn ikev2 tailscale tunnel"),
@@ -193,8 +194,14 @@ const PAGES: [(Page, &str, Icon, &str, &str); 26] = [
         "Personal",
         "theme dark light accent wallpaper icons font typeface dyslexia dyslexic hyperlegible lexend top bar add-ons plugins notifications lock screen workspaces boot",
     ),
-    (Page::Assistant, "Assistant", Icon::Sound, "Personal", "voice"),
-    (Page::Apps, "Apps", Icon::Apps, "Apps", "installed optional software uninstall minos"),
+    (
+        Page::CloudStorage,
+        "Cloud Storage",
+        Icon::Cloud,
+        "Personal",
+        "cloud drives google drive onedrive dropbox box proton drive nextcloud webdav s3 rclone mount sync minos",
+    ),
+    (Page::Apps, "Apps", Icon::Apps, "Apps", "installed optional software uninstall"),
     (
         Page::Games,
         "Games",
@@ -212,6 +219,7 @@ const PAGES: [(Page, &str, Icon, &str, &str); 26] = [
     (Page::Firewall, "Firewall", Icon::Shield, "Privacy & security", "ports network block"),
     (Page::Restore, "Restore points", Icon::Restart, "Privacy & security", "snapshot backup rollback undo"),
     (Page::Users, "Users", Icon::User, "System", "account people"),
+    (Page::Assistant, "Assistant", Icon::Sound, "System", "voice"),
     (Page::Developer, "Developer Mode", Icon::Keyboard, "System", "developer options"),
     (Page::DefaultApps, "Default Apps", Icon::Apps, "Apps", "browser mail music video open with"),
     (Page::About, "About", Icon::Info, "General", "version system information hardware"),
@@ -577,10 +585,8 @@ struct App {
     fans_panel: Option<fans::Panel>,
     /// Security > Limbo (`security:limbo`): dropped when the page is left.
     limbo_panel: Option<limbo_ui::Panel>,
-    /// Apps > Minos > Cloud drives (`apps:cloud-drives`): dropped when the page is left.
+    /// Cloud Storage (`yggdrasil-settings cloud`, Minos's sidebar opens it): dropped when the page is left.
     cloud_panel: Option<clouddrives_ui::Panel>,
-    /// The added cloud drives' names while Apps > Minos is open (read again each time it opens).
-    cloud_added: Option<clouddrives_ui::Added>,
     /// Power > Graphics card: the unlock's confirmation while open (with the date of Sarina's last backup), and its checkbox.
     unlock_confirm: Option<Option<String>>,
     unlock_read: bool,
@@ -714,8 +720,7 @@ impl App {
             font_lib: Default::default(),
             dnd: None,
             dnd_tried: false,
-            // `yggdrasil-settings apps:cloud-drives` opens Apps > Minos > Cloud drives (Minos's sidebar does)
-            app_tab: if start_page() == Page::Apps && start_sub() == "cloud-drives" { 3 } else { 0 },
+            app_tab: 0,
             bar_addons: None,
             app_sub: match start_sub().as_str() {
                 "icons" => AppSub::Icons,
@@ -725,7 +730,6 @@ impl App {
                 "bar" => AppSub::Bar,
                 "notifs" => AppSub::Notifs,
                 "wallpaper" => AppSub::Wallpaper,
-                "minos" => AppSub::Minos,
                 "lock" => AppSub::Lock,
                 "workspaces" => AppSub::Workspaces,
                 "boot" => AppSub::Boot,
@@ -784,7 +788,6 @@ impl App {
             fans_panel: None,
             limbo_panel: None,
             cloud_panel: None,
-            cloud_added: None,
             unlock_confirm: None,
             unlock_read: false,
             app_filter: String::new(),
@@ -802,12 +805,9 @@ impl App {
             displays_ui: Default::default(),
             last_path: Vec::new(),
         };
-        // `yggdrasil-settings apps:ID` opens that app's own page (links from the dock or the notch); `apps:cloud-drives` is
-        // Minos's Cloud drives page (app_tab above)
+        // `yggdrasil-settings apps:ID` opens that app's own page (links from the dock or the notch)
         if let Some(id) = std::env::args().nth(1).and_then(|a| a.strip_prefix("apps:").map(String::from)).filter(|s| !s.is_empty()) {
-            if app.app_tab == 0 {
-                app.app_sel = Some(id);
-            }
+            app.app_sel = Some(id);
         }
         app
     }
@@ -1175,11 +1175,8 @@ impl eframe::App for App {
         if !(self.page == Page::Security && self.sec_sub == SecSub::Limbo) {
             self.limbo_panel = None;
         }
-        if !(self.page == Page::Apps && self.app_tab == 3) {
+        if self.page != Page::CloudStorage {
             self.cloud_panel = None;
-        }
-        if !(self.page == Page::Apps && self.app_tab == 2) {
-            self.cloud_added = None;
         }
         // a look belongs to its network's page: it goes when the page does
         if self.lan_look.as_ref().is_some_and(|(u, _)| self.page != Page::Network || self.net_open.as_deref() != Some(u.as_str())) {
@@ -1378,6 +1375,10 @@ impl eframe::App for App {
                         Page::Restore => self.page_restore(ui, &pal, &ctx),
                         Page::DefaultApps => self.page_default_apps(ui, &pal, &ctx),
                         Page::Assistant => self.page_assistant(ui, &pal, &ctx),
+                        Page::CloudStorage => match self.cloud_panel.as_mut() {
+                            Some(p) => p.show(ui, &pal, &ctx),
+                            None => self.cloud_panel = Some(clouddrives_ui::Panel::new(&ctx)),
+                        },
                         Page::Printers => self.page_printers(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
@@ -1454,7 +1455,7 @@ fn read_page(page: Page, tx: &Sender<Msg>) -> Vec<Msg> {
             Msg::Assistant(controls::load(yggdrasil_conf::integrations::first("assistant").map(|i| i.controls()).unwrap_or_default()))
         }
         Page::Printers => Msg::Printers(printers::load()),
-        Page::Developer | Page::Games | Page::General => return vec![],
+        Page::Developer | Page::Games | Page::General | Page::CloudStorage => return vec![],
     };
     ahead.push(msg);
     ahead
@@ -2496,7 +2497,6 @@ impl App {
         let mut cursor_use: Option<String> = None;
         let mut icon_install: Option<String> = None;
         let mut brand_build = false;
-        let mut minos_live = false;
         let mut conf = a.panel;
         let mut conf_changed = false;
         let mut open_access = false;
@@ -2576,52 +2576,6 @@ impl App {
                     self.app_sub = AppSub::Boot;
                     self.boot_info = None;
                 }
-                if ui::nav_row(ui, pal, false, "Minos", Some("The file manager: make its window see-through"), |_| {}) {
-                    self.app_sub = AppSub::Minos;
-                }
-            });
-        }
-        if self.app_sub == AppSub::Minos {
-            ui::group(ui, pal, Some("Window"), |ui| {
-                ui::row(
-                    ui,
-                    pal,
-                    true,
-                    "See-through window",
-                    Some("Lets the desktop show through Minos. Applies to open windows within a second, no restart"),
-                    |ui| {
-                        minos_live |= ui::switch(ui, pal, &mut conf.minos_transparent).changed();
-                    },
-                );
-                ui::row(ui, pal, false, "Transparency", Some("How solid the window is. The sample next to it shows the result"), |ui| {
-                    ui.add_enabled_ui(conf.minos_transparent, |ui| {
-                        let mut v = conf.minos_opacity as f32;
-                        if ui::slider_range(ui, pal, &mut v, yggdrasil_conf::MINOS_OPACITY_MIN as f32..=100.0, " %").changed() {
-                            conf.minos_opacity = v as u32;
-                            minos_live = true;
-                        }
-                    });
-                    // a small sample window over a busy backdrop, so the effect is visible without opening Minos
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 70.0), egui::Sense::hover());
-                    let pt = ui.painter_at(rect);
-                    pt.rect_filled(rect, 8.0, egui::Color32::from_rgb(92, 56, 170));
-                    for (i, c) in [
-                        egui::Color32::from_rgb(235, 120, 180),
-                        egui::Color32::from_rgb(90, 190, 230),
-                        egui::Color32::from_rgb(250, 210, 90),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
-                        pt.circle_filled(rect.left_top() + egui::vec2(24.0 + i as f32 * 34.0, 22.0 + (i % 2) as f32 * 26.0), 15.0, c);
-                    }
-                    let shown = if conf.minos_transparent { conf.minos_opacity } else { 100 };
-                    let dark = theme::palette(true).translucent(shown);
-                    let win = rect.shrink2(egui::vec2(14.0, 10.0));
-                    pt.rect_filled(win, 6.0, dark.bg);
-                    pt.rect_filled(egui::Rect::from_min_size(win.min, egui::vec2(win.width() * 0.3, win.height())), 6.0, dark.sidebar);
-                    pt.rect_stroke(win, 6.0, egui::Stroke::new(1.0, dark.border), egui::StrokeKind::Inside);
-                });
             });
         }
         if self.app_sub == AppSub::Lock {
@@ -2923,14 +2877,6 @@ impl App {
                 });
                 ui.add_space(6.0);
             });
-        }
-        if minos_live {
-            // saved at once (a tiny file), so the slider and the sample follow the drag and Minos follows within a second
-            let _ = conf.save();
-            if let Some(ap) = self.data.appearance.as_mut() {
-                ap.panel = conf;
-            }
-            ctx.request_repaint();
         }
         if conf_changed {
             self.change(ctx, move || conf.save());
@@ -4903,97 +4849,6 @@ impl App {
         }
         if clock_changed {
             self.change(ctx, move || clock.save());
-        }
-    }
-
-    fn page_apps_minos(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        let mut minos = yggdrasil_conf::PanelConf::load();
-        let mut minos_changed = false;
-        ui::group(ui, pal, Some("Minos: where it opens"), |ui| {
-            use yggdrasil_conf::StartIn;
-            ui::row(
-                ui,
-                pal,
-                true,
-                "First new window",
-                Some("The first Minos window you open: your home folder, or the tabs you had when you last closed it"),
-                |ui| {
-                    let cur = (minos.minos_first_window == StartIn::Last) as usize;
-                    if let Some(i) = ui::segmented(ui, pal, &["Home", "Where you left off"], cur) {
-                        minos.minos_first_window = [StartIn::Home, StartIn::Last][i];
-                        minos_changed = true;
-                    }
-                },
-            );
-            ui::row(ui, pal, false, "New window while one is open", Some("Home, or a copy of the folder the open window is in"), |ui| {
-                let cur = (minos.minos_more_windows == StartIn::Here) as usize;
-                if let Some(i) = ui::segmented(ui, pal, &["Home", "Copy of where I am"], cur) {
-                    minos.minos_more_windows = [StartIn::Home, StartIn::Here][i];
-                    minos_changed = true;
-                }
-            });
-            ui::row(ui, pal, false, "New tab", Some("Home, or a copy of the folder the current tab is in"), |ui| {
-                let cur = (minos.minos_new_tab == StartIn::Here) as usize;
-                if let Some(i) = ui::segmented(ui, pal, &["Home", "Copy of where I am"], cur) {
-                    minos.minos_new_tab = [StartIn::Home, StartIn::Here][i];
-                    minos_changed = true;
-                }
-            });
-        });
-        // Cloud Storage is there only once a cloud drive was added, and names only the added ones; with none, adding one starts
-        // from a row in the Minos group below
-        let added = self.cloud_added.get_or_insert_with(|| clouddrives_ui::Added::read(ctx)).get().cloned();
-        if let Some((names, _)) = added.as_ref().filter(|(n, _)| !n.is_empty()) {
-            ui::group(ui, pal, Some("Cloud Storage"), |ui| {
-                if ui::nav_row(ui, pal, true, "Cloud drives", Some(&names.join(", ")), |_| {}) {
-                    self.app_tab = 3;
-                }
-            });
-        }
-        ui::group(ui, pal, Some("Minos"), |ui| {
-            ui::row(
-                ui,
-                pal,
-                true,
-                "Search inside subfolders",
-                Some("Searching in Minos looks through every folder below the one you are in; off searches only that folder"),
-                |ui| {
-                    minos_changed |= ui::switch(ui, pal, &mut minos.search_subfolders).changed();
-                },
-            );
-            ui::row(ui, pal, false, "Show hidden items", Some("Files and folders whose names start with a dot"), |ui| {
-                minos_changed |= ui::switch(ui, pal, &mut minos.show_hidden).changed();
-            });
-            // Proton Drive's own row only once Proton Drive was added
-            if added.as_ref().is_some_and(|(_, proton)| *proton) {
-                ui::row(
-                    ui,
-                    pal,
-                    false,
-                    "Show Proton Drive file status",
-                    Some("A mark on each Proton Drive file: kept on this computer, or only in the cloud"),
-                    |ui| {
-                        minos_changed |= ui::switch(ui, pal, &mut minos.drive_status).changed();
-                    },
-                );
-            }
-            if added.as_ref().is_some_and(|(n, _)| n.is_empty())
-                && ui::nav_row(
-                    ui,
-                    pal,
-                    false,
-                    "Cloud drives",
-                    Some("None added yet; a drive you add shows in Minos's sidebar under Cloud Storage"),
-                    |_| {},
-                )
-            {
-                self.app_tab = 3;
-            }
-        });
-        if minos_changed {
-            // saved right away (a tiny file), so the slider and the sample follow the drag
-            let _ = minos.save();
-            ctx.request_repaint();
         }
     }
 

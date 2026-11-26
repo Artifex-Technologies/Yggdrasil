@@ -42,7 +42,7 @@ Used by: every program that asks fontconfig for a generic family on a system wit
 
 ### The cloud drives list (`~/.config/yggdrasil/cloud-drives.conf`) and their mount units
 
-Settings > Apps > Minos > Cloud drives writes it and Minos reads it (it watches the folder, so its Cloud Storage section follows
+Settings > Cloud Storage writes it and Minos reads it (it watches the folder, so its Cloud Storage section follows
 without a restart); both through `packages/clouddrives`. `[remote NAME]` sections (`type` = rclone's type, `mount` = the
 folder) are rclone remotes; `[folder NAME]` sections (`path`) are folders a sync app keeps. A remote is mounted by the user unit
 `~/.config/systemd/user/yggdrasil-cloud-NAME.service` (written when Mount or "Mount at sign-in" is first used), except Proton

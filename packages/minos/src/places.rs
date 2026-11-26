@@ -45,7 +45,7 @@ pub fn proton_drive_candidates() -> Vec<PathBuf> {
 
 /// Proton Drive's row under Cloud Storage, when it has one: only once Proton Drive was added (`added`: signed in, or in Settings'
 /// cloud drive list; `MINOS_PROTON_DRIVE` counts as added) or its folder holds a synced copy. Not added, it is not listed at all,
-/// and with nothing else added Cloud Storage is not shown either; Proton Drive is added in Settings > Apps > Minos > Cloud drives.
+/// and with nothing else added Cloud Storage is not shown either; Proton Drive is added in Settings > Cloud Storage.
 pub fn proton_drive(added: bool) -> Option<CloudPlace> {
     proton_place(proton_drive_candidates(), added || std::env::var_os("MINOS_PROTON_DRIVE").is_some_and(|p| !p.is_empty()))
 }
