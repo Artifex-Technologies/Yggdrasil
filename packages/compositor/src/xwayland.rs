@@ -169,6 +169,9 @@ pub fn fit_in(zone: Rectangle<i32, Logical>, want: Rectangle<i32, Logical>) -> R
 /// Kept with the window until XWayland has made its surface (state.rs, adopt).
 pub struct PlaceBefore(pub Rectangle<i32, Logical>);
 
+/// An X11 window that asked to start minimized (WM_HINTS' initial state Iconic): minimized once XWayland has made its surface.
+struct StartsMinimized;
+
 /// A game, recognised by its X11 class: a Steam game (`steam_app_<id>`) or a Windows program through Wine or Proton (`<name>.exe`).
 /// Games are drawn opaque whatever their alpha channel holds.
 pub fn is_game(x: &X11Surface) -> bool {
@@ -481,8 +484,14 @@ impl XWaylandShellHandler for App {
         let Some(w) = self.x11_window(&window) else { return };
         // window controls for an X11 window that does not draw its own (Steam and most games say they draw their own, or none)
         let decorate = self.decorates_all() || !window.is_decorated();
+        // one that asked to start minimized goes out of sight before it is listed, so it never has the keyboard
+        if w.user_data().get::<StartsMinimized>().is_some() {
+            self.minimize_surface(&surface);
+        }
         self.adopt(&w, &surface, decorate);
-        self.mark_active(&w);
+        if !self.is_minimized(&w) {
+            self.mark_active(&w);
+        }
     }
 }
 
@@ -503,18 +512,22 @@ impl XwmHandler for App {
     /// workspace once its surface exists), or full screen or maximized when it asked for that before it was shown.
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
         self.wake();
-        // A window that asks to start minimized (WM_HINTS' initial state Iconic, which Smithay marks hidden before this) is shown
-        // like any other, so it is told it is shown: not hidden, WM_STATE Normal (Wine keeps a window minimized while its
-        // WM_STATE says Iconic).
-        if window.is_hidden() {
+        // A window that asks to start minimized (WM_HINTS' initial state Iconic, which Smithay marks hidden before this) is
+        // placed as any other and minimized as soon as XWayland has made its surface (surface_associated): it is never drawn
+        // and never takes the keyboard, and the program is told Iconic from the start (set_mapped writes WM_STATE Iconic for a
+        // hidden window). It must not be told Normal first: Wine restores a minimized window when WM_STATE says Normal.
+        // A menu or tooltip that asked so is drawn all the same (they are not windows here).
+        let helper = is_helper(&window);
+        if helper && window.is_hidden() {
             let _ = window.set_hidden(false);
         }
+        let start_minimized = window.is_hidden();
         if window.set_mapped(true).is_err() {
             return;
         }
         // the X window as the program made it (with the shadow it draws, if any)
         let geo = window.last_configure();
-        if is_helper(&window) {
+        if helper {
             let _ = window.configure(geo);
             if !self.overlays.iter().any(|x| same(x, &window)) {
                 self.overlays.push(window);
@@ -530,6 +543,9 @@ impl XwmHandler for App {
         let game_full = is_game(&window) && screen.w > 0 && geo.size.w >= screen.w && geo.size.h >= screen.h;
         let start = o.current_location() + self.cascade();
         let w = Window::new_x11_window(window.clone());
+        if start_minimized {
+            w.user_data().insert_if_missing(|| StartsMinimized);
+        }
         // The X window goes where any would, its client-side shadow (_GTK_FRAME_EXTENTS) inside; the compositor keeps the window
         // less that shadow, as a Wayland window's geometry. Or back where the program's last window closed (places.rs).
         let shadow = state::shadow(&window);

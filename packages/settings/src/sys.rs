@@ -684,6 +684,10 @@ pub struct Output {
     pub y: i64,
     /// Turned: 0 none, 1 90°, 2 180°, 3 270° (wl_output's transforms; 4 to 7 are those flipped).
     pub transform: u32,
+    /// The turn is written to monitors.lua even when it is none (`transform = 0`): it was chosen here, or the file already said
+    /// one. A laptop's or handheld's panel mounted turned in its case starts turned by its 'panel orientation' on Yggdrasil's
+    /// own compositor unless the file gives a turn, so "none" left out would not last past the next start.
+    pub turn_kept: bool,
     /// The screen it shows a copy of (Duplicate), when it does.
     pub mirror_of: Option<String>,
     /// Variable refresh rate as monitors.lua sets it (0 off, 1 on, 2 for full-screen games); None: the session's own setting.
@@ -781,6 +785,7 @@ fn current_outputs() -> Option<Vec<Output>> {
     let lua = std::fs::read_to_string(monitors_path()).unwrap_or_default();
     for o in &mut outs {
         o.vrr = lua_value(&lua, &o.name, "vrr").and_then(|v| v.parse().ok()).filter(|v: &u8| *v <= 2);
+        o.turn_kept = lua_value(&lua, &o.name, "transform").is_some();
     }
     Some(outs)
 }
@@ -865,6 +870,7 @@ pub fn outputs_from(screens: &[yggdrasil_wm::Screen], main: Option<&yggdrasil_co
                 x: m.x as i64,
                 y: m.y as i64,
                 transform: m.transform,
+                turn_kept: false,
                 mirror_of: m.mirror_of.clone(),
                 vrr: None,
             }
@@ -917,7 +923,7 @@ pub fn hypr_monitors_lua(outs: &[Output]) -> String {
             None => format!("position = \"{}x{}\", scale = {}", o.x, o.y, o.scale),
         };
         let mut extra = String::new();
-        if o.transform != 0 {
+        if o.transform != 0 || o.turn_kept {
             extra.push_str(&format!(", transform = {}", o.transform));
         }
         if let Some(v) = o.vrr {
@@ -1797,7 +1803,9 @@ mod tests {
         let tall = Output { transform: 1, ..screen("DP-3", (2560, 2880), (3440, 0)) };
         let copy = Output { mirror_of: Some("DP-1".into()), ..screen("HDMI-A-1", (1920, 1080), (0, 0)) };
         let off = Output { enabled: false, ..screen("HDMI-A-2", (1920, 1080), (0, 0)) };
-        let lua = hypr_monitors_lua(&[wide, tall, copy, off]);
+        // a panel mounted turned, set to no turn here: "none" is written, so its 'panel orientation' does not turn it again
+        let upright = Output { turn_kept: true, ..screen("eDP-1", (1920, 1200), (0, 1440)) };
+        let lua = hypr_monitors_lua(&[wide, tall, copy, off, upright]);
         assert_eq!(
             lua.lines().skip(1).collect::<Vec<_>>(),
             [
@@ -1805,8 +1813,10 @@ mod tests {
                 r#"hl.monitor({ output = "DP-3", mode = "2560x2880@60.00", position = "3440x0", scale = 1, transform = 1 })"#,
                 r#"hl.monitor({ output = "HDMI-A-1", mode = "1920x1080@60.00", position = "auto", scale = 1, mirror = "DP-1" })"#,
                 r#"hl.monitor({ output = "HDMI-A-2", disabled = true })"#,
+                r#"hl.monitor({ output = "eDP-1", mode = "1920x1200@60.00", position = "0x1440", scale = 1, transform = 0 })"#,
             ]
         );
+        assert_eq!(lua_value(&lua, "eDP-1", "transform").as_deref(), Some("0"), "read back: kept at the next change");
         assert_eq!(lua_value(&lua, "DP-1", "vrr").as_deref(), Some("2"), "read back for the page");
         assert_eq!(lua_value(&lua, "DP-3", "vrr"), None);
         assert_eq!(lua_value(&lua, "HDMI-A-1", "mirror").as_deref(), Some("DP-1"));

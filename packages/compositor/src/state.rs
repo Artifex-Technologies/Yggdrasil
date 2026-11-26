@@ -187,6 +187,8 @@ smithay::delegate_dispatch2!(App);
 pub type DmabufImport = Box<dyn FnMut(&smithay::backend::allocator::dmabuf::Dmabuf) -> bool>;
 /// Shows the pointer the way it should look.
 pub type CursorHook = Box<dyn FnMut(&CursorImageStatus)>;
+/// Whether a screen (by name) can have a mode now: Err with the reason when its GPU refuses it.
+pub type ModeCheck = Box<dyn FnMut(&str, smithay::output::Mode) -> Result<(), String>>;
 
 /// How many times the full screen windows on a screen committed, and when the last time was (`App::game_commits`).
 #[derive(Clone, Copy, Debug, Default)]
@@ -219,6 +221,10 @@ pub struct App {
     pub cursor_hook: Option<CursorHook>,
     /// Switches to another virtual terminal (Ctrl+Alt+Fn): set by the hardware backend (udev.rs), which owns the session.
     pub vt_switch: Option<Box<dyn FnMut(i32)>>,
+    /// Asks the backend whether a screen can have a mode now, before a program is told its change succeeded
+    /// (wlr-output-management, `App::modes_taken`): the hardware backend test-commits it on the screen's CRTC (udev.rs), the
+    /// headless one refuses the modes `refuse-mode` named. None: any mode goes.
+    pub mode_check: Option<ModeCheck>,
     /// Wakes the drawing: the screen is drawn only when something changed (a program committed a picture, input, a setting).
     ping: smithay::reexports::calloop::ping::Ping,
     pub display_handle: DisplayHandle,
@@ -686,6 +692,16 @@ pub fn win_has(w: &Window, st: xdg_toplevel::State) -> bool {
     }
 }
 
+/// Whether a Wayland window has been sent a state the compositor lays out (full screen, maximized, snapped: `fit_window` put it
+/// there already) that its commits do not show yet. A program may commit its first picture before it has read that configure
+/// (at its own size, the state not acked): it is still to be placed by the state, not centred as a floating window.
+fn laid_out_ahead(w: &Window) -> bool {
+    use xdg_toplevel::State as S;
+    w.toplevel().is_some_and(|t| {
+        t.with_pending_state(|p| [S::Fullscreen, S::Maximized, S::TiledLeft, S::TiledRight].into_iter().any(|st| p.states.contains(st)))
+    })
+}
+
 /// A window's title and app id (for an X11 window: its WM_CLASS class, which is what desktop files match).
 pub fn title_app(w: &Window) -> (String, String) {
     match (w.x11_surface(), w.toplevel()) {
@@ -841,6 +857,7 @@ impl App {
             _tablet_state: smithay::wayland::tablet_manager::TabletManagerState::new::<Self>(dh),
             cursor_hook: None,
             vt_switch: None,
+            mode_check: None,
             seat_state,
             data_device_state: DataDeviceState::new::<Self>(dh),
             _output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(dh),
@@ -1197,7 +1214,7 @@ impl App {
     fn place_new(&mut self, w: &Window) {
         let Some(s) = surface_of(w) else { return };
         self.unplaced.retain(|x| x != &s);
-        if !self.floating_shown().contains(w) {
+        if !self.floating_shown().contains(w) || laid_out_ahead(w) {
             return;
         }
         let o = self.window_output(w);
@@ -1432,10 +1449,19 @@ impl App {
         self.opened_at.push(surface.clone());
         self.foreign_added(window);
         self.retile();
+        // one that opened minimized (an X11 window that asked to) leaves the keyboard where it is
+        if self.is_minimized(window) {
+            return;
+        }
         // the others are told they are no longer active (a full screen game under it would think it still has the keyboard)
         self.mark_active(window);
         self.give_keyboard(Some(surface.clone()), SERIAL_COUNTER.next_serial());
         self.touch_focus(surface);
+    }
+
+    /// Whether this window is minimized.
+    pub fn is_minimized(&self, window: &Window) -> bool {
+        self.minimized.contains(window)
     }
 
     /// A window has closed (an X11 one: unmapped or destroyed): forget it everywhere, and the keyboard goes to the window now on top.

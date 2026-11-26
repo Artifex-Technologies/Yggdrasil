@@ -66,9 +66,11 @@ Settings too, so nothing shows a rate the screen is not running. `highrr` and `h
 cinema 4096x2160 or a monitor's 800x600 at 60.32 Hz is never chosen. The GL context is asked for at high priority, with the
 default as the fallback, and each GPU's line says what EGL granted. `YGGDRASIL_COMPOSITOR_CURSOR_PLANE=0` draws the pointer
 into each frame instead of on a cursor plane. A laptop's or handheld's panel mounted turned in its case starts upright from its
-'panel orientation'; where the session runs the tablet watcher (a machine with an accelerometer or a tablet-mode switch), the
+'panel orientation' unless monitors.lua gives it a turn (Settings writes `transform = 0` once no turn was chosen there, so
+that choice lasts); where the session runs the tablet watcher (a machine with an accelerometer or a tablet-mode switch), the
 watcher's turn, counted from a panel that sits upright, replaces it a moment later. When the compositor
-ends, the Night Light tint is taken off the CRTCs before the GPUs are let go, so the next session is not tinted. The GPU
+ends, the Night Light tint is taken off the CRTCs before the GPUs are let go, so the next session is not tinted; the same
+before Ctrl+Alt+Fn shows another terminal, and the tint goes back on when the compositor's terminal shows again. The GPU
 priority, the cursor plane switch, the panel orientation and the tint at the end are ideas from reading Valve's gamescope (no
 code taken). Unit tests cover the rules, the mode choice with two real monitors' mode lists as Hyprland listed them; none of
 it has run on hardware yet. Each part and its check:
@@ -340,7 +342,7 @@ connects (since 2026-11-24, below). `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it 
   to start maximized, sets `_NET_WM_STATE` before its window is shown. Smithay's window manager reads it when the window is
   mapped (on Smithay main), and the window is full screen or maximized from its first frame (`src/xwayland.rs`,
   map_window_request); when that ends, it goes back to the place it would have had. Steam's is ignored, as its maximize requests
-  are (below). A window that asks to start minimized (WM_HINTS' initial state) is shown, and told so. A game (below) as big as
+  are (below). A window that asks to start minimized (WM_HINTS' initial state) is minimized as soon as XWayland has made its surface: never drawn, the keyboard left where it was, and told Iconic from the start (WM_STATE), never Normal first, which Wine would take as restored. A game (below) as big as
   the screen that said nothing is still taken as going full screen; other programs no longer are (`tests/x11.rs`).
 - Clipboard and middle-click selection both ways between X11 and Wayland programs; an X11 program can read them only while one of
   its windows has the keyboard. The program with the keyboard is now the one offered the clipboard (this was missing for Wayland

@@ -14,10 +14,11 @@
 //!   Settings > Displays' monitors.lua then sets its mode, scale and place (outputs.rs, the same code as headless; a screen it
 //!   does not name runs at its own size at the fastest rate it has for it, and one it gives no scale gets one from its size,
 //!   laptop.rs). A laptop's panel mounted turned in its case (a handheld's, a tablet's: the connector's "panel orientation")
-//!   starts turned upright unless monitors.lua turns it. A mode changed later (wlr-output-management) is set on the CRTC at
-//!   the next frame (a mode within half a hertz of the one asked: 60 for a panel's 60.003 Hz); one the screen cannot have (its
-//!   GPU refuses it, at the first modeset or later, or it is not one of its modes) leaves the CRTC as it is, and the screen is
-//!   put back at that mode, so programs and Settings never see a mode it does not run. A screen unplugged gives its CRTC
+//!   starts turned upright unless monitors.lua turns it. A mode changed later (wlr-output-management) is first test-committed
+//!   on the CRTC (`test_mode`: a mode its GPU refuses, or one it does not have, is answered 'failed' and nothing changes), then
+//!   set on the CRTC at the next frame (a mode within half a hertz of the one asked: 60 for a panel's 60.003 Hz); one the
+//!   screen cannot have then (its GPU refuses it, at the first modeset or later, or it is not one of its modes) leaves the CRTC
+//!   as it is, and the screen is put back at that mode, so programs and Settings never see a mode it does not run. A screen unplugged gives its CRTC
 //!   back (its DrmCompositor goes, which switches the CRTC off) but stays a screen for 2 s (outputs.rs, UNPLUG_GRACE): a monitor
 //!   whose link bounces comes back with its windows and panels, only its CRTC set up again; one plugged in is set up once its
 //!   link has stayed for 0.7 s (SETTLE). A connector
@@ -50,7 +51,9 @@
 //!   factor is applied here. The touchscreen and the pen are the laptop screen's (touch.rs).
 //! - **The control socket** (control.rs) is there too, for Yggdrasil's own tools (yggdrasil-wm); it makes no input.
 //! - **Ending**: `ctl quit`, SIGTERM, SIGINT or SIGHUP end it cleanly: the CRTCs it tinted (Night Light) get a straight gamma
-//!   table back so the next session is not tinted, the session is closed and the console comes back.
+//!   table back so the next session is not tinted, the session is closed and the console comes back. The same tint comes off
+//!   before Ctrl+Alt+Fn switches to another terminal (the console or another session there is not tinted) and goes back on
+//!   when this one shows again; a switch made from elsewhere (chvt) is noticed only once the seat is gone, too late for the GPU.
 //!
 //! - **Waiting for programs' GPUs** (sync.rs): a commit with a GPU buffer is applied once the buffer is drawn, through
 //!   explicit sync (linux-drm-syncobj-v1, which NVIDIA needs) where the GPU can, the buffer's own fences otherwise.
@@ -364,13 +367,35 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     crate::outputmgmt::create_global(&dh);
     gpu_buffers(&udev, &mut app, &dh);
 
-    // Ctrl+Alt+Fn: another virtual terminal
+    // Ctrl+Alt+Fn: another virtual terminal. The screens' tint (Night Light) is taken off first, while the session still has
+    // the GPUs: the kernel keeps a CRTC's gamma table for whoever shows next (the console, a Hyprland session). Each screen's
+    // `gamma` stays as it was, so no frame before the switch puts the tint back; coming back sets it again (ActivateSession)
     let mut vt_session = session.clone();
+    let u = udev.clone();
     app.vt_switch = Some(Box::new(move |n| {
+        if let Ok(mut b) = u.try_borrow_mut() {
+            if b.session.is_active() {
+                for d in b.devices.values_mut() {
+                    untint(d);
+                }
+            }
+        }
         if let Err(e) = vt_session.change_vt(n) {
             eprintln!("yggdrasil-compositor: cannot switch to terminal {n}: {e}");
+            // still here: the tint again with the next frame
+            if let Ok(mut b) = u.try_borrow_mut() {
+                for s in b.devices.values_mut().flat_map(|d| d.screens.values_mut()) {
+                    s.gamma = None;
+                    s.dirty = true;
+                }
+            }
         }
     }));
+
+    // a program's mode change (wlr-output-management) is answered only once the screen's GPU has taken the mode in a test
+    // commit (`test_mode`)
+    let u = udev.clone();
+    app.mode_check = Some(Box::new(move |name, mode| test_mode(&u, name, mode)));
 
     // a wake-up (a commit, input, a setting): draw the screens that changed, once per pass of the loop
     let u = udev.clone();
@@ -389,6 +414,13 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     handle.insert_source(notifier, move |event, _, app| match event {
         SessionEvent::PauseSession => {
             let mut b = u.borrow_mut();
+            // a switch not made with Ctrl+Alt+Fn (chvt, another session started): the tint is tried here, but Smithay has
+            // already let the seat go by now, so the GPU usually refuses (said once per switch; ActivateSession sets it again)
+            if b.devices.values().any(|d| !d.tinted.is_empty()) {
+                for d in b.devices.values_mut() {
+                    untint(d);
+                }
+            }
             b.libinput.suspend();
             for d in b.devices.values_mut() {
                 match &mut d.gpu {
@@ -558,7 +590,7 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let mut b = udev.borrow_mut();
     // before the GPUs are let go: no tint of ours stays for the session after this one
     if b.session.is_active() {
-        for d in b.devices.values() {
+        for d in b.devices.values_mut() {
             untint(d);
         }
     } else if b.devices.values().any(|d| !d.tinted.is_empty()) {
@@ -575,7 +607,8 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
 /// without a gamma table has a colour matrix (CTM) or degamma table someone left on it cleared, so the session after this one
 /// (Hyprland, the console) is not tinted: the kernel keeps a CRTC's colour tables for whoever takes the GPU next. Gamescope
 /// clears them on exit the same way. (On an atomic driver the kernel's legacy gamma call also clears the CTM and degamma table.)
-fn untint(dev: &Device) {
+/// Also before a switch to another virtual terminal (`App::vt_switch`). A CRTC set straight is no longer counted as tinted.
+fn untint(dev: &mut Device) {
     let drm = gpu_drm(&dev.gpu);
     let crtcs: HashSet<crtc::Handle> = dev.screens.keys().chain(&dev.tinted).copied().collect();
     for crtc in crtcs {
@@ -585,7 +618,10 @@ fn untint(dev: &Device) {
             if dev.tinted.contains(&crtc) {
                 let straight = crate::ctm::ramp(1.0, len);
                 match drm.set_gamma(crtc, &straight, &straight, &straight) {
-                    Ok(()) => eprintln!("yggdrasil-compositor: {what}: tint taken off"),
+                    Ok(()) => {
+                        eprintln!("yggdrasil-compositor: {what}: tint taken off");
+                        dev.tinted.remove(&crtc);
+                    }
                     Err(e) => eprintln!("yggdrasil-compositor: {what}: the tint was not taken off: {e}"),
                 }
             }
@@ -2021,6 +2057,44 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
         }
     }
     None
+}
+
+/// Whether the screen `name` can have `mode` now, asked before a program is told its change succeeded (`App::modes_taken`): a
+/// mode it does not have is refused, and one it has is test-committed on its CRTC (Smithay's `use_mode` makes an atomic
+/// TEST_ONLY commit with a modeset), after which the CRTC's pending mode is put back as it was: the change itself is set at the
+/// next frame (`follow_mode`), which still puts the screen back if the GPU refuses it then. Ok when nothing can be asked now
+/// (another terminal has the screens, the backend is busy, a legacy-only GPU, which cannot test without setting): the frame
+/// decides then, as before.
+fn test_mode(udev: &Rc<RefCell<Udev>>, name: &str, mode: Mode) -> Result<(), String> {
+    let Ok(b) = udev.try_borrow() else { return Ok(()) };
+    if !b.session.is_active() {
+        return Ok(());
+    }
+    let Some(screen) = b.devices.values().flat_map(|d| d.screens.values()).find(|s| s.output.name() == name) else {
+        return Ok(());
+    };
+    let offered: Vec<Mode> = screen.modes.iter().map(|m| Mode::from(*m)).collect();
+    let i = match mode_to_set(Some(mode), screen.mode, None, &offered) {
+        None => return Ok(()),
+        Some((_, Err(e))) => return Err(e.into()),
+        Some((_, Ok(i))) => i,
+    };
+    let drm_mode = screen.modes[i];
+    let try_it = |surface: &smithay::backend::drm::DrmSurface| {
+        let before = surface.pending_mode();
+        let tried = surface.use_mode(drm_mode).map_err(|e| format!("its GPU refused it ({e})"));
+        if tried.is_ok() && before != drm_mode {
+            // put back: the frame sets the mode (follow_mode), with its own buffers
+            if let Err(e) = surface.use_mode(before) {
+                eprintln!("yggdrasil-compositor: {name}: its pending mode not put back after a test: {e}");
+            }
+        }
+        tried
+    };
+    match &screen.drm {
+        Out::Gles(o) => o.with_compositor(|c| try_it(c.surface())),
+        Out::Pixman(o) => o.with_compositor(|c| try_it(c.surface())),
+    }
 }
 
 /// Whether a program's buffer may go to the screen directly: `YGGDRASIL_COMPOSITOR_SCANOUT` 0 (no, off, false) keeps every

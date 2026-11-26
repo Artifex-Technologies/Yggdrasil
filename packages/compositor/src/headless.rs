@@ -21,6 +21,9 @@
 //!                                laptop's own screen, as on the hardware), placed as Settings' file says or to the right of
 //!                                the others (a laptop's own screen first)
 //!   remove-output NAME           a screen is unplugged: its panels are closed, its windows move to the first screen
+//!   refuse-mode NAME WxH[@HZ]    from now on the screen's (pretend) GPU refuses that mode (60 Hz unless HZ says), as the
+//!                                hardware backend's test commit can: a program asking for it through wlr-output-management
+//!                                is answered 'failed' (outputs.rs, `modes_taken`)
 //!   unplug NAME, replug NAME     a screen's link goes and comes back, as the hardware backend sees a connector: the screen is
 //!                                kept for 2 s (outputs.rs, UNPLUG_GRACE) and removed then unless replugged meanwhile
 //!   screenshot NAME FILE.png [pointer]
@@ -265,12 +268,14 @@ pub struct Headless {
     /// Frames drawn with a change on a screen, and passes over the screens (the `frames` command).
     drawn: u64,
     passes: u64,
+    /// The modes `refuse-mode` named, which the App's mode_check refuses for their screen.
+    refused: Rc<RefCell<Vec<(String, Mode)>>>,
 }
 
 /// The commands, for an unknown one's answer: this backend's own (`command`), the common ones (control.rs) and the tools'
 /// (wmctl.rs).
 const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, power NAME on|off, add-output WxH[@S] [NAME], remove-output NAME, \
-                     unplug NAME, replug NAME, main, screenshot NAME FILE [pointer], pointer-look, windows, free, focus, workspace, \
+                     refuse-mode NAME WxH[@HZ], unplug NAME, replug NAME, main, screenshot NAME FILE [pointer], pointer-look, windows, free, focus, workspace, \
                      lock, switcher, frames, key COMBO..., key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], \
                      press [BUTTON], release [BUTTON], pointer-move DX DY, scroll DY [DX], input, touch-down ID X Y, \
                      touch-move ID X Y, touch-up ID, touch-cancel, clock [stop|run|+MS], watch, quit; for the tools: clients, \
@@ -280,10 +285,11 @@ const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, power NAME on|off, 
                      transform [NAME N], exit";
 
 /// This backend's own commands (`own_command`; the touch ones are `touch_command`'s).
-const OWN: [&str; 19] = [
+const OWN: [&str; 20] = [
     "resize",
     "add-output",
     "remove-output",
+    "refuse-mode",
     "unplug",
     "replug",
     "screenshot",
@@ -325,6 +331,7 @@ impl Headless {
             control: Default::default(),
             drawn: 0,
             passes: 0,
+            refused: Rc::default(),
         })
     }
 
@@ -631,6 +638,12 @@ pub fn run(
     runtime: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let h = Rc::new(RefCell::new(Headless::new(app.heads.list.len() + 1)?));
+    // any mode goes, but those `refuse-mode` named, as a GPU's test commit can refuse one on the hardware backend
+    let refused = h.borrow().refused.clone();
+    app.mode_check = Some(Box::new(move |name, mode| match refused.borrow().iter().any(|(n, m)| n == name && *m == mode) {
+        true => Err("its GPU refused it (refuse-mode)".into()),
+        false => Ok(()),
+    }));
     let handle = event_loop.handle();
     // a closing window's last picture can be taken from the screens in memory
     app.pictures_of_closing = true;
@@ -772,6 +785,14 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
         }
         ["remove-output", name] => {
             app.remove_output(name)?;
+            Ok(vec![])
+        }
+        ["refuse-mode", name, spec] => {
+            output(name, app)?;
+            let (size, hz) = spec.split_once('@').unwrap_or((spec, "60"));
+            let (w, hh) = parse_size(size).ok_or_else(|| format!("{spec}: give WIDTHxHEIGHT or WIDTHxHEIGHT@HZ"))?;
+            let hz: f64 = hz.parse().ok().filter(|r: &f64| *r > 0.0 && *r < 1000.0).ok_or_else(|| format!("{spec}: a rate in Hz"))?;
+            h.refused.borrow_mut().push((name.to_string(), Mode { size: (w, hh).into(), refresh: (hz * 1000.0).round() as i32 }));
             Ok(vec![])
         }
         ["unplug", name] => {
