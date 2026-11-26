@@ -566,6 +566,33 @@ fn a_finger_follows_the_same_order_as_the_pointer() {
     assert_eq!(tapped(&s.comp, &mut s.c, IN_B), Some((320.0, 240.0)), "a tap in B reaches B");
 }
 
+/// A window that asks for full screen and commits its first picture before it has read the configure that makes it so (at
+/// its own size, the state not acked yet) is still placed full screen: it is not centred as a floating window at that size
+/// and left there when its full screen picture comes.
+#[test]
+fn a_window_whose_first_picture_comes_before_its_full_screen_configure_is_placed_full_screen() {
+    let _l = limit(60, "a full screen window's early first picture");
+    let comp = Compositor::start(&["--size", "1600x900"]);
+    let mut c = comp.connect();
+    let w = c.window("test.early", "Early");
+    // asked for full screen, and the first picture sent with the same flush: the compositor gets the commit before the client
+    // has read (and acked) the full screen configure
+    w.toplevel.set_fullscreen(None);
+    let b = c.buffer(400, 300, BLUE);
+    w.surface.attach(Some(&b), 0, 0);
+    w.surface.damage_buffer(0, 0, 400, 300);
+    w.surface.commit();
+    c.roundtrip();
+    assert!(c.state.wins[w.index].states.contains(&FULLSCREEN), "the full screen configure came after the commit");
+    let at = comp.window("test.early").expect("listed").at;
+    assert_eq!(at, (0, 0), "not centred at its first picture's size");
+    // its full screen picture: the whole screen
+    let info = settle(&comp, &mut c, &w, "test.early", BLUE);
+    assert!(info.has("fullscreen"), "{info:?}");
+    assert_eq!(info.rect(), (0, 0, SCREEN.0, SCREEN.1));
+    assert_eq!(drawn(&comp, (1500, 850)), RGB_BLUE, "drawn to the bottom right corner");
+}
+
 /// Handles of a window to keep beside the test's set-up (the protocol objects are cheap clones of the same objects).
 trait CloneHandles {
     fn clone_handles(&self) -> Window;

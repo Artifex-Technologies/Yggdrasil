@@ -692,6 +692,16 @@ pub fn win_has(w: &Window, st: xdg_toplevel::State) -> bool {
     }
 }
 
+/// Whether a Wayland window has been sent a state the compositor lays out (full screen, maximized, snapped: `fit_window` put it
+/// there already) that its commits do not show yet. A program may commit its first picture before it has read that configure
+/// (at its own size, the state not acked): it is still to be placed by the state, not centred as a floating window.
+fn laid_out_ahead(w: &Window) -> bool {
+    use xdg_toplevel::State as S;
+    w.toplevel().is_some_and(|t| {
+        t.with_pending_state(|p| [S::Fullscreen, S::Maximized, S::TiledLeft, S::TiledRight].into_iter().any(|st| p.states.contains(st)))
+    })
+}
+
 /// A window's title and app id (for an X11 window: its WM_CLASS class, which is what desktop files match).
 pub fn title_app(w: &Window) -> (String, String) {
     match (w.x11_surface(), w.toplevel()) {
@@ -1204,7 +1214,7 @@ impl App {
     fn place_new(&mut self, w: &Window) {
         let Some(s) = surface_of(w) else { return };
         self.unplaced.retain(|x| x != &s);
-        if !self.floating_shown().contains(w) {
+        if !self.floating_shown().contains(w) || laid_out_ahead(w) {
             return;
         }
         let o = self.window_output(w);
