@@ -4353,12 +4353,9 @@ impl eframe::App for App {
         // the navigation row across the window, under the tabs, in the title strip's colour: only the current tab is
         // coloured (split view: one in each pane, draw_pane)
         if !split {
-            egui::Panel::top("nav").frame(egui::Frame::new().fill(pal.strip).inner_margin(egui::Margin::symmetric(8, 5))).show(
-                ui,
-                |ui| {
-                    topbar::nav_bar(ui, &mut self.panes[0], 0, &pal, &self.st, true, &mut actions);
-                },
-            );
+            egui::Panel::top("nav").frame(egui::Frame::new().fill(pal.strip).inner_margin(egui::Margin::symmetric(8, 5))).show(ui, |ui| {
+                topbar::nav_bar(ui, &mut self.panes[0], 0, &pal, &self.st, true, &mut actions);
+            });
         }
 
         // the bottom bar (statusbar.rs, transfers.rs): across the whole window, under the sidebar too, as in Windows Explorer
