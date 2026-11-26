@@ -64,6 +64,8 @@ pub struct State {
     pub preview_width: f32,
     /// The command bar's Group menu: the list in groups by type, date or size.
     pub group: crate::grouping::GroupBy,
+    /// The details list's columns after Name (the layout menu's Columns, a right-click on the header).
+    pub columns: crate::columns::Columns,
     /// The sidebar folded away (the navigation row's sidebar button).
     pub sidebar_hidden: bool,
     /// Use the desktop's accent color (Settings > Appearance) for Minos's highlights. On by default.
@@ -113,6 +115,7 @@ impl Default for State {
             preview: true,
             preview_width: PREVIEW_MIN,
             group: crate::grouping::GroupBy::None,
+            columns: crate::columns::Columns::default(),
             sidebar_hidden: false,
             follow_accent: true,
             system_accent: None,

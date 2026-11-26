@@ -17,6 +17,7 @@ use egui_extras::{Column, TableBuilder};
 use icons::Icon;
 use minos_core::archive::{self, Format};
 use minos_core::cloud::{self, Badge, Link, Report};
+use minos_core::columns::{self, ListColumn};
 use minos_core::commandbar;
 use minos_core::devices;
 use minos_core::grouping::{self, GroupBy};
@@ -308,6 +309,8 @@ enum Action {
     Properties(usize),
     /// The command bar's Group menu.
     SetGroup(GroupBy),
+    /// A column of the details list shown or hidden (the layout menu's Columns, a right-click on the header).
+    ToggleColumn(ListColumn),
     /// The navigation row's sidebar button.
     ToggleSidebar,
     /// A cloud drive under Cloud Storage: mount it (and open it once mounted, when the bool says so), or unmount it.
@@ -1603,15 +1606,27 @@ fn fitted_widths(ui: &egui::Ui, pi: usize, shown: &[Entry], order: &[usize]) -> 
     w
 }
 
-fn header_cell(ui: &mut egui::Ui, pal: &Palette, label: &str, key: Option<SortKey>, sort: Sort, new_sort: &mut Sort) {
+/// A heading of the list: a click sorts by it (where it sorts); `menu`, when given, opens on a right-click (the columns).
+fn header_cell(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    label: &str,
+    key: Option<SortKey>,
+    sort: Sort,
+    new_sort: &mut Sort,
+    menu: Option<&dyn Fn(&mut egui::Ui)>,
+) {
     ui.horizontal(|ui| {
-        let r = ui.add(egui::Label::new(RichText::new(label).strong().color(pal.text)).sense(if key.is_some() {
-            Sense::click()
-        } else {
-            Sense::hover()
-        }));
+        let arrow = key.is_some_and(|k| sort.key == k);
+        // the words give way to the sort arrow in a narrow column, shortened with "..."
+        let room = (ui.available_width() - if arrow { 12.0 + ui.spacing().item_spacing.x } else { 0.0 }).max(0.0);
+        let r = ui
+            .allocate_ui(vec2(room, ui.available_height()), |ui| {
+                ui.add(egui::Label::new(RichText::new(label).strong().color(pal.text)).truncate().sense(Sense::click()))
+            })
+            .inner;
         if let Some(k) = key {
-            if sort.key == k {
+            if arrow {
                 let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
                 icons::paint(ui.painter(), rect, if sort.descending { Icon::SortDown } else { Icon::SortUp }, pal.text);
             }
@@ -1619,7 +1634,27 @@ fn header_cell(ui: &mut egui::Ui, pal: &Palette, label: &str, key: Option<SortKe
                 *new_sort = Sort { key: k, descending: sort.key == k && !sort.descending };
             }
         }
+        if let Some(menu) = menu {
+            r.context_menu(|ui| menu(ui));
+        }
     });
+}
+
+/// The details list's columns, ticked where shown: the layout menu's Columns and a right-click on the list's header. Name is
+/// always there; Status only while Settings shows Proton Drive's marks.
+pub(crate) fn columns_menu(ui: &mut egui::Ui, st: &State, toggle: &mut dyn FnMut(ListColumn)) {
+    ui.label(RichText::new("Columns").small());
+    ui.add_enabled(false, egui::Checkbox::new(&mut true, "Name"));
+    for c in ListColumn::ALL {
+        if c == ListColumn::Status && !st.drive_status {
+            continue;
+        }
+        let mut on = st.columns.shows(c);
+        let label = if c == ListColumn::Status { "Status (Proton Drive folders)" } else { c.label() };
+        if ui.checkbox(&mut on, label).clicked() {
+            toggle(c);
+        }
+    }
 }
 
 fn usage_bar(ui: &mut egui::Ui, pal: &Palette, total: u64, free: u64, width: f32) {
@@ -1738,11 +1773,11 @@ fn draw_pane(
         ViewMode::Details => {
             // The row, not the name, takes the clicks and drags (see entry_interact below).
             let ectx = ui.ctx().clone();
-            // A Status column (like Windows) in Proton Drive folders, when the pane is wide enough for the other columns too.
+            // A Status column (like Windows) in Proton Drive folders, while it is chosen (the columns menu).
             let status_col = st.drive_status
+                && st.columns.status
                 && !in_pc
                 && !in_archive
-                && ui.available_width() >= 560.0
                 && places::proton_drive_candidates().iter().any(|r| dir.starts_with(r));
             let name_cell = |ui: &mut egui::Ui, e: &Entry| {
                 ui.horizontal(|ui| {
@@ -1786,10 +1821,10 @@ fn draw_pane(
                     .column(Column::initial(210.0).at_least(120.0))
                     .column(Column::remainder().at_least(110.0))
                     .header(26.0, |mut h| {
-                        h.col(|ui| header_cell(ui, &pal, "Name", None, sort, &mut new_sort));
-                        h.col(|ui| header_cell(ui, &pal, "Type", None, sort, &mut new_sort));
-                        h.col(|ui| header_cell(ui, &pal, "Size", None, sort, &mut new_sort));
-                        h.col(|ui| header_cell(ui, &pal, "Usage", None, sort, &mut new_sort));
+                        h.col(|ui| header_cell(ui, &pal, "Name", None, sort, &mut new_sort, None));
+                        h.col(|ui| header_cell(ui, &pal, "Type", None, sort, &mut new_sort, None));
+                        h.col(|ui| header_cell(ui, &pal, "Size", None, sort, &mut new_sort, None));
+                        h.col(|ui| header_cell(ui, &pal, "Usage", None, sort, &mut new_sort, None));
                     })
                     .body(|body| {
                         body.rows(30.0, order.len(), |mut row| {
@@ -1828,47 +1863,63 @@ fn draw_pane(
                         });
                     });
             } else {
-                // In a narrow pane only the name and the size are kept, so the table never outgrows the pane.
-                let avail_w = ui.available_width();
-                let narrow = avail_w < 560.0;
+                // The chosen columns, all of them and in their order after Name, at any width: in a narrow pane (the preview
+                // pane open, split view) they all give up room alike rather than some going. Until 2026-11-26 a pane under
+                // 560 points kept only Name and Size, and a wider one could push Size past its right edge.
+                let cols = st.columns.shown(status_col);
                 // the table's rows: each item (its place in `order`), with a group's heading before its first item (Group by)
                 let rows: Vec<(usize, bool)> = (0..order.len())
                     .flat_map(|pos| heads.iter().any(|(p, _)| *p == pos).then_some((pos, true)).into_iter().chain([(pos, false)]))
                     .collect();
-                let columns = 2 + usize::from(status_col) + if narrow { 0 } else { 2 };
-                // Date modified, Type and Size start just wide enough for what this folder shows in full, and the name takes the
-                // rest, so the list fits the pane without scrolling sideways. A dragged edge stays for the session; a folder whose
-                // widest date, type or size differs starts fitted again (the widths are the table's id).
+                // Date modified, Type and Size want just the width of what this folder shows in full; Name takes the rest
                 let [date_w, type_w, size_w] = fitted_widths(ui, pi, shown, &order);
-                let mut tb =
-                    TableBuilder::new(ui).striped(true).resizable(!narrow).sense(Sense::click_and_drag()).drag_to_scroll(drag_scroll);
+                let wants: Vec<(f32, f32)> = cols
+                    .iter()
+                    .map(|c| match c {
+                        ListColumn::Status => (80.0, 56.0),
+                        ListColumn::Modified => (date_w, 64.0),
+                        ListColumn::Type => (type_w, 56.0),
+                        ListColumn::Size => (size_w, 56.0),
+                    })
+                    .collect();
+                let spacing = ui.spacing().item_spacing.x;
+                let avail_w = ui.available_width() - ui.spacing().scroll.allocated_width();
+                let widths = columns::fit(avail_w, spacing, &wants);
+                let name_min = columns::name_floor(avail_w, spacing, &widths);
+                // A dragged edge stays for the session; other columns, a folder whose widest date, type or size differs, or
+                // a pane too narrow for them start fitted again (the widths are the table's id).
+                let salt: Vec<u32> = cols.iter().map(|c| *c as u32).chain(widths.iter().map(|w| *w as u32)).collect();
+                let mut tb = TableBuilder::new(ui)
+                    .id_salt(("details", salt))
+                    .striped(true)
+                    .resizable(true)
+                    .sense(Sense::click_and_drag())
+                    .drag_to_scroll(drag_scroll);
                 if let Some(r) = want_row.and_then(|w| rows.iter().position(|&(p, head)| p == w && !head)) {
                     tb = tb.scroll_to_row(r, None);
                 }
-                if narrow {
-                    let name_w = (avail_w - 84.0).max(100.0);
-                    tb = tb.column(Column::exact(name_w).clip(true)).column(Column::exact(70.0));
-                } else {
-                    tb = tb.id_salt(("details", date_w as u32, type_w as u32, size_w as u32));
-                    tb = tb.column(Column::remainder().at_least(160.0).clip(true).resizable(false));
-                    if status_col {
-                        tb = tb.column(Column::initial(80.0).at_least(60.0));
-                    }
-                    tb = tb
-                        .column(Column::initial(date_w).at_least(60.0))
-                        .column(Column::initial(type_w).at_least(50.0))
-                        .column(Column::initial(size_w).at_least(50.0));
+                tb = tb.column(Column::remainder().at_least(name_min).clip(true).resizable(false));
+                for w in &widths {
+                    tb = tb.column(Column::initial(*w).at_least(w.min(40.0)).clip(true));
                 }
+                // a right-click on the header: which columns are shown
+                let toggled = std::cell::Cell::new(None);
+                let menu = |ui: &mut egui::Ui| columns_menu(ui, st, &mut |c| toggled.set(Some(c)));
+                let dim = |ui: &mut egui::Ui, text: String| {
+                    ui.add(egui::Label::new(RichText::new(text).color(pal.dim)).truncate());
+                };
                 tb.header(26.0, |mut h| {
-                    h.col(|ui| header_cell(ui, &pal, "Name", Some(SortKey::Name), sort, &mut new_sort));
-                    if status_col {
-                        h.col(|ui| header_cell(ui, &pal, "Status", None, sort, &mut new_sort));
+                    let (_, r) = h.col(|ui| header_cell(ui, &pal, "Name", Some(SortKey::Name), sort, &mut new_sort, Some(&menu)));
+                    r.context_menu(|ui| menu(ui));
+                    for c in &cols {
+                        let key = match c {
+                            ListColumn::Modified => Some(SortKey::Modified),
+                            ListColumn::Size => Some(SortKey::Size),
+                            ListColumn::Status | ListColumn::Type => None,
+                        };
+                        let (_, r) = h.col(|ui| header_cell(ui, &pal, c.label(), key, sort, &mut new_sort, Some(&menu)));
+                        r.context_menu(|ui| menu(ui));
                     }
-                    if !narrow {
-                        h.col(|ui| header_cell(ui, &pal, "Date modified", Some(SortKey::Modified), sort, &mut new_sort));
-                        h.col(|ui| header_cell(ui, &pal, "Type", None, sort, &mut new_sort));
-                    }
-                    h.col(|ui| header_cell(ui, &pal, "Size", Some(SortKey::Size), sort, &mut new_sort));
                 })
                 .body(|body| {
                     body.rows(28.0, rows.len(), |mut row| {
@@ -1876,7 +1927,7 @@ fn draw_pane(
                         if head {
                             let title = heads.iter().find(|(p, _)| *p == pos).map(|(_, h)| h.as_str()).unwrap_or_default();
                             row.col(|ui| group_heading(ui, &pal, title));
-                            for _ in 1..columns {
+                            for _ in &cols {
                                 row.col(|_| {});
                             }
                             return;
@@ -1884,39 +1935,30 @@ fn draw_pane(
                         let e = &shown[order[pos]];
                         row.set_selected(selected.contains(&e.path));
                         row.col(|ui| name_cell(ui, e));
-                        if status_col {
+                        for c in &cols {
                             row.col(|ui| {
-                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                    if let Some(a) = drive_avail(cx.st, e) {
-                                        let (rect, r) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-                                        paint_avail(ui.painter(), rect.center(), a, &pal);
-                                        r.on_hover_text(avail_tip(a));
+                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| match c {
+                                    ListColumn::Status => {
+                                        if let Some(a) = drive_avail(cx.st, e) {
+                                            let (rect, r) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                                            paint_avail(ui.painter(), rect.center(), a, &pal);
+                                            r.on_hover_text(avail_tip(a));
+                                        }
                                     }
+                                    ListColumn::Modified => dim(ui, e.modified.map(fmt_time).unwrap_or_default()),
+                                    ListColumn::Type => dim(ui, listing::type_name(e).to_string()),
+                                    ListColumn::Size => dim(ui, if e.is_dir { String::new() } else { listing::human_size(e.size) }),
                                 });
                             });
                         }
-                        if !narrow {
-                            row.col(|ui| {
-                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                    ui.label(RichText::new(e.modified.map(fmt_time).unwrap_or_default()).color(pal.dim));
-                                });
-                            });
-                            row.col(|ui| {
-                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                    ui.label(RichText::new(listing::type_name(e)).color(pal.dim));
-                                });
-                            });
-                        }
-                        row.col(|ui| {
-                            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                ui.label(RichText::new(if e.is_dir { String::new() } else { listing::human_size(e.size) }).color(pal.dim));
-                            });
-                        });
                         let r = row.response();
                         record_item(&ectx, cx.pi, Rect::from_min_size(r.rect.min, vec2(r.rect.width(), 28.0)), &e.path);
                         entry_interact(&ectx, &r, e, pos, &order, shown, selected, anchor, &cx, actions);
                     });
                 });
+                if let Some(c) = toggled.get() {
+                    actions.push(Action::ToggleColumn(c));
+                }
             }
         }
         ViewMode::Gallery => {
@@ -3312,6 +3354,10 @@ impl App {
                 }
                 Action::SetGroup(g) => {
                     self.st.group = g;
+                    self.dirty = true;
+                }
+                Action::ToggleColumn(c) => {
+                    self.st.columns.toggle(c);
                     self.dirty = true;
                 }
                 Action::ToggleSidebar => {

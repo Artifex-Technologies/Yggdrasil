@@ -4,6 +4,7 @@
 
 pub mod archive;
 pub mod cloud;
+pub mod columns;
 pub mod commandbar;
 pub mod compat;
 pub mod devices;

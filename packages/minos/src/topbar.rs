@@ -180,6 +180,10 @@ fn view_menu(ui: &mut egui::Ui, st: &State, actions: &mut Vec<Action>) {
         actions.push(Action::SetView(ViewMode::Gallery));
         ui.close();
     }
+    if st.view == ViewMode::Details {
+        ui.separator();
+        columns_menu(ui, st, &mut |c| actions.push(Action::ToggleColumn(c)));
+    }
 }
 
 /// The command bar over the list. In a narrow pane Sort, Group, the layout and the preview pane share one menu.
