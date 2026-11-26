@@ -48,8 +48,9 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 opt-level = 2
 lto = "thin"
 
-# Smithay's main branch (54cf9c10; its version is still 0.7.0, so it stands in for the 0.7 above) with eighteen commits of ours:
-# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit (e99c58d8).
+# Smithay's main branch (46643d20, merged in by 8ff04271; its version is still 0.7.0, so it stands in for the 0.7 above) with
+# eighteen commits of ours:
+# our fork, github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit (8ff04271).
 #   514b9ae1  the X11 sockets bound apart from starting XWayland (X11Sockets, XWayland::spawn_with_sockets), so XWayland
 #             starts on the first X11 program (xwayland.rs)
 #   3c8ca3a4  two X11 window manager fixes: every event was dropped after set_randr_primary_output until the next request;
@@ -85,4 +86,4 @@ lto = "thin"
 #   e99c58d8  libseat's PauseSession handler runs before the seat is disabled, as wlroots does (before, the seat was let go
 #             first, and under seatd the GPU then refused to take Night Light's tint off on a switch made from elsewhere)
 [patch.crates-io]
-smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "e99c58d8c6a0d8d4fc316ad7c636db72f307db4b" }
+smithay = { git = "https://github.com/Artifex-Technologies/smithay-yggdrasil", rev = "8ff0427178aca317ff26da151ec49e9dbb1dc569" }

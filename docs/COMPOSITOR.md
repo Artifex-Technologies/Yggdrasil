@@ -502,8 +502,9 @@ drop on them does nothing (`tests/dnd.rs`). Known limitation: during an accepted
 (at most the 10 s), any X11 program that asks is given the data too, since X11 cannot tell it from the target.
 
 **Our Smithay fork** (github.com/Artifex-Technologies/smithay-yggdrasil, branch yggdrasil/smithay-main, pinned by commit in
-packages/compositor/Cargo.toml): since 2026-11-24, Smithay's main branch (54cf9c10) with twelve commits of ours, each for
-something the compositor's own code cannot do well, and a thirteenth that only formats a line. They bind the X11 sockets apart from
+packages/compositor/Cargo.toml): Smithay's main branch (followed since 2026-11-24; at 46643d20 since 2026-11-26, merged in)
+with eighteen commits of ours, each listed in that file's comment: all for something the compositor's own code cannot do well,
+but one that only formats a line. Among them, they bind the X11 sockets apart from
 starting XWayland (XWayland on the first X11 program, above); fix two X11 window manager bugs (close, and the events dropped
 after setting the primary screen: "Tried by hand", above); clamp a layer surface's size at i32::MAX and `_GTK_FRAME_EXTENTS`
 at what an X window can hold (a program's huge values ended a debug build: a negative size, an overflow in
