@@ -98,6 +98,19 @@ impl Elem {
             _ => None,
         }
     }
+
+    /// What it is, for the log's line on why a full screen window is copied (udev.rs).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Elem::Surface(_) => "a program's surface (a panel, a menu, a notification or a window's own)",
+            Elem::Bar(_) => "a picture of the compositor's (a title bar or the pointer's)",
+            Elem::Opaque(_) => "a full screen X11 window",
+            Elem::Clipped(_) => "a window",
+            Elem::Piece(_) => "a window's border, corner or shadow",
+            Elem::Strip(_) => "a solid strip (a border or the window switcher)",
+            _ => "something else",
+        }
+    }
 }
 
 impl PixElem {
@@ -106,6 +119,18 @@ impl PixElem {
         match self {
             PixElem::Clipped(c) => c.change(),
             _ => None,
+        }
+    }
+
+    /// The same as Elem::kind.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            PixElem::Surface(_) => "a program's surface (a panel, a menu, a notification or a window's own)",
+            PixElem::Bar(_) => "a picture of the compositor's (a title bar or the pointer's)",
+            PixElem::Clipped(_) => "a window",
+            PixElem::Piece(_) => "a window's border, corner or shadow",
+            PixElem::Strip(_) => "a solid strip (a border or the window switcher)",
+            _ => "something else",
         }
     }
 }

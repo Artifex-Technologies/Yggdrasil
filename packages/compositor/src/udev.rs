@@ -62,7 +62,8 @@
 //!   xwayland::OpaqueElement), and Smithay's DrmCompositor puts it on the primary plane when it covers the screen, nothing is
 //!   drawn over it and the GPU takes it; while a full screen window covers a screen, a buffer of any format is tried there
 //!   (`frame_flags`; `YGGDRASIL_COMPOSITOR_SCANOUT=0` keeps every picture composited). The log says when a screen's picture
-//!   starts going out directly and why it is composited again (`why_composited`).
+//!   starts going out directly and why it is composited again (`why_composited`), and, while a full screen window is copied
+//!   instead, why (`why_held`: each new reason, a few for each full screen spell).
 //!
 //! Known limitations (docs/COMPOSITOR.md): each GPU draws only its own screens (none draws for another, as a laptop's NVIDIA
 //! GPU behind the Intel one would need); only the primary plane takes a window, the overlay planes only the pointer; no
@@ -207,6 +208,9 @@ struct Screen {
     feedback: Option<Feedback>,
     /// the element whose buffer went to the screen as it is in the last frame, on the primary plane (direct scanout)
     direct: Option<Id>,
+    /// while a full screen window covers the screen and is copied: the last reason logged (`why_held`), and how many were
+    held: Option<String>,
+    held_told: u32,
     /// its frames paced by its full screen window's under variable refresh (`vrr_flip`)
     pacer: Pacer,
 }
@@ -1245,6 +1249,8 @@ fn scan(
                         vrr_capable,
                         feedback,
                         direct: None,
+                        held: None,
+                        held_told: 0,
                         pacer: Pacer::default(),
                     },
                 );
@@ -1756,15 +1762,17 @@ macro_rules! pointer_element {
 }
 
 /// One screen's frame: its mode as Settings set it, its elements, drawn and queued for the page flip. Gives whether a frame was
-/// queued, the elements' states, the element that went to the screen directly, and, when the one that did in the last frame
-/// no longer does, why.
+/// queued, the elements' states, the element that went to the screen directly, when the one that did in the last frame
+/// no longer does, why, and, while a full screen window (`$full`) is copied rather than sent directly, why (`why_held`).
 macro_rules! frame {
-    ($cache:expr, $app:expr, $renderer:expr, $out:expr, $screen:expr, $elem:ty, $flags:expr) => {{
+    ($cache:expr, $app:expr, $renderer:expr, $out:expr, $screen:expr, $elem:ty, $flags:expr, $full:expr) => {{
         let output = $screen.output.clone();
         let mut elements: Vec<$elem> = vec![];
         if let Some(p) = pointer_element!($cache, $app, $renderer, &output) {
             elements.push(p.into());
         }
+        // the pointer is the first element when there is one
+        let pointers = elements.len();
         let clear = if $app.locked {
             elements.extend($app.lock_elements(&mut **$renderer, &output).into_iter().map(Into::into));
             BLACK
@@ -1790,11 +1798,35 @@ macro_rules! frame {
                     }
                     _ => None,
                 };
+                let held = ($full && direct.is_none()).then(|| {
+                    let scale = output.current_scale().fractional_scale();
+                    // the elements come front to back: the first that covers the screen is the one that could go out directly
+                    match elements.iter().position(|e| covers(e.geometry(scale.into()), &output)) {
+                        None => why_held(None, &[]),
+                        Some(i) => {
+                            let drawn = |e: &$elem| {
+                                !matches!(
+                                    r.states.element_render_state(e.id().clone()).map(|s| s.presentation_state),
+                                    Some(RenderElementPresentationState::ZeroCopy | RenderElementPresentationState::Skipped)
+                                )
+                            };
+                            let over: Vec<&str> = elements[..i]
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, e)| drawn(e))
+                                .map(|(n, e)| if n < pointers { "the pointer (not on its own plane)" } else { e.kind() })
+                                .collect();
+                            let e = &elements[i];
+                            let verdict = why_composited(e.change(), true, r.states.element_render_state(e.id().clone()));
+                            why_held(Some((e.kind(), verdict)), &over)
+                        }
+                    }
+                });
                 let (empty, states) = (r.is_empty, r.states);
                 if empty {
-                    Ok((false, states, direct, why))
+                    Ok((false, states, direct, why, held))
                 } else {
-                    $out.queue_frame(()).map(|_| (true, states, direct, why)).map_err(|e| e.to_string())
+                    $out.queue_frame(()).map(|_| (true, states, direct, why, held)).map_err(|e| e.to_string())
                 }
             }
             Err(e) => Err(e.to_string()),
@@ -2006,20 +2038,25 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
     }
     let result = match (&mut dev.gpu, &mut screen.drm) {
         (Gpu::Gles { renderer, .. }, Out::Gles(out)) => {
-            frame!(b.pointer, app, renderer, out, screen, Elem, frame_flags(scanout_allowed(), full))
+            frame!(b.pointer, app, renderer, out, screen, Elem, frame_flags(scanout_allowed(), full), full)
         }
         (Gpu::Pixman { renderer, .. }, Out::Pixman(out)) => {
-            frame!(b.pointer, app, renderer, out, screen, PixElem, frame_flags(scanout_allowed(), full))
+            frame!(b.pointer, app, renderer, out, screen, PixElem, frame_flags(scanout_allowed(), full), full)
         }
         _ => Err("the screen and its GPU do not match".into()),
     };
     let dev = b.devices.get_mut(&node)?;
     let screen = dev.screens.get_mut(&crtc)?;
     if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
-        eprintln!("frame {} at {:?}: {:?}", screen.output.name(), b.start.elapsed(), result.as_ref().map(|(q, _, d, _)| (q, d.is_some())));
+        eprintln!(
+            "frame {} at {:?}: {:?}",
+            screen.output.name(),
+            b.start.elapsed(),
+            result.as_ref().map(|(q, _, d, _, _)| (q, d.is_some()))
+        );
     }
     let result = match result {
-        Ok((queued, states, direct, why)) => {
+        Ok((queued, states, direct, why, held)) => {
             if let Some(f) = &screen.feedback {
                 app.send_dmabuf_feedback(&screen.output, &f.render, &f.scanout, &states);
             }
@@ -2029,6 +2066,17 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
                     None => eprintln!("yggdrasil-compositor: {name}: a full screen picture goes to the screen directly (scanout, no copy)"),
                     Some(why) => eprintln!("yggdrasil-compositor: {name}: composited again: {why}"),
                 }
+            }
+            // while a full screen window is copied: why, each time the reason changes, a few times for each full screen spell
+            if !full {
+                screen.held = None;
+                screen.held_told = 0;
+            } else if let Some(h) = held.filter(|h| screen.held.as_ref() != Some(h)) {
+                if screen.held_told < HELD_TOLD {
+                    eprintln!("yggdrasil-compositor: {}: a full screen window is copied, not sent directly: {h}", screen.output.name());
+                    screen.held_told += 1;
+                }
+                screen.held = Some(h);
             }
             screen.direct = direct;
             Ok(queued)
@@ -2150,6 +2198,23 @@ fn why_composited(change: Option<crate::look::Change>, covers: bool, state: Opti
     }
 }
 
+/// The most reasons logged for one full screen spell on a screen (a reason that flips every frame must not fill the log).
+const HELD_TOLD: u32 = 8;
+
+/// Why a full screen window is copied rather than sent to the screen directly: the first picture from the top that covers the
+/// whole screen (what it is and the planes' verdict on it, `why_composited`) and what else is drawn over it; none when no one
+/// picture covers the screen.
+fn why_held(top: Option<(&str, String)>, over: &[&str]) -> String {
+    let Some((what, verdict)) = top else {
+        return "no one picture covers the whole screen (the game's window is smaller than the screen, or not at its corner)".into();
+    };
+    if over.is_empty() {
+        format!("{what}: {verdict}")
+    } else {
+        format!("{what}: {verdict}; drawn over it: {}", over.join(", "))
+    }
+}
+
 /// One refresh of a mode (16.7 ms at 60 Hz).
 fn refresh_of(m: &Mode) -> Duration {
     Duration::from_micros(1_000_000_000 / m.refresh.max(1000) as u64)
@@ -2188,6 +2253,18 @@ mod tests {
         assert_eq!(parse_vrr(Some(" ON ")), VrrPolicy::Always);
         assert!(vrr_wanted(VrrPolicy::FullScreen, true) && !vrr_wanted(VrrPolicy::FullScreen, false));
         assert!(vrr_wanted(VrrPolicy::Always, false) && !vrr_wanted(VrrPolicy::Never, true));
+    }
+
+    #[test]
+    fn the_log_says_why_a_full_screen_window_is_copied() {
+        use super::why_held;
+        assert!(why_held(None, &[]).starts_with("no one picture covers the whole screen"));
+        let verdict = || "the primary plane does not take its buffer's format".to_string();
+        assert_eq!(why_held(Some(("a full screen X11 window", verdict())), &[]), format!("a full screen X11 window: {}", verdict()));
+        assert_eq!(
+            why_held(Some(("a window", verdict())), &["the pointer (not on its own plane)", "a program's surface"]),
+            format!("a window: {}; drawn over it: the pointer (not on its own plane), a program's surface", verdict())
+        );
     }
 
     #[test]
