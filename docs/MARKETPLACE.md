@@ -75,3 +75,9 @@ updated), then installs the AUR builds (`pacman -U`, package files only, `--conf
 for every step, the password box asks once: the polkit action `org.yggdrasil.agora.packages` (`auth_admin_keep`, for
 `/usr/lib/agora/pkg-root` only) remembers it for polkit's few minutes. An update whose AUR builds take longer than that asks again.
 It has no Cancel (cancelling a system upgrade half-way is not safe).
+
+A component (the operating system's own optional software) asks once as well (2026-11-27): the sudo stand-in sends every pacman
+command through `pkg-root`, whoever started it, and the component's own root steps (setup commands, groups, services) are one
+`COMPONENT setup ID...` step that `pkg-root` runs (packages/agora-helpers/README.md). A component with parts from the AUR asks once
+more, for its yay run (polkit remembers the password for the one program that asked). Before, a device offer's install asked at
+each of yay's steps, and each setup command, group or service asked on its own.

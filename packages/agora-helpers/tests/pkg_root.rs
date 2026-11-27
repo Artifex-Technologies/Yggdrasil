@@ -40,6 +40,24 @@ fn test_cancel_file_must_be_the_invoking_users_runtime_folder() {
 }
 
 #[test]
+fn test_a_components_setup_takes_only_its_verb_and_plain_ids() {
+    // each is refused before anything of the system is read: the component command itself is never started from a test
+    let usage = "usage: pkg-root CANCELFILE component setup|teardown";
+    for (bad, said) in [
+        (&[GOOD, "component", "install", "waydroid"][..], usage),
+        (&[GOOD, "component", "setup"], usage),
+        (&[GOOD, "component", "setup", "a;b"], "odd component id"),
+        (&[GOOD, "component", "setup", "--root=/"], "odd component id"),
+        (&[GOOD, "component", "teardown", "../x"], "odd component id"),
+        (&["/etc/passwd", "component", "setup", "waydroid"], "the cancel file must be"),
+    ] {
+        let r = run(bad, "1000");
+        assert_eq!(code(&r), 2, "{bad:?}: {}", err(&r));
+        assert!(err(&r).starts_with(&format!("agora pkg-root: {said}")), "{bad:?}: {}", err(&r));
+    }
+}
+
+#[test]
 fn test_options_outside_the_short_list_are_refused() {
     for bad in ["--root", "--config", "--hookdir", "--sysroot", "-Sy", "--overwrite", "--dbpath"] {
         let r = run(&[GOOD, "pacman", "-S", bad, "krita"], "1000");
@@ -287,4 +305,66 @@ fn write_script(path: &std::path::Path, text: &str) {
     let ok = std::process::Command::new("install").args(["-m", "755"]).arg(&src).arg(path).status().is_ok_and(|s| s.success());
     let _ = std::fs::remove_file(&src);
     assert!(ok, "install could not write {}", path.display());
+}
+
+// ---- a component's setup, the whole way: the sudo stand-in, pkexec, pkg-root reading the integration, the component command
+
+const SUDO: &str = env!("CARGO_BIN_EXE_agora-sudo");
+
+/// Runs `agora-sudo ARGS...` (`{W}` in them: the world's folder) in the sandbox, with a scratch integration folder over the
+/// system's, this build of pkg-root over the installed one and a stand-in pkexec (PKEXEC_UID 0: inside the namespace everything
+/// here is root's). The world's folder and the output, or None where the sandbox or the paths it covers are missing (a
+/// container: the test skips).
+fn through_the_stand_in(args: &[&str]) -> Option<(PathBuf, Output)> {
+    let (ints, helper) = ("/usr/share/yggdrasil/integrations", "/usr/lib/agora/pkg-root");
+    if !namespaces() || !std::path::Path::new(ints).is_dir() || !std::path::Path::new(helper).is_file() {
+        return None;
+    }
+    let w = tmp("setup");
+    for d in ["agora", "cache", "bin", "integrations"] {
+        fs::create_dir_all(w.join(d)).unwrap();
+    }
+    let wd = w.display().to_string();
+    fs::write(w.join("integrations/os-packages.conf"), format!("kind = packages\nname = OS\ncomponent = {wd}/bin/os-apps\n")).unwrap();
+    write_script(&w.join("bin/os-apps"), &format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > {wd}/args\nenv > {wd}/env\n"));
+    write_script(&w.join("bin/other"), "#!/bin/sh\nexit 0\n");
+    write_script(&w.join("bin/pkexec"), &format!("#!/bin/sh\necho \"$*\" >> {wd}/pkexec\nPKEXEC_UID=0 exec \"$@\"\n"));
+    let inner = format!("mount --bind {wd}/integrations {ints} && mount --bind {BIN} {helper} && exec \"$0\" \"$@\"");
+    let args: Vec<String> = args.iter().map(|a| a.replace("{W}", &wd)).collect();
+    let o = Command::new("unshare")
+        .args(["-rm", "sh", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/sandbox.sh")])
+        .arg(&w)
+        .args(["sh", "-c", &inner, SUDO])
+        .args(&args)
+        .env("PATH", format!("{wd}/bin:/usr/bin:/bin"))
+        .env("CALLERS_OWN", "not passed on")
+        .env_remove("AGORA_CANCEL_FILE")
+        .output()
+        .unwrap();
+    Some((w, o))
+}
+
+#[test]
+fn a_components_setup_goes_from_the_sudo_stand_in_through_pkg_root_to_its_command() {
+    let Some((w, o)) = through_the_stand_in(&["{W}/bin/os-apps", "setup", "waydroid", "razer"]) else {
+        eprintln!("skipped: no user namespaces, or no installed integration folder and pkg-root to cover");
+        return;
+    };
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let asked = fs::read_to_string(w.join("pkexec")).unwrap();
+    assert!(asked.starts_with("/usr/lib/agora/pkg-root /run/user/0/agora/sudo-"), "through pkg-root: {asked}");
+    assert!(asked.ends_with(".cancel component setup waydroid razer\n"), "{asked}");
+    assert_eq!(fs::read_to_string(w.join("args")).unwrap(), "setup\nwaydroid\nrazer\n");
+    let env = fs::read_to_string(w.join("env")).unwrap();
+    assert!(env.lines().any(|l| l == "SUDO_USER=root"), "{env}");
+    assert!(env.lines().any(|l| l == "PATH=/usr/local/sbin:/usr/local/bin:/usr/bin"), "{env}");
+    assert!(!env.contains("CALLERS_OWN"), "nothing of the caller's environment: {env}");
+    let _ = fs::remove_dir_all(&w);
+
+    // another program's "setup" is not the component command's: plain pkexec, asked every time
+    let Some((w, o)) = through_the_stand_in(&["{W}/bin/other", "setup", "waydroid"]) else { return };
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(fs::read_to_string(w.join("pkexec")).unwrap(), format!("{}/bin/other setup waydroid\n", w.display()));
+    assert!(!w.join("args").exists());
+    let _ = fs::remove_dir_all(&w);
 }

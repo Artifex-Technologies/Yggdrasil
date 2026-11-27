@@ -60,6 +60,14 @@ first_login = /var/lib/labyrinth/first-login-components.json   # optional: what 
 
 Without one, Agora lists only the sources the user adds (each marked as not reviewed) and Flathub.
 
+The component command gets Agora's sudo stand-in as AGORA_SUDO and runs its root steps through it. Its pacman commands, and
+`COMPONENT setup ID...` / `COMPONENT teardown ID...` (a component's own root steps after its packages are in and before they
+go: setup commands, groups, services), go through Agora's root helper, whose password polkit remembers a few minutes for the
+program that asked, so one install asks once. The helper runs `setup` and `teardown` as root, with SUDO_USER (the user who
+asked) and nothing else of the caller's environment, and only for the integration's own `component` (one absolute path; the
+integration file and the program root's and writable by no one else) with plain ids. Anything else the command runs through
+AGORA_SUDO asks every time.
+
 With `devices`, the installed system offers device software by itself (packages/device-offers/README.md): when it comes online,
 when a USB device is plugged in and at sign-in, the entries whose `chosen_if_usb` / `usb_kind` / `chosen_if_machine` match this
 computer and whose components are not installed are offered in one notification (Install, through `component install ID...` and

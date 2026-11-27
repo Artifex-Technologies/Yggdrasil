@@ -174,7 +174,7 @@ fn ask(list: &[Offer]) -> Answer {
 fn install(os: &Os, list: &[Offer]) -> bool {
     let ids: Vec<String> = list.iter().flat_map(|o| o.components.iter().cloned()).collect();
     let names = names(list);
-    tell(&format!("Installing {names}"), "Your password is asked once; this can take a while.");
+    tell(&format!("Installing {names}"), "Your password is asked once (once more if something has to be built); this can take a while.");
     let log_path = yggdrasil_conf::dirs::state().join("device-offers.log");
     let _ = std::fs::create_dir_all(log_path.parent().unwrap_or(Path::new("/")));
     let log = std::fs::OpenOptions::new().append(true).create(true).open(&log_path);

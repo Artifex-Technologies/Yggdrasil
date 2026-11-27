@@ -22,6 +22,7 @@ path = "src/bin/agora-sudo.rs"
 [dependencies]
 libc = "0.2"
 yggdrasil-pycompat = { path = "../pycompat" }
+yggdrasil-conf = { path = "../yggdrasil-conf" }
 
 [profile.release]
 opt-level = "s"

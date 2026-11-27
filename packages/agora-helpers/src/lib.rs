@@ -10,13 +10,22 @@
 //! every 0.25 s: on cancel pacman is stopped (SIGTERM to its group, SIGKILL after 15 s), the packages this run installed are
 //! removed, the package files it downloaded deleted, and the exit code is 130. Nothing else is changed.
 //!
+//!   pkexec /usr/lib/agora/pkg-root CANCELFILE component setup|teardown ID...
+//!
+//! runs the operating system's component command (its `packages` integration's `component`, Yggdrasil's docs/INTEGRATIONS.md)
+//! as `COMMAND setup ID...` (a component's root steps after its packages: setup commands, groups, services) or `teardown ID...`
+//! (before they are removed), so a whole install asks for the password once. Only the verb and plain ids come from the caller:
+//! the program is the integration's, and both the integration file and the program must be root's and writable by no one else.
+//! It runs with nothing of the caller's environment but SUDO_USER (the invoking user), no standard input, in a session of its
+//! own; a cancel stops it (exit code 130), with nothing to undo.
+//!
 //! One check is stricter than the script's: its patterns ended in `$`, which in Python also matches before a final newline,
 //! so a package name or --ignore list ending in a newline passed them. Here a newline is never part of either.
 
 use std::collections::BTreeSet;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
-use std::path::Path;
-use std::process::{Command, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const ALLOWED_OPTS: &[&str] =
@@ -28,6 +37,13 @@ const CONFIG: &str = "/etc/pacman.conf";
 /// Where pacman keeps the files it downloads (fixed: a root helper takes no path from its environment; the tests put a
 /// scratch folder there in a mount namespace of their own).
 const CACHE: &str = "/var/cache/pacman/pkg";
+
+/// Where an operating system declares its integrations: its own, then the administrator's (the same file name wins). Fixed, as
+/// everything a root helper reads.
+pub const INTEGRATIONS: [&str; 2] = ["/usr/share/yggdrasil/integrations", "/etc/yggdrasil/integrations"];
+
+/// The search path a component's setup runs with.
+const SETUP_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/bin";
 
 /// The refusal: "agora pkg-root: ..." on standard error, exit code 2.
 #[derive(Debug, PartialEq)]
@@ -68,7 +84,7 @@ pub struct Plan {
 pub fn plan(argv: &[String], pkexec_uid: &str, is_file: &dyn Fn(&str) -> bool) -> Result<Plan, Refused> {
     let refuse = |m: &str| Err(Refused(m.to_string()));
     if argv.len() < 4 || argv[1] != "pacman" {
-        return refuse("usage: pkg-root CANCELFILE pacman OPTIONS... PACKAGES...");
+        return refuse("usage: pkg-root CANCELFILE pacman OPTIONS... PACKAGES... (or CANCELFILE component setup|teardown ID...)");
     }
     let (cancel_file, mut args) = (&argv[0], argv[2..].to_vec());
     if !valid_cancel_file(cancel_file, pkexec_uid) {
@@ -140,6 +156,133 @@ pub fn plan(argv: &[String], pkexec_uid: &str, is_file: &dyn Fn(&str) -> bool) -
     Ok(Plan { args, installing: ops[0] == "-S" || ops[0] == "-U" })
 }
 
+/// A component's root steps: `COMMAND setup|teardown ID...`.
+#[derive(Debug, PartialEq)]
+pub struct ComponentPlan {
+    pub command: PathBuf,
+    pub verb: String,
+    pub ids: Vec<String>,
+}
+
+/// ^[a-z0-9][a-z0-9._+-]*$, at most 64 characters (a component's id)
+fn plain_id(s: &str) -> bool {
+    s.len() <= 64
+        && s.bytes().next().is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._+-".contains(&b))
+}
+
+/// Owned by `owner` and writable by no one else.
+fn owners_only(p: &Path, owner: u32) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(p).is_ok_and(|m| m.uid() == owner && m.mode() & 0o022 == 0)
+}
+
+/// The file (links followed) and the folder it is in are `owner`'s, and no one else can change or replace it.
+fn safe(p: &Path, owner: u32) -> bool {
+    std::fs::canonicalize(p).is_ok_and(|real| owners_only(&real, owner) && real.parent().is_some_and(|d| owners_only(d, owner)))
+}
+
+/// The operating system's component command, as Agora finds it (the first `packages` integration's `component`): one absolute
+/// path with nothing after it, and both the integration file and the program `owner`'s and safe from everyone else.
+pub fn component_command(dirs: &[PathBuf], owner: u32) -> Result<PathBuf, String> {
+    let all = yggdrasil_conf::integrations::all_in(dirs);
+    let i = all.iter().find(|i| i.kind == "packages").ok_or("the system has no packages integration")?;
+    let c = i.get("component").ok_or("the packages integration names no component command")?;
+    if !safe(&i.file, owner) {
+        return Err(format!("{} could be changed by someone else", i.file.display()));
+    }
+    if !c.starts_with('/') || c.split_whitespace().count() != 1 || c.split('/').any(|p| p == "..") {
+        return Err(format!("the component command must be one absolute path: {c}"));
+    }
+    let p = PathBuf::from(c);
+    if !safe(&p, owner) {
+        return Err(format!("{c} could be changed by someone else"));
+    }
+    Ok(p)
+}
+
+/// `CANCELFILE component setup|teardown ID...`, checked: the cancel file as for pacman, plain ids, the integration's program.
+pub fn component_plan(argv: &[String], pkexec_uid: &str, dirs: &[PathBuf], owner: u32) -> Result<ComponentPlan, Refused> {
+    if argv.len() < 4 || argv[1] != "component" || !matches!(argv[2].as_str(), "setup" | "teardown") {
+        return Err(Refused("usage: pkg-root CANCELFILE component setup|teardown ID...".into()));
+    }
+    if !valid_cancel_file(&argv[0], pkexec_uid) {
+        return Err(Refused("the cancel file must be in the invoking user's runtime folder".into()));
+    }
+    if let Some(bad) = argv[3..].iter().find(|i| !plain_id(i)) {
+        return Err(Refused(format!("odd component id: {bad:?}")));
+    }
+    let command = component_command(dirs, owner).map_err(Refused)?;
+    Ok(ComponentPlan { command, verb: argv[2].clone(), ids: argv[3..].to_vec() })
+}
+
+/// The name of the user with this id (PKEXEC_UID), if there is one.
+pub fn user_name(uid: &str) -> Option<String> {
+    if !pycompat::isdigit(uid) {
+        return None;
+    }
+    let uid: libc::uid_t = uid.parse().ok()?;
+    // SAFETY: passwd is plain data; getpwuid_r writes into it and into buf (whose length it is given), and sets out to it or null
+    let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buf = vec![0 as libc::c_char; 4096];
+    let mut out: *mut libc::passwd = std::ptr::null_mut();
+    let rc = unsafe { libc::getpwuid_r(uid, &mut pw, buf.as_mut_ptr(), buf.len(), &mut out) };
+    if rc != 0 || out.is_null() || pw.pw_name.is_null() {
+        return None;
+    }
+    // SAFETY: pw_name points into buf, a NUL-terminated string getpwuid_r wrote
+    let name = unsafe { std::ffi::CStr::from_ptr(pw.pw_name) }.to_str().ok()?;
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// Runs a component's root steps; returns the exit code (130 when cancelled).
+pub fn run_component(p: &ComponentPlan, cancel_file: &str, user: &str) -> Result<i32, String> {
+    let mut c = Command::new(&p.command);
+    c.arg(&p.verb).args(&p.ids).env_clear().env("PATH", SETUP_PATH).env("HOME", "/root").env("LANG", "C.UTF-8");
+    c.env("SUDO_USER", user).stdin(Stdio::null());
+    own_session(&mut c);
+    let mut child = c.spawn().map_err(|e| format!("{}: {e}", p.command.display()))?;
+    let (status, cancelled) = wait_or_cancel(&mut child, cancel_file)?;
+    Ok(if cancelled { 130 } else { exit_of(status) })
+}
+
+/// start_new_session=True: the program and what it starts are a group of their own, stopped together.
+fn own_session(c: &mut Command) {
+    // SAFETY: setsid is async-signal-safe, as pre_exec requires
+    unsafe {
+        c.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+}
+
+/// Waits for `child` (the leader of its own process group); when the cancel file appears, the group is stopped (SIGTERM, SIGKILL
+/// after 15 s). The exit status, and whether it was cancelled.
+fn wait_or_cancel(child: &mut Child, cancel_file: &str) -> Result<(ExitStatus, bool), String> {
+    let pgid = child.id() as i32;
+    loop {
+        if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
+            return Ok((s, false));
+        }
+        if Path::new(cancel_file).exists() {
+            unsafe { libc::killpg(pgid, libc::SIGTERM) };
+            let until = Instant::now() + Duration::from_secs(15);
+            loop {
+                if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
+                    return Ok((s, true));
+                }
+                if Instant::now() >= until {
+                    unsafe { libc::killpg(pgid, libc::SIGKILL) };
+                    return Ok((child.wait().map_err(|e| e.to_string())?, true));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
 /// `pacman -Qq`: the installed packages.
 fn installed() -> Result<BTreeSet<String>, String> {
     // its standard error is captured and dropped, as subprocess.run(capture_output=True) did
@@ -186,43 +329,9 @@ pub fn run(plan: &Plan, cancel_file: &str) -> Result<i32, String> {
     let started = now();
     let mut c = Command::new("pacman");
     c.args(&plan.args);
-    // start_new_session=True: pacman and what it starts are a group of their own, stopped together
-    unsafe {
-        c.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
-    }
+    own_session(&mut c);
     let mut child = c.spawn().map_err(|e| format!("pacman: {e}"))?;
-    let pgid = child.id() as i32;
-    let mut cancelled = false;
-    let status;
-    loop {
-        if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
-            status = s;
-            break;
-        }
-        if Path::new(cancel_file).exists() {
-            cancelled = true;
-            unsafe { libc::killpg(pgid, libc::SIGTERM) };
-            let until = Instant::now() + Duration::from_secs(15);
-            loop {
-                if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
-                    status = s;
-                    break;
-                }
-                if Instant::now() >= until {
-                    unsafe { libc::killpg(pgid, libc::SIGKILL) };
-                    status = child.wait().map_err(|e| e.to_string())?;
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-
+    let (status, mut cancelled) = wait_or_cancel(&mut child, cancel_file)?;
     if !cancelled && Path::new(cancel_file).exists() && status.code() == Some(0) && plan.installing {
         // cancelled just as it finished: undo it all the same
         cancelled = true;
@@ -246,6 +355,20 @@ pub fn run(plan: &Plan, cancel_file: &str) -> Result<i32, String> {
 /// The helper: `argv` without the program's name.
 pub fn main(argv: &[String]) -> i32 {
     let uid = std::env::var("PKEXEC_UID").unwrap_or_default();
+    if argv.get(1).is_some_and(|a| a == "component") {
+        let dirs: Vec<PathBuf> = INTEGRATIONS.iter().map(PathBuf::from).collect();
+        let plan = component_plan(argv, &uid, &dirs, 0);
+        return match plan.and_then(|p| user_name(&uid).map(|u| (p, u)).ok_or(Refused(format!("no user has the id {uid}")))) {
+            Err(Refused(m)) => {
+                eprintln!("agora pkg-root: {m}");
+                2
+            }
+            Ok((p, user)) => run_component(&p, &argv[0], &user).unwrap_or_else(|e| {
+                eprintln!("agora pkg-root: {e}");
+                1
+            }),
+        };
+    }
     match plan(argv, &uid, &|p| Path::new(p).is_file()) {
         Err(Refused(m)) => {
             eprintln!("agora pkg-root: {m}");

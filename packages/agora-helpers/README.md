@@ -1,7 +1,7 @@
 # Agora's administrator helpers (Rust): pkg-root and the sudo stand-in
 
 `/usr/lib/agora/pkg-root` runs one pacman command with administrator rights for Agora, so an install can be cancelled and
-cleaned up. Agora's sudo stand-in (`/usr/lib/agora/sudo`, given to yay; `src/bin/agora-sudo.rs`, a shell script until
+cleaned up, or the operating system's component command's root steps (below). Agora's sudo stand-in (`/usr/lib/agora/sudo`, given to yay; `src/bin/agora-sudo.rs`, a shell script until
 2026-11-12, 9 of 9 cases the same in `tools/parity-shell-ports.py`) runs it through pkexec:
 
     pkexec /usr/lib/agora/pkg-root CANCELFILE pacman OPTIONS... PACKAGES...
@@ -10,8 +10,20 @@ The stand-in sends every `pacman` command this way, so the password polkit remem
 (`org.yggdrasil.agora.packages`, a few minutes, for the program that asked) covers a whole yay run whoever started it: Agora
 gives its cancel file (`AGORA_CANCEL_FILE`); without one (device offers, the first login's components, makepkg) the stand-in
 names `/run/user/UID/agora/sudo-PID.cancel`, which nothing makes. Until 2026-11-27 pacman went through pkg-root only with
-Agora's cancel file, and a device offer's Razer install asked for the password at each of yay's steps. Any other command is
-`pkexec COMMAND...` and asks every time.
+Agora's cancel file, and a device offer's Razer install asked for the password at each of yay's steps.
+
+    pkexec /usr/lib/agora/pkg-root CANCELFILE component setup|teardown ID...
+
+runs the operating system's component command (its `packages` integration's `component`, docs/INTEGRATIONS.md) as root:
+`COMMAND setup ID...` (a component's setup commands, groups and services, once its packages are in) or `teardown ID...` (its
+services switched off before they go). The stand-in sends `COMMAND setup|teardown ID...` here when COMMAND is that integration's,
+so the remembered password covers a component's whole install (once more for a yay run, which is another program asking). Only
+the verb and plain ids (`a-z0-9._+-`, starting with a letter or digit, at most 64 characters) come from the caller; the program is
+read from `/usr/share/yggdrasil/integrations` and `/etc/yggdrasil/integrations` (the same rules as everywhere: the first
+`packages` integration, the administrator's file of the same name winning), and it must be one absolute path, with the
+integration file and the program, and the folders they are in, root's and writable by no one else. It runs with `PATH`, `HOME`
+(/root), `LANG` (C.UTF-8) and `SUDO_USER` (the user PKEXEC_UID names) only, no standard input, in a session of its own; a cancel
+stops it (exit code 130), with nothing to undo. Any other command is `pkexec COMMAND...` and asks every time.
 
 It replaces the Python script `packages/market/helpers/pkg-root` with the same rules:
 
@@ -34,6 +46,12 @@ newline in Python); here it is refused.
 `cargo test`: the script's 12 tests (`tests/test_agora_pkg_root.py`) carried over, hostile arguments, pacman's exit codes,
 and two cancels run in a user and mount namespace of their own (`tests/sandbox.sh`: an empty `/run/user` and a scratch
 pacman cache, for that process tree only; skipped where `unshare -rm` is not allowed).
+
+The component form (2026-11-27): the integration file and program checks (another owner, a folder or file anyone can write, a
+relative path, a path with arguments or `..`, no integration), the verb and id checks, a stand-in component command run with
+nothing of the caller's environment (its arguments, environment and exit code written down), a cancel that stops it (130), and
+through the program itself its refusals before anything of the system is read. The sudo stand-in's tests check which commands
+go through pkg-root (pacman always, the component command's setup and teardown) and which do not.
 
 `parity/compare.py` runs it and the script on the same cases in that sandbox, with a stand-in pacman: refusals, the shapes
 yay sends, pacman failing or killed, cancels before, during and just after a run. Exit code, output, pacman's calls, the

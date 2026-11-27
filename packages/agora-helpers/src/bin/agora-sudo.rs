@@ -6,10 +6,13 @@
 //! pkg-root, which checks the command and whose password polkit remembers a few minutes for the program that asked
 //! (org.yggdrasil.agora.packages), so one yay run asks once: with Agora's cancel file (AGORA_CANCEL_FILE) the install can be
 //! cancelled and cleaned up; without one (device offers, the first login's components, makepkg) it gets a cancel file in the
-//! user's runtime folder that nothing makes. Anything else is `pkexec COMMAND...`, asked every time. This process becomes pkexec.
+//! user's runtime folder that nothing makes. The operating system's component command with `setup ID...` or `teardown ID...` (its
+//! root steps beside the packages) goes through pkg-root the same way, so a component's whole install asks once. Anything else is
+//! `pkexec COMMAND...`, asked every time. This process becomes pkexec.
 
 use std::ffi::OsString;
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
@@ -20,7 +23,12 @@ fn main() {
     }
     // SAFETY: getuid has no preconditions and cannot fail
     let uid = unsafe { libc::getuid() };
-    let e = Command::new("pkexec").args(pkexec_args(rest, std::env::var_os("AGORA_CANCEL_FILE"), uid, std::process::id())).exec();
+    // the component command is looked up (in the integration files) only for what could be its setup or teardown
+    let component = (rest.len() >= 3 && (rest[1] == "setup" || rest[1] == "teardown"))
+        .then(|| pkg_root::component_command(&pkg_root::INTEGRATIONS.map(PathBuf::from), 0).ok())
+        .flatten();
+    let cancel = std::env::var_os("AGORA_CANCEL_FILE");
+    let e = Command::new("pkexec").args(pkexec_args(rest, cancel, component, uid, std::process::id())).exec();
     if e.kind() == std::io::ErrorKind::NotFound {
         eprintln!("/usr/lib/agora/sudo: pkexec: not found");
         std::process::exit(127)
@@ -31,15 +39,22 @@ fn main() {
 
 const PKG_ROOT: &str = "/usr/lib/agora/pkg-root";
 
-/// pkexec's arguments for `rest`: pacman through pkg-root with Agora's cancel file, or without one (unset or empty) a file in
-/// the user's runtime folder named after this process, which nothing makes; anything else as it is.
-fn pkexec_args(rest: &[OsString], cancel: Option<OsString>, uid: u32, pid: u32) -> Vec<OsString> {
-    if rest[0] != "pacman" {
+/// pkexec's arguments for `rest`: pacman, or the component command's setup or teardown (`component setup|teardown ID...`),
+/// through pkg-root with Agora's cancel file, or without one (unset or empty) a file in the user's runtime folder named after
+/// this process, which nothing makes; anything else as it is.
+fn pkexec_args(rest: &[OsString], cancel: Option<OsString>, component: Option<PathBuf>, uid: u32, pid: u32) -> Vec<OsString> {
+    let setup = rest.len() >= 3 && component.is_some_and(|c| rest[0] == c.as_os_str()) && (rest[1] == "setup" || rest[1] == "teardown");
+    if rest[0] != "pacman" && !setup {
         return rest.to_vec();
     }
     let cancel = cancel.filter(|c| !c.is_empty()).unwrap_or_else(|| format!("/run/user/{uid}/agora/sudo-{pid}.cancel").into());
     let mut v = vec![OsString::from(PKG_ROOT), cancel];
-    v.extend_from_slice(rest);
+    if setup {
+        v.push("component".into());
+        v.extend_from_slice(&rest[1..]);
+    } else {
+        v.extend_from_slice(rest);
+    }
     v
 }
 
@@ -80,8 +95,33 @@ mod tests {
     }
 
     fn pkexec(rest: &[&str], cancel: Option<&str>) -> Vec<String> {
+        with_component(rest, cancel, None)
+    }
+
+    fn with_component(rest: &[&str], cancel: Option<&str>, component: Option<&str>) -> Vec<String> {
         let rest: Vec<OsString> = rest.iter().map(OsString::from).collect();
-        pkexec_args(&rest, cancel.map(OsString::from), 1000, 42).iter().map(|s| s.to_string_lossy().into_owned()).collect()
+        pkexec_args(&rest, cancel.map(OsString::from), component.map(PathBuf::from), 1000, 42)
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_components_setup_and_teardown_go_through_pkg_root_too() {
+        let os = Some("/usr/bin/os-apps");
+        assert_eq!(
+            with_component(&["/usr/bin/os-apps", "setup", "waydroid", "razer"], None, os),
+            ["/usr/lib/agora/pkg-root", "/run/user/1000/agora/sudo-42.cancel", "component", "setup", "waydroid", "razer"]
+        );
+        assert_eq!(
+            with_component(&["/usr/bin/os-apps", "teardown", "waydroid"], Some("/run/user/1000/agora/x.cancel"), os),
+            ["/usr/lib/agora/pkg-root", "/run/user/1000/agora/x.cancel", "component", "teardown", "waydroid"]
+        );
+        // anything else of it, another program's setup, or a system without a component command: as they are
+        for rest in [&["/usr/bin/os-apps", "install", "x"][..], &["/usr/bin/other", "setup", "x"], &["/usr/bin/os-apps", "setup"]] {
+            assert_eq!(with_component(rest, None, os), rest, "{rest:?}");
+        }
+        assert_eq!(with_component(&["/usr/bin/os-apps", "setup", "x"], None, None), ["/usr/bin/os-apps", "setup", "x"]);
     }
 
     #[test]

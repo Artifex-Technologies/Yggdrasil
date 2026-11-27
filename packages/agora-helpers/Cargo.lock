@@ -132,7 +132,15 @@ name = "yggdrasil-agora-helpers"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "yggdrasil-conf",
  "yggdrasil-pycompat",
+]
+
+[[package]]
+name = "yggdrasil-conf"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
