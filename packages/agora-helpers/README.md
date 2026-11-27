@@ -6,6 +6,13 @@ cleaned up. Agora's sudo stand-in (`/usr/lib/agora/sudo`, given to yay; `src/bin
 
     pkexec /usr/lib/agora/pkg-root CANCELFILE pacman OPTIONS... PACKAGES...
 
+The stand-in sends every `pacman` command this way, so the password polkit remembers for pkg-root
+(`org.yggdrasil.agora.packages`, a few minutes, for the program that asked) covers a whole yay run whoever started it: Agora
+gives its cancel file (`AGORA_CANCEL_FILE`); without one (device offers, the first login's components, makepkg) the stand-in
+names `/run/user/UID/agora/sudo-PID.cancel`, which nothing makes. Until 2026-11-27 pacman went through pkg-root only with
+Agora's cancel file, and a device offer's Razer install asked for the password at each of yay's steps. Any other command is
+`pkexec COMMAND...` and asks every time.
+
 It replaces the Python script `packages/market/helpers/pkg-root` with the same rules:
 
 - only pacman, and only install (`-S`, `-U`), remove (`-R`, `-Rs`, `-Rns`), mark (`-D` with `--asdeps` or `--asexplicit`),
